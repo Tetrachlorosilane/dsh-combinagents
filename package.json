@@ -1,0 +1,42 @@
+{
+  "name": "@dsh-external/dsh-combinagents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Overlay reporting compositions for DSH agents and subagents that preserve each session's workspace, sandbox mode, and permissions.",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "agents",
+    "subagents",
+    "composition"
+  ],
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./graph": "./src/graph.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "src",
+    "docs",
+    "cordis.patch.yml",
+    "README.md",
+    "AGENTS.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check index.js src/graph.js"
+  }
+}
