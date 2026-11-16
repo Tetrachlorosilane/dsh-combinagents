@@ -56,12 +56,16 @@ Append this to the **profile** `cordis.patch.yml` (for the desktop profile:
               applyPatch: false
           - id: tool-fs-search
             name: "@deepseek-ai/dsh-tool-fs-search"
+            config:
+              sampleOverCapGlobResults: false
           - id: tool-jobs
             name: "@deepseek-ai/dsh-tool-jobs"
           - id: tool-ask-user
             name: "@deepseek-ai/dsh-tool-ask-user"
           - id: tool-todo
             name: "@deepseek-ai/dsh-tool-todo"
+            config:
+              allowParallelInProgress: true
           - id: present
             name: "@deepseek-ai/dsh-tool-present"
           - id: tool-web
