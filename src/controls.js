@@ -855,7 +855,7 @@ export function createControls({
   }
 
   const definitions = composed
-    ? [listAgents, sendMessage, interruptAgent, subagentTool, forkTool, waitTool, taskTool]
+    ? [listAgents, sendMessage, interruptAgent, waitTool, subagentTool, forkTool, taskTool]
     : [listAgents, sendMessage, interruptAgent]
 
   /**

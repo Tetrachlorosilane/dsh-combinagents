@@ -249,6 +249,10 @@ test('composition_interrupt_agent uses user authority after the edge grant', asy
 test('composed mode exposes native tool names, descriptions, and parameter schemas', () => {
   const { controls } = harness({ mode: 'composed' })
   const byName = new Map(controls.definitions.map((definition) => [definition.name, definition]))
+  assert.deepEqual(controls.definitions.map((definition) => definition.name), [
+    'list_agents', 'send_message', 'interrupt_agent', 'wait_agent',
+    'subagent', 'subagent_fork', 'composition_task',
+  ])
   assert.deepEqual([...byName.keys()].sort(), [
     'composition_task', 'interrupt_agent', 'list_agents', 'send_message', 'subagent', 'subagent_fork', 'wait_agent',
   ])
