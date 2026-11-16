@@ -405,6 +405,37 @@ export function removeNode(composition, nodeId, options = {}) {
 }
 
 /**
+ * Remove one node and every descendant. Only graph nodes are removed; no DSH
+ * session is touched. Unrelated nodes, siblings, and other roots stay put.
+ * @param {Composition} composition - current composition.
+ * @param {string} nodeId - subtree root to remove.
+ * @param {{now?: number}} [options] - timestamp override.
+ * @returns {Composition}
+ */
+export function removeSubtree(composition, nodeId, options = {}) {
+  assertComposition(composition)
+  if (!composition.nodes.some((node) => node.id === nodeId)) {
+    fail('UNKNOWN_NODE', `node ${JSON.stringify(nodeId)} does not exist`)
+  }
+  const removed = new Set([nodeId, ...descendantsOf(composition, nodeId).map((node) => node.id)])
+  const rootRemoved =
+    composition.rootSessionId !== null
+    && composition.nodes.some(
+      (node) => removed.has(node.id) && node.sessionId === composition.rootSessionId,
+    )
+  const next = {
+    ...composition,
+    rootSessionId: rootRemoved ? null : composition.rootSessionId,
+    nodes: composition.nodes.filter((node) => !removed.has(node.id)),
+    edges: composition.edges.filter(
+      (edge) => !removed.has(edge.parentId) && !removed.has(edge.childId),
+    ),
+    updatedAt: timestamp(options.now, 'now', Date.now()),
+  }
+  return assertComposition(next)
+}
+
+/**
  * Rename one node.
  * @param {Composition} composition - current composition.
  * @param {string} nodeId - node to rename.
@@ -558,18 +589,24 @@ export function childrenOf(composition, parentId) {
 export function descendantsOf(composition, nodeId) {
   assertComposition(composition)
   const byId = new Map(composition.nodes.map((node) => [node.id, node]))
+  const adjacency = new Map()
+  for (const edge of composition.edges) {
+    const list = adjacency.get(edge.parentId) ?? []
+    list.push(edge.childId)
+    adjacency.set(edge.parentId, list)
+  }
   const result = []
   const queue = [nodeId]
   const seen = new Set([nodeId])
   while (queue.length > 0) {
     const current = queue.shift()
-    for (const edge of composition.edges) {
-      if (edge.parentId !== current || seen.has(edge.childId)) continue
-      seen.add(edge.childId)
-      const node = byId.get(edge.childId)
+    for (const childId of adjacency.get(current) ?? []) {
+      if (seen.has(childId)) continue
+      seen.add(childId)
+      const node = byId.get(childId)
       if (node !== undefined) {
         result.push(node)
-        queue.push(edge.childId)
+        queue.push(childId)
       }
     }
   }

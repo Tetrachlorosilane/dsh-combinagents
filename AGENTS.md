@@ -6,15 +6,57 @@ and [`docs/FEASIBILITY.md`](docs/FEASIBILITY.md) before touching runtime code.
 
 ## 1. Current status
 
-This is a **scaffold**, not a working plugin. It contains:
+Phase 1 **walking skeleton** is implemented in this checkout:
 
-- a pure composition graph (`src/graph.js`) with tests;
-- an inert bundle entry (`index.js`);
-- a bundle patch that loads the inert entry;
-- a documented feasibility and architecture proposal.
+- Host: durable per-root composition domain (`src/store.js`), read-only
+  discovery (`src/discovery.js`), serialized mutations (`src/manager.js`), and a
+  loopback token bridge (`src/http.js`), wired by `index.js`;
+- Client: one right-sidebar tab, a session-header utility, and a guide entry
+  (`client.js`), with complete `en`/`zh` copy;
+- Graph: `src/graph.js` with 17 tests, plus store, manager, discovery, HTTP,
+  client-registration, host-wiring, controls, and bundle-shape tests (71 total);
+- Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
-Do not install it into a profile expecting a composition UI. Do not describe
-native re-parenting as implemented.
+Installed in the `desktop` profile on 2026-11-16 (`application: applied`). Live
+checks: the tab body, header utility, and separate `dsh-combinagents-count`
+header chip are active slot occupants; the shipped `subagent-catalog` entry is
+retained; the bridge returned 200 for
+bootstrap/create/add/state/add-external/rename/set-parent/summary/sync-native and
+403 for `ROOT_PROTECTED`; `state?sessionId=` and the `rootSessionId=` fallback
+resolve the shared composition from a member session, including a native
+descendant that has not been mirrored yet; a child edited under a running branch
+returned 409 `AGENT_BUSY`; a started subagent was mirrored into the composition
+with `source: subagent` and its native parent; observations use the workspace
+registry's archive set and metadata live flags, so a non-live session reads
+`saved` and only a truly archived one reads `archived`; the picker lists
+headers without folding titles (`/sessions` ~0.1 s cold, ~3 ms cached) and loads
+titles lazily through `/titles`; observations include cwd, sandbox mode,
+permission preset, agent preset, and native parent; the domain wrote
+`$DSH_HOME/storages/combinagents/compositions/<rootSessionId>.json` and audit
+rows under `storages/combinagents/audit`; three static composition control tools
+are registered and were exercised live (`composition_list_agents`, a delivered
+`composition_send_message`, an accepted `composition_interrupt_agent`). The
+plugin-owned task board (`tasks` table, `/tasks`, `/create-task`, `/update-task`,
+tab UI) is implemented with status transitions and a revision guard. A
+`mode: 'composed'` tool surface (native names/descriptions/parameter schemas) is
+implemented behind config but not enabled in this profile. It includes
+`list_agents`, `send_message`, `interrupt_agent`, `subagent`, `subagent_fork`,
+and `wait_agent`; `subagent`/`subagent_fork` start a native activation under the
+caller, mirror the child into the composition, label it with its native name,
+and auto-grant the delegation edge. `send_message` prefers the native relay for
+native descendants (including cold resume), falling back to `followup`/`steer`
+for live cross-tree nodes. Composed mode also restores the native
+`subagent:identity` context and `tool:subagent` delegation guidance. A clean
+headless profile verified the real chain: tool list, `subagent` → child node +
+edge, `wait_agent`, child reply, `send_message` follow-up with native resume,
+second `wait_agent`, and `interrupt_agent` + termination notice. Enabling
+composed mode in the desktop profile still requires disabling the native
+subagent control tools and verifying tool ordering and the prefix fingerprint.
+The GUI visual check is still
+pending: the headless browser has no Web auth launch token, and its SSRF guard
+blocks loopback unless the obscura plugin allows private networks.
+Clone/bridge/bud and the enabled composed-mode profile switch are not
+implemented. Do not describe native re-parenting as implemented.
 
 ## 2. Product contract
 
@@ -35,8 +77,11 @@ Hard invariants:
 - Never append or rewrite `subagent/catalog`.
 - Never call `workingDirectory.set`, `permissionPresets.set`,
   `sandboxPolicy.registerWritableRoot`, or ACL code from a graph mutation.
-- Never route messages across native subagent trees in phase 1.
-- Never register a model tool or prompt section in phase 1.
+- Never route messages across native subagent trees through the native
+  `send_message` tool. Cross-tree delivery is only the composition control tool,
+  gated by per-edge grants and the approval rule below.
+- Do not add prompt sections or dynamic tool descriptions. Composition control
+  and delegation tools are static; native tool schemas stay unchanged.
 - Never delete a DSH session because a graph node was removed.
 - **Cache-friendly by default:** do not change system prompt, tool schema, model
   route, cwd, preset, or permission policy unless explicitly required and
@@ -44,6 +89,14 @@ Hard invariants:
 
 The graph may be a strict forest only: one incoming `reports-to` edge per node.
 Multiple roots are allowed.
+
+One session belongs to **at most one composition**. The tab resolves that shared
+composition from any member session, so all members see the same configuration.
+Structural edits (add, remove, reparent) are blocked while an affected agent,
+one of its composition ancestors, or one of its composition descendants is
+running; a collateral branch stays editable. Native `subagent/start` events are
+mirrored into the owning composition as new nodes/edges, without changing any
+tool schema or routing authority.
 
 ## 3. Verified DSH facts (0.2.2-rc.3)
 
@@ -69,28 +122,39 @@ feature, not this plugin.
 ## 4. File map
 
 ```
-index.js                  Inert bundle entry; do not add runtime behavior piecemeal
-cordis.patch.yml          Bundle patch for the scaffold
-src/graph.js              Pure composition graph: validation, forest, cycle checks
-tests/graph.test.mjs      Graph unit tests
+index.js                  Host entry: store, discovery, manager, HTTP bridge
+client.js                 Right-sidebar tab, header utility, guide entry
+cordis.patch.yml          Bundle patch for the Host entry
+src/graph.js              Pure composition graph: validation, forest, cycle checks,
+                          promote/cascade removal
+src/store.js              DSH storage-domain adapter + memory fallback
+src/discovery.js          Live/persisted session discovery and observations
+src/manager.js            Serialized mutations, grants, path authorization
+src/http.js               Loopback, token-authenticated JSON bridge
+src/controls.js           Composition control tools (overlay 3, composed 6)
+tests/graph.test.mjs      Graph tests (17)
+tests/store.test.mjs      Domain adapter, fallback, record schema
+tests/manager.test.mjs    Creation, serialization, root protection
+tests/discovery.test.mjs  Read-only discovery and observations
+tests/http.test.mjs       Token, routes, error mapping
+tests/client.test.mjs     Client registration and locale parity
+tests/controls.test.mjs   Relay source, approval, interrupt, composed delegation/wait
+tests/host.test.mjs       Host wiring and bridge registration
+tests/bundle.test.mjs     Manifest, patch, and referenced-file shape
+locale/{en,zh}.json       Plugin Manager metadata
+icon.svg                  Bundle icon
 docs/HANDOFF.md           Authoritative product requirements, clone/bridge/bud logic,
                           cache rules, original-project UI and compatibility notes
 docs/FEASIBILITY.md       DSH source review, options, verdicts
 docs/ARCHITECTURE.md      Phase-1 design, storage, HTTP, UI, acceptance criteria
-package.json              ESM package, no dependencies, DSH bundle shape
+package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
 
-Planned files when phase 1 starts:
-
-```
-src/store.js              DSH storage-domain adapter
-src/manager.js            Composition manager, serialized mutations
-src/discovery.js          Live/persisted session and native-catalog discovery
-src/http.js               Same-origin JSON bridge
-client.js                 Right-sidebar tab + header button
-locale/{en,zh}.json       Plugin Manager metadata
-tests/*.test.mjs          Graph, manager, HTTP, UI registration tests
-```
+Remaining work: enable composed mode in the desktop profile (native tools off,
+tool-order/prefix fingerprint), GUI visual acceptance (grant toggles, task board,
+picker scroll, header count chip, details/reparent/rename/external flows,
+sync-native button), light/dark and narrow-width checks, Host-restart reload,
+and explicit child model-selection support.
 
 ## 5. Development rules
 
@@ -104,7 +168,7 @@ tests/*.test.mjs          Graph, manager, HTTP, UI registration tests
   than crash on them.
 - Preserve insertion order for nodes and edges; UI and tests rely on it.
 
-### Host/runtime changes (future)
+### Host/runtime changes
 
 - Use DSH storage domains, not a private JSON file.
 - Serialize mutations per composition. Two UI clicks must not interleave a
@@ -117,7 +181,7 @@ tests/*.test.mjs          Graph, manager, HTTP, UI registration tests
 - Keep the HTTP bridge same-origin, loopback-only, token-authenticated, and
   body-limited, following the `dsh-extraworkspace` pattern.
 
-### Client changes (future)
+### Client changes
 
 - Static `window.__ModuleLoader__.load` factory, module id equal to package name.
 - One right-sidebar tab and one guide entry. The header utility opens the tab.
@@ -128,29 +192,36 @@ tests/*.test.mjs          Graph, manager, HTTP, UI registration tests
 - Label native lineage separately from composition lineage. Never imply that an
   overlay edge changes `send_message` authority.
 - Disable actions that require a local session on external nodes.
+- Keep the shipped `subagent-catalog` header entry. Add a separate
+  `dsh-combinagents-count` chip (order 11) that opens this tab; never reuse the
+  native id, because that removes the native subagent tree's view/interaction
+  path.
+- Offer "open conversation" for every local session node, including persisted
+  ones; external nodes stay disabled.
 
 ## 6. Verification
 
 Before handing a change back:
 
 ```bash
-node --check index.js src/graph.js
+node --check index.js src/graph.js src/store.js src/discovery.js src/manager.js src/http.js src/controls.js client.js
 node --test tests/*.test.mjs
-node -e "for (const f of ['package.json']) JSON.parse(require('fs').readFileSync(f,'utf8'))"
+node -e "for (const f of ['package.json', 'locale/en.json', 'locale/zh.json']) JSON.parse(require('fs').readFileSync(f,'utf8'))"
 ```
 
-When runtime code exists, additionally:
+Installed in the desktop profile; the Host bridge, external-leaf listing,
+rename/reparent endpoints, shared membership resolution (including native
+ancestors), busy guard, native-subagent mirroring/sync, and client slot
+registration are verified. Still pending before claiming a working GUI:
 
-1. Install the bundle with `plugin_manager` (local directory target).
-2. Confirm the Host row is active with `cordis_inspect_query`.
-3. Confirm the right-sidebar tab occupant and header utility slot.
-4. Add a session from a different workspace and one native subagent; verify
-   source/native-parent badges.
-5. Reparent a node; verify cycle/duplicate rejection and persistence after a
-   Host restart.
-6. Verify no session header/cwd/policy event was appended by a graph mutation.
-7. Check light/dark themes and narrow width.
-8. Confirm no new tool appears in the model tool list.
+1. Refresh the page and verify the scrollable picker, one-line filter, details,
+   reparent/rename, external add, delete dialog, the separate
+   `dsh-combinagents-count` chip (it must open this tab), the retained native
+   `subagent-catalog` entry, and the sync-native button.
+2. Check light/dark themes and narrow width.
+3. Restart the Host and confirm the composition reloads (the durable record file
+   exists; the restart itself was not performed).
+
 
 ## 7. Known pitfalls
 

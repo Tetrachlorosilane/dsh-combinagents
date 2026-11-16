@@ -1,3 +1,6 @@
 - insert:
     - id: dsh-combinagents
       name: '@dsh-external/dsh-combinagents'
+      config:
+        mode: overlay
+        autoGrantDelegatedEdges: true

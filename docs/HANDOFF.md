@@ -3,8 +3,18 @@
 > **文档地位**：这是交给下一位实现代理的产品需求与设计基线。  
 > 与 `docs/ARCHITECTURE.md` 或 `docs/FEASIBILITY.md` 冲突时，**需求以本文为准**；
 > DSH 技术事实仍以 `docs/FEASIBILITY.md` 的源码核对结果为准。  
-> **当前状态**：仓库只有脚手架、纯图模型和调研文档；`index.js` 是 inert 入口。
-> 还没有可用的运行时或 UI。不要把它当作已完成插件安装。
+> **当前状态**：Phase 1 走路骨架已安装到 `desktop` profile（`application: applied`）。
+> 已实测：Host 桥（bootstrap/create/add/add-external/rename/set-parent/state/summary/
+> sync-native/根保护）、外部叶子列表、共享组合解析（从成员会话或原生祖先打开同一份配置）、
+> 工作时 409 `AGENT_BUSY`、`subagent/start` 自动镜像、观测字段
+> （cwd/sandbox/preset/agentPreset/native parent）、`combinagents` domain 落盘文件、
+> 右侧栏 tab/header 与**另加**的 `dsh-combinagents-count` 入口均为 active；原生
+> `subagent-catalog` 入口保留，非根会话仍可从原生树查看/打开；三工具已注册并实测
+> （list / send / interrupt），逐边授权、审计行与原生 relay source 已落盘；
+> 会话状态区分 live / saved / 真正 archived（`workspaceRegistry.archivedSessionIds`），
+> 选择器先返回元数据、标题按 `/titles` 延迟批量折叠，不再为打开选择器扫描全部会话日志。
+> GUI 渲染尚未目视验证：headless 浏览器拿不到 Web 登录 token，且 obscura 默认拦截
+> loopback。克隆与 Bridge 仍未实现。
 
 ## 0. 给接手代理的摘要
 
@@ -123,11 +133,13 @@
 （新 system prompt、新工具、改 cwd、改 preset、改权限、把说明插到历史前面）
 都必须有明确理由，并在 UI/文档中说明缓存影响。
 
-### R8 — 模型表面尽量薄
+### R8 — 模型表面：受控的三工具
 
-默认不新增模型工具、不注入 prompt、不改变现有工具 schema。跨树 Bridge 如果
-确实需要模型可调用，再单独评估“一个显式工具”的方案；不能假设零工具一定成立，
-但也不能无理由扩大模型表面。
+阶段 A 注册三个**静态**组合控制工具（`composition_list_agents` /
+`composition_send_message` / `composition_interrupt_agent`），参数与原生控制工具
+对齐；不注入 prompt、不修改原生 `send_message`/`interrupt_agent` schema。
+消息使用原生 relay source，中断只在组合祖先→后代且逐边授权成立时使用用户授权。
+Composed 模式再把名字/描述替换为原生同款。
 
 ### R9 — UI 与既有插件共存
 
@@ -271,13 +283,15 @@ Composition Layer
 
 ### 5.2 Composition
 
-- 存储：`combinagents` domain，`compositions` table，`per-record`；
-- 一个根 Session 一份组合（phase 1 建议）；
+- 存储：profile 级单一 `combinagents` domain，`compositions` table，`per-record`，
+  key = `rootSessionId`；记录里保留 `composition.id`，便于将来一个根多份；
+- 一个根 Session 一份组合（phase 1）；
 - 节点：`sessionId`、label、kind（session/external）、source、provider、native parent、
   cwd 快照、permission preset 快照；
 - 边：`reports-to`，严格森林；
 - 操作：add/remove/rename/set-parent/set-title；
-- 删除节点只删除图节点，子节点提升为根；不删除 DSH Session。
+- 删除非根节点时弹框，由用户选择“下属提升为根”或“级联删子树”；两者都只删图节点，
+  不删 DSH Session；根会话节点不可删，删除组合是独立动作。
 
 纯图模型已在 `src/graph.js` 实现，接手的代理应复用它，不要重写一套图逻辑。
 
@@ -452,12 +466,14 @@ BridgeAudit
 
 ## 8. UI 设计与兼容点
 
-### 8.1 本会话原项目 `dsh-extraworkspace` 的 UI（可复用经验）
+### 8.1 兼容参考：`dsh-extraworkspace` 的 UI
 
-> 这里把“本会话原项目”理解为之前完成的 `dsh-extraworkspace`。如果你指的是另一个项目，
-> 请让接手代理先更正本节，不要按错误前提实现。
+> **已确认**：这里说的“原项目”指另一会话中完成的 `dsh-extraworkspace`（每会话额外工作区
+> 插件）。它不属于本仓库，本项目不实现、不修改、也不负责修复它；本节只作为**入口共存与
+> 交互模式**的兼容参考。若与其实际行为冲突，以实际行为为准，并只修正本插件的兼容策略，
+> 不要扩大到其内部实现。
 
-原项目是“每会话额外工作区”插件，最终 UI 形态如下：
+`dsh-extraworkspace` 是“每会话额外工作区”插件，其最终 UI 形态如下（供参考，不是本项目的需求）：
 
 - **右侧栏 tab**：
   - tab id `@dsh-extraworkspace/extra`，kind `dsh-extraworkspace`；
@@ -496,8 +512,9 @@ BridgeAudit
   - 只使用共享 `react`/`react-dom`；
   - 客户端 bundle 会被页面缓存，改 `client.js` 后刷新页面。
 
-这些是“原项目”的既有设计资产。新插件可以复用交互模式，但不要直接复制其
-ACL/Forge/worktree 业务逻辑。
+这些是 `dsh-extraworkspace` 的既有设计资产，只用于确认“两个插件能否共存、入口会不会互相
+遮挡、存储/路由/样式会不会冲突”。新插件可以复用交互模式，但不要直接复制其
+ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的范围。
 
 ### 8.2 新插件建议 UI
 
@@ -508,6 +525,12 @@ ACL/Forge/worktree 业务逻辑。
   - 标题、根 Session、刷新；
   - 组合树（严格森林）+ 来源徽章 + 原生父节点；
   - 节点详情：cwd、sandbox mode、permission preset、live/archived/external；
+  - 外部节点默认折叠为单节点，展开看 provider 与详情；已挂节点在 `subagents`
+    服务不可用时仍显示，只是原生字段标“不可用”；
+  - 删除非根节点时弹框选择“提升为根 / 级联删子树”，两者都只删图节点；
+    根会话节点不提供删除，删除组合是独立入口；
+  - 节点详情提供“打开会话”，仅对 live 本地 Session 可用；外部/归档节点禁用；
+    跳转会切换当前会话，组合 tab 仍留在根会话下，需重新选中根会话返回；
   - 添加节点（搜索 live/persisted sessions）；
   - 父节点选择/拖拽（先做可访问的 select，再考虑拖拽）；
   - “克隆子树”“出芽为根”“Bridge 授权”作为显式动作；
@@ -516,7 +539,7 @@ ACL/Forge/worktree 业务逻辑。
 - 窄宽度用垂直树/列表，不强制自由画布；全屏用 DSH sidebar 的 fullscreen 表现。
 - 所有字符串进入 `dsh-combinagents` locale 命名空间。
 
-### 8.3 与原项目/Forge 的潜在兼容点
+### 8.3 与 `dsh-extraworkspace` / Forge 的潜在兼容点
 
 1. **tab id/kind 冲突**：必须用独立 id/kind，不能复用 `dsh-extraworkspace`。
 2. **头部按钮**：`conversation.session.header.utilities` 的 id 唯一，order 避开 12；
@@ -532,9 +555,9 @@ ACL/Forge/worktree 业务逻辑。
 8. **存储/路由**：独立 storage domain、`/dsh-combinagents` 路由、token、locale、CSS 前缀。
 9. **DSH 版本**：都按 `0.2.2-rc.3` 核对；升级后重新检查 sidebar/header/subagent 契约。
 10. **客户端缓存**：两个插件都需刷新页面才能加载新 bundle；HMR 只在 watcher 运行时生效。
-11. **模型工具**：原项目零新增工具；新插件 phase 1 也应默认零新增工具，避免工具
+11. **模型工具**：`dsh-extraworkspace` 零新增工具；新插件 phase 1 也应默认零新增工具，避免工具
     schema 改变缓存前缀。
-12. **Windows**：原项目的 ACL 逻辑是 Windows 专用；新插件的组合/克隆逻辑应尽量平台无关。
+12. **Windows**：`dsh-extraworkspace` 的 ACL 逻辑是 Windows 专用；新插件的组合/克隆逻辑应尽量平台无关。
 
 ## 9. 技术方案建议
 
@@ -575,15 +598,32 @@ ACL/Forge/worktree 业务逻辑。
 
 ### Phase 0 — 脚手架（已完成）
 
-- 纯图模型 + 13 个测试；
+- 纯图模型 + 17 个测试；
 - 需求/可行性/架构文档；
 - Git 初始化；
 - inert bundle entry。
 
-### Phase 1 — Composition 基础
+### Phase 1 — Composition 基础（已安装，GUI 待目视验收）
 
-- 存储、发现、图编辑、HTTP、右侧栏 tab、header 按钮；
-- 只读展示 cwd/policy/source/native parent；
+- 已实现：存储、发现（含外部叶子）、创建/增删/删除组合、改父/重命名、节点详情
+  （live 本地会话可打开会话）、cwd/policy/来源/原生父节点徽章、HTTP、右侧栏 tab、
+  header 按钮、guide；
+- 已实现：根节点保护、提升/级联删除、按根串行化写入、一个 Session 只属于一个组合
+  并从任意成员解析、工作时受影响分支的增删改保护；
+- 已实现：`subagent/start` 镜像原生子代理到组合；保留原生 `subagent-catalog` 入口，
+  另加 `dsh-combinagents-count` 入口显示数量并打开本插件 tab；未改动任何工具 schema
+  或消息路由；
+- 已实现：逐边 `allowMessage` / `allowInterrupt` 授权、三工具、原生 relay source、
+  跨工作区 + 非完全权限时的 approval 门、审计表；
+- 已实现：插件自有任务板（`tasks` 表 + tab UI + `/tasks`、`/create-task`、
+  `/update-task`，revision 冲突保护）；不写 DSH Team；
+- 已实现（未启用）：`mode: 'composed'` 注册六个原生同名工具，其中
+  `subagent`/`subagent_fork` 通过 `startActivation` 创建、挂入组合、用原生名
+  标记并自动授权该边；`send_message` 对原生后代优先走原生 relay（含冷恢复），
+  `wait_agent` 复制原生 inbox 等待语义；clean headless profile 已实测
+  subagent → child → wait → send → wait → interrupt 全链路；
+- 待补：GUI 目视验收（滚动检索、计数入口、详情/改父/重命名/外部添加）、浅色/深色与
+  窄宽度检查、Host 重启后重载验证；
 - 不新增模型工具；
 - 验收：组合持久化、循环/重复拒绝、原 Session 无写入。
 
@@ -623,16 +663,33 @@ ACL/Forge/worktree 业务逻辑。
 - **外部代理**：不可恢复，UI 必须明确；
 - **DSH 版本漂移**：subagent/session 契约变化快。
 
-### 必须确认的问题
+### 已确认的决策（2026-11-16，读法 A）
+
+| 问题 | 结论 |
+|---|---|
+| 组合归属 | profile 级单一 `combinagents` domain，记录按 `rootSessionId` 每根一份；UI 入口仍按根会话 |
+| 一个 Session 出现在多个组合 | **不允许**；一个 Session 只属于一个组合，tab 从任意成员解析到同一份配置 |
+| 工作时编辑约束 | 阻断受影响分支（节点自身、组合父系、组合子系）的增删改；旁系节点仍可编辑 |
+| 原生子代理接入 | `subagent/start` 自动镜像为组合节点/边；不改工具 schema、不改消息路由 |
+| 子代理数量入口 | 保留原生 `subagent-catalog` 入口；另加 `dsh-combinagents-count` chip（order 11）打开本插件 tab，避免丢失非根会话的原生查看/交互路径 |
+| 删除节点 | 非根节点弹框二选一：下属提升为根 / 级联删子树；两者都只删图节点；根会话节点不可删 |
+| 根节点保护 | 根会话节点拒绝删除（`ROOT_PROTECTED`）；删除组合是独立确认动作 |
+| 外部/一次性代理 | 发现条件化；已挂节点始终可见；默认折叠为单节点，展开看详情；不可路由/克隆/打开 |
+| 打开会话 | 所有本地 Session 节点（含 saved）可打开；外部节点禁用；跳转会切走当前会话，组合 tab 仍在根会话下 |
+| 逐边授权 | 消息 `allowMessage`、中断 `allowInterrupt`；默认 deny；按组合路径逐边检查 |
+| 模型工具 | 三个静态 `composition_*` 工具；参数/返回对齐原生；原生工具 schema 不改；`mode: 'composed'` 注册六个原生同名工具（含 `subagent`/`subagent_fork`/`wait_agent`）；未启用，需关原生控制工具、复现 prompt 段并验证顺序/前缀 |
+| 消息 source | 复用原生 `{ kind: 'agent-message', form: 'relay', senderSessionId }` 与 relay 前缀 |
+| 敏感确认 | 仅跨工作区且调用方非完全权限时走 `approval.request`；`allowed-once` 才继续 |
+| Team | 插件自有任务板已实现（`tasks` 表、创建/开始/完成/重开/删除、revision 冲突）；不写 DSH Team；模型任务工具后置 |
+
+### 仍需确认（后续阶段）
 
 1. 克隆产生**新 Session id** 是否可接受？（原生迁移不可行）
 2. 分支是复制整个根树，还是只复制选中的子树？
 3. Team 任务板：复制并重映射，还是从空板开始？
 4. Bridge 是否需要模型可调用？如果需要，是否接受新增一个显式工具？
-5. 一个 Session 是否可以出现在多个组合中？
-6. 组合归属：按 root session，还是 profile/workspace？
-7. 出芽后原节点默认保留还是提示归档？
-8. 是否允许“克隆时改 cwd/preset/权限”？（会破缓存，应默认禁止）
+5. 出芽后原节点默认保留还是提示归档？
+6. 是否允许“克隆时改 cwd/preset/权限”？（会破缓存，应默认禁止）
 
 ## 12. 交接清单
 
@@ -666,5 +723,5 @@ ACL/Forge/worktree 业务逻辑。
 - `docs/ARCHITECTURE.md` — 组合层技术架构、HTTP、UI、验收；
 - `AGENTS.md` — 工作契约与验证清单；
 - `src/graph.js` — 已实现的纯图模型；
-- `tests/graph.test.mjs` — 13 个图不变量测试；
-- 同会话原项目 `dsh-extraworkspace` 的 UI/Forge 兼容经验（第 8.1 节）。
+- `tests/graph.test.mjs` — 17 个图不变量测试；
+- 另一会话的 `dsh-extraworkspace`（另一插件，仅作入口/兼容校验参考，见第 8.1 节）。

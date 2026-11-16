@@ -1,0 +1,424 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
+import { createApi, isLoopback, MAX_BODY_BYTES, TOKEN_HEADER } from '../src/http.js'
+import { createManager } from '../src/manager.js'
+
+const TOKEN = 'test-token'
+
+function summary(sessionId, title) {
+  return {
+    sessionId,
+    title,
+    cwd: `/work/${sessionId}`,
+    source: 'top-level',
+    nativeParentSessionId: null,
+    agentPreset: null,
+    live: true,
+    persisted: true,
+  }
+}
+
+function makeHarness({ running = new Set() } = {}) {
+  const data = new Map()
+  const policies = new Map()
+  const tasks = new Map()
+  const store = {
+    mode: 'memory',
+    async get(key) {
+      return data.get(key)
+    },
+    async put(key, value) {
+      data.set(key, value)
+    },
+    async delete(key) {
+      data.delete(key)
+    },
+    async list() {
+      return [...data.entries()]
+    },
+    async getPolicy(key) {
+      return policies.get(key)
+    },
+    async putPolicy(key, value) {
+      policies.set(key, value)
+    },
+    async appendAudit() {},
+    async listAudit() {
+      return []
+    },
+    async getTask(key) {
+      return tasks.get(key)
+    },
+    async putTask(key, value) {
+      tasks.set(key, value)
+    },
+    async deleteTask(key) {
+      tasks.delete(key)
+    },
+    async listTasks(rootSessionId) {
+      return [...tasks.entries()].filter(([, task]) => task.rootSessionId === rootSessionId)
+    },
+  }
+  const summaries = new Map([
+    ['s-a', summary('s-a', 'Lead')],
+    ['s-b', summary('s-b', 'Reviewer')],
+    ['s-c', summary('s-c', 'Checker')],
+  ])
+  const discovery = {
+    async describe(sessionId) {
+      return summaries.get(sessionId) ?? null
+    },
+    async describeMany(ids) {
+      const result = {}
+      for (const id of ids) {
+        const value = summaries.get(id)
+        if (value !== undefined) result[id] = value
+      }
+      return result
+    },
+    async list(request = {}) {
+      const text = (request.query ?? '').toLowerCase()
+      const sessions = [...summaries.values()].filter((session) => `${session.title} ${session.sessionId} ${session.cwd ?? ''}`
+        .toLowerCase()
+        .includes(text))
+      return { sessions, complete: true }
+    },
+    async listNative(rootSessionId) {
+      return {
+        available: true,
+        leaves: [{
+          externalId: 'external-1',
+          label: 'ACP helper',
+          mode: 'external',
+          nativeParentSessionId: rootSessionId,
+          depth: 1,
+          path: null,
+          activity: 'inactive',
+        }],
+        diagnostics: [],
+      }
+    },
+    async countNative() {
+      return { available: true, count: 2 }
+    },
+    async listTree() {
+      return { available: true, children: [] }
+    },
+  }
+  const manager = createManager({
+    store,
+    discovery,
+    agents: () => ({ get: (id) => ({ status: running.has(id) ? 'running' : 'idle' }) }),
+  })
+  const api = createApi({ manager, discovery, token: TOKEN, version: '0.1.0', platform: 'test' })
+  return { api, manager, running }
+}
+
+async function call(api, request = {}) {
+  const response = await api.handle({
+    method: request.method ?? 'GET',
+    url: request.url ?? '/dsh-combinagents/bootstrap',
+    headers: request.headers ?? {},
+    body: request.body ?? '',
+    remoteAddress: request.remoteAddress ?? '127.0.0.1',
+  })
+  return { status: response.status, headers: response.headers, data: JSON.parse(response.body) }
+}
+
+function authorized(method, url, body) {
+  return {
+    method,
+    url,
+    body,
+    headers: {
+      [TOKEN_HEADER]: TOKEN,
+      'content-type': 'application/json',
+    },
+  }
+}
+
+test('bootstrap returns the token and rejects non-loopback peers', async () => {
+  const { api } = makeHarness()
+  assert.equal(isLoopback('127.0.0.1'), true)
+  assert.equal(isLoopback('::1'), true)
+  assert.equal(isLoopback('::ffff:127.0.0.1'), true)
+  assert.equal(isLoopback('10.0.0.7'), false)
+
+  const ok = await call(api)
+  assert.equal(ok.status, 200)
+  assert.equal(ok.data.token, TOKEN)
+  assert.equal(ok.data.supported, true)
+
+  const remote = await call(api, { remoteAddress: '10.0.0.7' })
+  assert.equal(remote.status, 403)
+  assert.equal(remote.data.error.code, 'FORBIDDEN')
+})
+
+test('requires the token outside bootstrap', async () => {
+  const { api } = makeHarness()
+  const missing = await call(api, { url: '/dsh-combinagents/state?rootSessionId=s-a' })
+  assert.equal(missing.status, 401)
+  const wrong = await call(api, {
+    url: '/dsh-combinagents/state?rootSessionId=s-a',
+    headers: { [TOKEN_HEADER]: 'wrong' },
+  })
+  assert.equal(wrong.status, 401)
+})
+
+test('creates a composition and returns observed nodes', async () => {
+  const { api } = makeHarness()
+  const created = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  assert.equal(created.status, 200)
+  assert.equal(created.data.composition.rootSessionId, 's-a')
+  assert.equal(created.data.composition.nodes.length, 1)
+
+  const state = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))
+  assert.equal(state.status, 200)
+  assert.equal(state.data.observations['s-a'].title, 'Lead')
+  assert.equal(state.data.storage, 'memory')
+})
+
+test('adds and removes nodes, protecting the root-session node', async () => {
+  const { api } = makeHarness()
+  await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  const state = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))
+  const root = state.data.composition.nodes[0]
+
+  const added = await call(api, authorized('POST', '/dsh-combinagents/add-node', JSON.stringify({
+    rootSessionId: 's-a',
+    sessionId: 's-b',
+    parentId: root.id,
+  })))
+  assert.equal(added.status, 200)
+  assert.equal(added.data.composition.nodes.length, 2)
+  const b = added.data.composition.nodes.find((node) => node.sessionId === 's-b')
+
+  const protectedRoot = await call(api, authorized('POST', '/dsh-combinagents/remove-node', JSON.stringify({
+    rootSessionId: 's-a',
+    nodeId: root.id,
+    mode: 'cascade',
+  })))
+  assert.equal(protectedRoot.status, 403)
+  assert.equal(protectedRoot.data.error.code, 'ROOT_PROTECTED')
+
+  const removed = await call(api, authorized('POST', '/dsh-combinagents/remove-node', JSON.stringify({
+    rootSessionId: 's-a',
+    nodeId: b.id,
+    mode: 'cascade',
+  })))
+  assert.equal(removed.status, 200)
+  assert.equal(removed.data.composition.nodes.length, 1)
+})
+
+test('validates JSON, body size, route, and method', async () => {
+  const { api } = makeHarness()
+  const malformed = await call(api, authorized('POST', '/dsh-combinagents/create', '{'))
+  assert.equal(malformed.status, 400)
+  assert.equal(malformed.data.error.code, 'INVALID_JSON')
+
+  const oversized = await call(api, authorized('POST', '/dsh-combinagents/create', 'x'.repeat(MAX_BODY_BYTES + 1)))
+  assert.equal(oversized.status, 413)
+
+  const unknown = await call(api, authorized('GET', '/dsh-combinagents/nope'))
+  assert.equal(unknown.status, 404)
+
+  const wrongMethod = await call(api, authorized('GET', '/dsh-combinagents/create'))
+  assert.equal(wrongMethod.status, 405)
+})
+
+test('lists sessions and deletes a composition', async () => {
+  const { api } = makeHarness()
+  const sessions = await call(api, authorized('GET', '/dsh-combinagents/sessions?query=review'))
+  assert.equal(sessions.status, 200)
+  assert.equal(sessions.data.sessions[0].sessionId, 's-b')
+
+  await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  const deleted = await call(api, authorized('POST', '/dsh-combinagents/delete-composition', JSON.stringify({ rootSessionId: 's-a' })))
+  assert.equal(deleted.status, 200)
+  const state = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))
+  assert.equal(state.data.composition, null)
+})
+
+test('maps graph rejections to stable status codes', async () => {
+  const { api } = makeHarness()
+  const missing = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-missing'))
+  assert.equal(missing.status, 200)
+  assert.equal(missing.data.composition, null)
+
+  const noComposition = await call(api, authorized('POST', '/dsh-combinagents/add-node', JSON.stringify({
+    rootSessionId: 's-missing',
+    sessionId: 's-b',
+  })))
+  assert.equal(noComposition.status, 404)
+  assert.equal(noComposition.data.error.code, 'COMPOSITION_NOT_FOUND')
+})
+
+test('adds external leaves, renames nodes, and reparents them', async () => {
+  const { api } = makeHarness()
+  await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  let state = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))
+  const root = state.data.composition.nodes[0]
+
+  const external = await call(api, authorized('POST', '/dsh-combinagents/add-external', JSON.stringify({
+    rootSessionId: 's-a',
+    label: 'ACP helper',
+    provider: 'external',
+    nativeParentSessionId: 's-a',
+    parentId: root.id,
+  })))
+  assert.equal(external.status, 200)
+  const ext = external.data.composition.nodes.find((node) => node.kind === 'external')
+  assert.equal(ext.sessionId, null)
+
+  const renamed = await call(api, authorized('POST', '/dsh-combinagents/rename-node', JSON.stringify({
+    rootSessionId: 's-a',
+    nodeId: ext.id,
+    label: 'Renamed helper',
+  })))
+  assert.equal(renamed.status, 200)
+  assert.ok(renamed.data.composition.nodes.some((node) => node.id === ext.id && node.label === 'Renamed helper'))
+
+  const moved = await call(api, authorized('POST', '/dsh-combinagents/set-parent', JSON.stringify({
+    rootSessionId: 's-a',
+    nodeId: ext.id,
+    parentId: null,
+  })))
+  assert.equal(moved.status, 200)
+  assert.ok(!moved.data.composition.edges.some((edge) => edge.childId === ext.id))
+
+  state = await call(api, authorized('GET', '/dsh-combinagents/external?rootSessionId=s-a'))
+  assert.equal(state.status, 200)
+  assert.equal(state.data.available, true)
+  assert.equal(state.data.leaves[0].label, 'ACP helper')
+})
+
+test('resolves state and summary from a member session', async () => {
+  const { api } = makeHarness()
+  const created = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  const root = created.data.composition.nodes[0]
+  await call(api, authorized('POST', '/dsh-combinagents/add-node', JSON.stringify({
+    rootSessionId: 's-a',
+    sessionId: 's-b',
+    parentId: root.id,
+  })))
+
+  const state = await call(api, authorized('GET', '/dsh-combinagents/state?sessionId=s-b'))
+  assert.equal(state.status, 200)
+  assert.equal(state.data.rootSessionId, 's-a')
+  assert.equal(state.data.composition.nodes.length, 2)
+
+  const summary = await call(api, authorized('GET', '/dsh-combinagents/summary?sessionId=s-b'))
+  assert.equal(summary.status, 200)
+  assert.equal(summary.data.rootSessionId, 's-a')
+  assert.equal(summary.data.compositionNodes, 2)
+  assert.equal(summary.data.subagents, 2)
+})
+
+test('returns 409 while an affected branch is running', async () => {
+  const running = new Set()
+  const { api } = makeHarness({ running })
+  const created = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  const root = created.data.composition.nodes[0]
+  await call(api, authorized('POST', '/dsh-combinagents/add-node', JSON.stringify({
+    rootSessionId: 's-a',
+    sessionId: 's-b',
+    parentId: root.id,
+  })))
+  running.add('s-b')
+  const blocked = await call(api, authorized('POST', '/dsh-combinagents/add-node', JSON.stringify({
+    rootSessionId: 's-a',
+    sessionId: 's-c',
+    parentId: root.id,
+  })))
+  assert.equal(blocked.status, 409)
+  assert.equal(blocked.data.error.code, 'AGENT_BUSY')
+})
+
+test('stores per-edge grants and exposes them on state', async () => {
+  const { api } = makeHarness()
+  const created = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  const root = created.data.composition.nodes[0]
+  const added = await call(api, authorized('POST', '/dsh-combinagents/add-node', JSON.stringify({
+    rootSessionId: 's-a',
+    sessionId: 's-b',
+    parentId: root.id,
+  })))
+  const edge = added.data.composition.edges[0]
+  let state = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))
+  assert.equal(state.data.grants[edge.id].allowMessage, false)
+
+  const updated = await call(api, authorized('POST', '/dsh-combinagents/set-grant', JSON.stringify({
+    rootSessionId: 's-a',
+    edgeId: edge.id,
+    allowMessage: true,
+    allowInterrupt: true,
+  })))
+  assert.equal(updated.status, 200)
+  assert.equal(updated.data.grants[edge.id].allowMessage, true)
+
+  state = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))
+  assert.equal(state.data.grants[edge.id].allowInterrupt, true)
+  const grants = await call(api, authorized('GET', '/dsh-combinagents/grants?rootSessionId=s-a'))
+  assert.equal(grants.data.grants[edge.id].allowMessage, true)
+})
+
+test('creates and transitions plugin-owned tasks with revision conflicts', async () => {
+  const { api } = makeHarness()
+  const created = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  const root = created.data.composition.nodes[0]
+  const added = await call(api, authorized('POST', '/dsh-combinagents/create-task', JSON.stringify({
+    rootSessionId: 's-a',
+    subject: 'Review plan',
+    description: 'Read it',
+    ownerNodeId: root.id,
+  })))
+  assert.equal(added.status, 200)
+  assert.equal(added.data.tasks.length, 1)
+  const task = added.data.tasks[0]
+
+  const started = await call(api, authorized('POST', '/dsh-combinagents/update-task', JSON.stringify({
+    rootSessionId: 's-a',
+    taskId: task.id,
+    expectedRevision: 1,
+    action: 'start',
+  })))
+  assert.equal(started.status, 200)
+  assert.equal(started.data.tasks[0].status, 'in_progress')
+
+  const conflict = await call(api, authorized('POST', '/dsh-combinagents/update-task', JSON.stringify({
+    rootSessionId: 's-a',
+    taskId: task.id,
+    expectedRevision: 1,
+    action: 'complete',
+  })))
+  assert.equal(conflict.status, 409)
+  assert.equal(conflict.data.error.code, 'TASK_CONFLICT')
+
+  const state = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))
+  assert.equal(state.data.tasks[0].status, 'in_progress')
+  const tasks = await call(api, authorized('GET', '/dsh-combinagents/tasks?rootSessionId=s-a'))
+  assert.equal(tasks.data.tasks.length, 1)
+
+  const completed = await call(api, authorized('POST', '/dsh-combinagents/update-task', JSON.stringify({
+    rootSessionId: 's-a',
+    taskId: task.id,
+    expectedRevision: 2,
+    action: 'complete',
+  })))
+  assert.equal(completed.data.tasks[0].status, 'completed')
+  const reopened = await call(api, authorized('POST', '/dsh-combinagents/update-task', JSON.stringify({
+    rootSessionId: 's-a',
+    taskId: task.id,
+    expectedRevision: 3,
+    action: 'reopen',
+  })))
+  assert.equal(reopened.data.tasks[0].status, 'pending')
+  const deleted = await call(api, authorized('POST', '/dsh-combinagents/update-task', JSON.stringify({
+    rootSessionId: 's-a',
+    taskId: task.id,
+    expectedRevision: 4,
+    action: 'delete',
+  })))
+  assert.deepEqual(deleted.data.tasks, [])
+})

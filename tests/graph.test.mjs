@@ -12,6 +12,7 @@ import {
   descendantsOf,
   isAncestor,
   removeNode,
+  removeSubtree,
   renameNode,
   rootsOf,
   setParent,
@@ -139,6 +140,53 @@ test('removing a middle node promotes its reports and clears a deleted root', ()
 
   composition = removeNode(composition, a.id)
   assert.equal(composition.rootSessionId, null)
+})
+
+test('removes a subtree and leaves siblings in place', () => {
+  let composition = createComposition({ nodes: [root('A', 's-a')] })
+  const a = composition.nodes[0]
+  composition = addNode(composition, child('B', 's-b'), { parentId: a.id })
+  composition = addNode(composition, child('D', 's-d'), { parentId: a.id })
+  const b = composition.nodes.find((node) => node.sessionId === 's-b')
+  composition = addNode(composition, child('C', 's-c'), { parentId: b.id })
+
+  composition = removeSubtree(composition, b.id)
+  assert.deepEqual(composition.nodes.map((node) => node.label), ['A', 'D'])
+  assert.deepEqual(childrenOf(composition, a.id).map((node) => node.label), ['D'])
+  assert.equal(composition.edges.length, 1)
+})
+
+test('clears rootSessionId when the removed subtree holds the root session', () => {
+  let composition = createComposition({
+    title: 'Team',
+    rootSessionId: 's-a',
+    nodes: [root('A', 's-a')],
+  })
+  const a = composition.nodes[0]
+  composition = addNode(composition, child('B', 's-b'), { parentId: a.id })
+
+  composition = removeSubtree(composition, a.id)
+  assert.equal(composition.rootSessionId, null)
+  assert.deepEqual(composition.nodes, [])
+  assert.deepEqual(composition.edges, [])
+})
+
+test('rejects an unknown subtree root', () => {
+  const composition = createComposition({ nodes: [root()] })
+  assert.throws(
+    () => removeSubtree(composition, 'missing'),
+    (error) => error instanceof CompositionError && error.code === 'UNKNOWN_NODE',
+  )
+})
+
+test('removeSubtree does not mutate its input', () => {
+  let composition = createComposition({ nodes: [root('A', 's-a')] })
+  const a = composition.nodes[0]
+  composition = addNode(composition, child('B', 's-b'), { parentId: a.id })
+  const snapshot = JSON.parse(JSON.stringify(composition))
+
+  removeSubtree(composition, a.id)
+  assert.deepEqual(composition, snapshot)
 })
 
 test('renames a composition and a node', () => {

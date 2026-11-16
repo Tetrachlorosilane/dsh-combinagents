@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Agent compositions",
+    "description": "Arrange agents and subagents into a user-owned reporting overlay while each session keeps its own workspace and permissions."
+  }
+}
