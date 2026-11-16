@@ -86,8 +86,10 @@ Append this to the **profile** `cordis.patch.yml` (for the desktop profile:
 
 - Tool order and the exact model-prefix fingerprint have not been compared with
   the native tool set.
-- Explicit child `provider`/`model`/`reasoning_effort` selection is rejected with
-  `UNSUPPORTED_MODEL_SELECTION`; omit those fields.
+- Explicit child `provider`/`model`/`reasoning_effort` selection is validated
+  through the live LLM route and forwarded as child agent options. The composed
+  tool does not enforce the desktop subagent model-selection allowlist; it only
+  requires a resolvable route.
 - The native `subagent`/`subagent_fork`/`control` tools are disabled only for
   sessions using this preset; a session on `standard`/`ptc` still mounts the
   native tools and shadows the composed names.

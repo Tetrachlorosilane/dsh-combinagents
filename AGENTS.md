@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, and a guide entry
   (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 17 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (72 total);
+  client-registration, host-wiring, controls, and bundle-shape tests (74 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`). Live
@@ -43,7 +43,9 @@ implemented behind config but not enabled in this profile. It includes
 `list_agents`, `send_message`, `interrupt_agent`, `subagent`, `subagent_fork`,
 `wait_agent`, and `composition_task`; `subagent`/`subagent_fork` start a native activation under the
 caller, mirror the child into the composition, label it with its native name,
-and auto-grant the delegation edge. `send_message` prefers the native relay for
+and auto-grant the delegation edge. Explicit child
+`provider`/`model`/`reasoning_effort` selection is validated through the live
+LLM route and forwarded as child agent options. `send_message` prefers the native relay for
 native descendants (including cold resume), falling back to `followup`/`steer`
 for live cross-tree nodes. Composed mode also restores the native
 `subagent:identity` context and `tool:subagent` delegation guidance. A clean
@@ -157,7 +159,7 @@ Remaining work: enable composed mode in the desktop profile (native tools off,
 tool-order/prefix fingerprint), GUI visual acceptance (grant toggles, task board,
 picker scroll, header count chip, details/reparent/rename/external flows,
 sync-native button), light/dark and narrow-width checks, Host-restart reload,
-and explicit child model-selection support.
+and clone/bud.
 
 ## 5. Development rules
 

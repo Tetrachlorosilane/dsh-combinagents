@@ -396,7 +396,8 @@ for native descendants, so cold resume and the native relay source are reused;
 live cross-tree targets fall back to `followup`/`steer`. `wait_agent` mirrors the
 native caller-inbox wait. Composed mode also restores the native
 `subagent:identity` context and `tool:subagent` delegation guidance. Explicit
-child LLM selection is rejected with `UNSUPPORTED_MODEL_SELECTION`. Composed
+child LLM selection is validated through the live LLM route and forwarded as
+child agent options. Composed
 mode is not enabled in the desktop profile. A clean headless profile verified
 the real chain: tool list, subagent creation and attachment, wait, follow-up
 send with cold resume, second wait, and interrupt. Enabling it in the desktop

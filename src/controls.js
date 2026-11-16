@@ -195,6 +195,7 @@ export function createControls({
   const sandboxPolicy = () => ctx.get?.('sandboxPolicy')
   const tools = () => ctx.get?.('tools')
   const systemPrompt = () => ctx.get?.('systemPrompt')
+  const llm = () => ctx.get?.('llm')
 
   /**
    * @param {string} sessionId - target session.
@@ -327,11 +328,25 @@ export function createControls({
       caller = await callerContext(agent)
     }
     if (caller === null) throw new CompositionError('NOT_IN_COMPOSITION', NOT_IN_COMPOSITION)
+    let childOptions
     if (args.provider !== undefined || args.model !== undefined || args.reasoning_effort !== undefined) {
-      throw new CompositionError(
-        'UNSUPPORTED_MODEL_SELECTION',
-        'composed subagent does not support explicit child LLM selection yet; omit provider, model, and reasoning_effort',
-      )
+      if (args.provider === undefined || args.model === undefined) {
+        throw new CompositionError('INVALID_MODEL_SELECTION', 'child LLM provider and model must be supplied together')
+      }
+      const llmService = llm()
+      if (typeof llmService?.resolveCallConfig !== 'function') {
+        throw new CompositionError('LLM_UNAVAILABLE', 'cannot validate the selected child LLM route without the llm service')
+      }
+      await llmService.resolveCallConfig({
+        provider: args.provider,
+        model: args.model,
+        ...(args.reasoning_effort === undefined ? {} : { reasoningEffort: args.reasoning_effort }),
+      }, signal)
+      childOptions = {
+        provider: args.provider,
+        model: args.model,
+        ...(args.reasoning_effort === undefined ? {} : { reasoningEffort: args.reasoning_effort }),
+      }
     }
     const service = subagents()
     if (service?.startActivation === undefined) {
@@ -347,6 +362,7 @@ export function createControls({
       signal,
       delivery: 'parent',
       ...(typeof maxDepth === 'number' ? { maxDepth } : {}),
+      ...(childOptions === undefined ? {} : { agentOptions: childOptions }),
     })
     try {
       await manager.autoAttach(agent.id, {
@@ -855,7 +871,7 @@ export function createControls({
   }
 
   const definitions = composed
-    ? [listAgents, sendMessage, interruptAgent, waitTool, subagentTool, forkTool, taskTool]
+    ? [waitTool, listAgents, sendMessage, interruptAgent, subagentTool, forkTool, taskTool]
     : [listAgents, sendMessage, interruptAgent]
 
   /**

@@ -17,6 +17,7 @@ function harness(options = {}) {
   const grantedEdges = []
   const nativeSends = []
   const taskCalls = []
+  const resolvedModels = []
   const listeners = new Map()
   const promptContexts = []
   const promptSections = []
@@ -130,6 +131,13 @@ function harness(options = {}) {
         }
       }
       if (name === 'tools') return toolsService
+      if (name === 'llm' && options.llm === true) {
+        return {
+          async resolveCallConfig(config) {
+            resolvedModels.push(config)
+          },
+        }
+      }
       return undefined
     },
     effect(callback) {
@@ -161,6 +169,7 @@ function harness(options = {}) {
     grantedEdges,
     nativeSends,
     taskCalls,
+    resolvedModels,
     composition,
     callerAgent,
     promptContexts,
@@ -250,7 +259,7 @@ test('composed mode exposes native tool names, descriptions, and parameter schem
   const { controls } = harness({ mode: 'composed' })
   const byName = new Map(controls.definitions.map((definition) => [definition.name, definition]))
   assert.deepEqual(controls.definitions.map((definition) => definition.name), [
-    'list_agents', 'send_message', 'interrupt_agent', 'wait_agent',
+    'wait_agent', 'list_agents', 'send_message', 'interrupt_agent',
     'subagent', 'subagent_fork', 'composition_task',
   ])
   assert.deepEqual([...byName.keys()].sort(), [
@@ -292,19 +301,45 @@ test('composed subagent starts a native activation and mirrors the child', async
   assert.deepEqual(harnessed.grantedEdges, [{ rootSessionId: 's-a', parentSessionId: 's-a', childSessionId: 's-child' }])
 })
 
-test('composed subagent rejects explicit model selection instead of silently ignoring it', async () => {
-  const harnessed = harness({ mode: 'composed' })
+test('composed tool order follows the native control/delegation order', () => {
+  const { controls } = harness({ mode: 'composed' })
+  assert.deepEqual(controls.definitions.map((definition) => definition.name), [
+    'wait_agent', 'list_agents', 'send_message', 'interrupt_agent',
+    'subagent', 'subagent_fork', 'composition_task',
+  ])
+})
+
+test('composed subagent validates and forwards explicit model selection', async () => {
+  const harnessed = harness({ mode: 'composed', llm: true })
+  const result = await harnessed.tool('subagent').execute({
+    description: 'Scoped analysis',
+    prompt: 'Read the file and report.',
+    provider: 'deepseek',
+    model: 'deepseek-chat',
+    reasoning_effort: 'high',
+  }, {
+    agent: harnessed.callerAgent,
+    signal: new AbortController().signal,
+  })
+  assert.deepEqual(result, { kind: 'activation', name: 'agent-1' })
+  assert.deepEqual(harnessed.resolvedModels, [{ provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' }])
+  assert.deepEqual(harnessed.started[0].agentOptions, {
+    provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high',
+  })
+})
+
+test('composed subagent requires provider and model together', async () => {
+  const harnessed = harness({ mode: 'composed', llm: true })
   await assert.rejects(
     harnessed.tool('subagent').execute({
       description: 'Scoped analysis',
       prompt: 'Read the file and report.',
       provider: 'deepseek',
-      model: 'deepseek-chat',
     }, {
       agent: harnessed.callerAgent,
       signal: new AbortController().signal,
     }),
-    (error) => error instanceof CompositionError && error.code === 'UNSUPPORTED_MODEL_SELECTION',
+    (error) => error instanceof CompositionError && error.code === 'INVALID_MODEL_SELECTION',
   )
   assert.equal(harnessed.started.length, 0)
 })
