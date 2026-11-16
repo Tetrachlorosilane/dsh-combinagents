@@ -149,6 +149,7 @@ docs/HANDOFF.md           Authoritative product requirements, clone/bridge/bud l
                           cache rules, original-project UI and compatibility notes
 docs/FEASIBILITY.md       DSH source review, options, verdicts
 docs/ARCHITECTURE.md      Phase-1 design, storage, HTTP, UI, acceptance criteria
+docs/COMPOSED-PROFILE.md  How to enable composed mode without duplicate tools
 package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
 

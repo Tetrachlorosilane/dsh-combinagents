@@ -61,6 +61,8 @@ permissions possible.
   not, and which designs are viable.
 - [Architecture proposal](docs/ARCHITECTURE.md) — the recommended overlay
   foundation, storage, UI, and phased plan.
+- [Composed profile overlay](docs/COMPOSED-PROFILE.md) — how to enable the
+  native-name composed surface without duplicate tool registration.
 - [AGENTS.md](AGENTS.md) — the working contract for changing this repository.
 
 ## What is in the repository
