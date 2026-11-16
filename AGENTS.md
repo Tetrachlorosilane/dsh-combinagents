@@ -1,7 +1,8 @@
 # AGENTS.md — dsh-combinagents
 
 Working contract for anyone changing this repository. Read
-[`docs/FEASIBILITY.md`](docs/FEASIBILITY.md) before touching runtime code.
+[`docs/HANDOFF.md`](docs/HANDOFF.md) for the authoritative product requirements
+and [`docs/FEASIBILITY.md`](docs/FEASIBILITY.md) before touching runtime code.
 
 ## 1. Current status
 
@@ -22,6 +23,11 @@ subagents. Each node is backed by an existing DSH session (or is an external
 placeholder). A `reports-to` edge is an organizational statement, not a change
 to DSH's native lineage.
 
+The product is broader than the overlay alone: the design handoff adds
+**snapshot/clone** (branch a team, bud a subagent as a new root) and a
+**controlled bridge** (explicitly authorized cross-tree messages). Clones are
+new Sessions, never native re-parenting.
+
 Hard invariants:
 
 - Never write `SessionHeader.parentSession`, `origin`, `delegationDepth`, or
@@ -32,6 +38,9 @@ Hard invariants:
 - Never route messages across native subagent trees in phase 1.
 - Never register a model tool or prompt section in phase 1.
 - Never delete a DSH session because a graph node was removed.
+- **Cache-friendly by default:** do not change system prompt, tool schema, model
+  route, cwd, preset, or permission policy unless explicitly required and
+  documented. Append notices after history; never prepend them.
 
 The graph may be a strict forest only: one incoming `reports-to` edge per node.
 Multiple roots are allowed.
@@ -64,6 +73,8 @@ index.js                  Inert bundle entry; do not add runtime behavior piecem
 cordis.patch.yml          Bundle patch for the scaffold
 src/graph.js              Pure composition graph: validation, forest, cycle checks
 tests/graph.test.mjs      Graph unit tests
+docs/HANDOFF.md           Authoritative product requirements, clone/bridge/bud logic,
+                          cache rules, original-project UI and compatibility notes
 docs/FEASIBILITY.md       DSH source review, options, verdicts
 docs/ARCHITECTURE.md      Phase-1 design, storage, HTTP, UI, acceptance criteria
 package.json              ESM package, no dependencies, DSH bundle shape

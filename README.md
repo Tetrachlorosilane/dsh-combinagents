@@ -1,10 +1,11 @@
 # dsh-combinagents
 
-**Status: architecture scaffold.** This repository currently contains the
-project contract, a pure composition-graph model, and the feasibility analysis
-for DSH `0.2.2-rc.3`. It does not yet provide a runtime composition service or
-a Web UI. The bundle entry is intentionally inert; do not install it expecting
-behavior.
+**Status: architecture scaffold with a product handoff.** This repository
+currently contains the project contract, a pure composition-graph model, the
+feasibility analysis for DSH `0.2.2-rc.3`, and the design handoff for the next
+implementation agent. It does not yet provide a runtime composition service,
+clone flow, bridge, or Web UI. The bundle entry is intentionally inert; do not
+install it expecting behavior.
 
 `dsh-combinagents` is an exploration for DSH (DeepSeek Harness): let a user
 arrange multiple **agents** and **subagents**, possibly from different sources
@@ -24,10 +25,13 @@ permissions possible.
 
 ## Read this first
 
+- [设计与交接说明（中文）](docs/HANDOFF.md) — **authoritative product brief**
+  for the next agent: requirements, design principles, clone/bridge/bud logic,
+  cache-friendly rules, and UI compatibility notes.
 - [Feasibility analysis](docs/FEASIBILITY.md) — what DSH permits, what it does
   not, and which designs are viable.
 - [Architecture proposal](docs/ARCHITECTURE.md) — the recommended overlay
-  model, storage, UI, and phased plan.
+  foundation, storage, UI, and phased plan.
 - [AGENTS.md](AGENTS.md) — the working contract for changing this repository.
 
 ## What is in the scaffold
@@ -36,6 +40,7 @@ permissions possible.
 index.js                 Inert bundle entry (no runtime behavior yet)
 src/graph.js             Pure, durable composition graph model
 tests/graph.test.mjs     Graph invariants: forest, cycles, duplicates, removal
+docs/HANDOFF.md          Product requirements, design logic, cache and UI handoff
 docs/FEASIBILITY.md      DSH source review and design options
 docs/ARCHITECTURE.md     Recommended architecture and implementation plan
 cordis.patch.yml         Bundle patch for the scaffold entry

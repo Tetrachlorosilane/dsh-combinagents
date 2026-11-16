@@ -3,17 +3,25 @@
 **Status:** proposal for the scaffold. Nothing below except `src/graph.js` is
 implemented yet. The bundle entry is inert.
 
-The recommended product is an **overlay composition**: a user-owned reporting
-graph layered over DSH's immutable native agent lineage. The overlay is stored
-by this plugin, never by rewriting a session. Each node keeps the workspace,
-sandbox mode, approval policy, and tool composition it already has.
+**Scope update:** the authoritative product brief is
+[`HANDOFF.md`](HANDOFF.md). It adds two layers beyond this document's overlay
+foundation: **snapshot/clone** (branch a team, bud a subagent as a new root) and
+a **controlled bridge** (explicitly authorized cross-tree messages). Clones are
+new Sessions, never native re-parenting.
 
-Read [FEASIBILITY.md](FEASIBILITY.md) first. In particular:
+The recommended product starts with an **overlay composition**: a user-owned
+reporting graph layered over DSH's immutable native agent lineage. The overlay is
+stored by this plugin, never by rewriting a session. Each node keeps the
+workspace, sandbox mode, approval policy, and tool composition it already has.
+
+Read [HANDOFF.md](HANDOFF.md) and [FEASIBILITY.md](FEASIBILITY.md) first. In
+particular:
 
 - Native re-parenting is not a plugin feature.
 - Overlay edges do not change `send_message` authority.
 - Phase 1 adds no model-facing tools.
 - External/one-shot agents can be visible leaves but cannot receive follow-ups.
+- Cache-friendly behavior is a design constraint, not an optimization detail.
 
 ## 1. Product boundaries
 
@@ -300,11 +308,37 @@ Rationale: the graph is a human coordination view, not a new authority. Adding a
 tool would force every model request to pay schema cost and would create a new
 cross-tree messaging authority that DSH deliberately does not have.
 
-If phase 2 adds routing, prefer one explicitly named tool over overloading
+If Phase 3 adds routing, prefer one explicitly named tool over overloading
 `send_message`, and require a visible, per-edge user grant. Revisit whether the
-value justifies the model surface.
+value justifies the model surface and the cache-prefix change.
 
-## 8. Permissions and workspace preservation
+## 8. Cache-friendly constraints
+
+KV/prompt cache reuse is prefix-based. DSH can preserve or disturb prefix
+identity; it cannot guarantee a provider cache hit.
+
+- Composition UI adds no prompt text and therefore no cache change.
+- Bridge delivery appends a user-role message; it must not rewrite earlier
+  messages, the system prompt, or tool schemas.
+- Clone/bud must preserve the source `system/message`, tool schema set,
+  provider/model/reasoning effort, preset, cwd, and policy when cache reuse is
+  desired.
+- Clone notices, handoff text, and organizational explanations are appended
+  after inherited history, never prepended or inserted into the system prompt.
+- Each clone is its own cache lineage. Cloning N children creates N independent
+  prefixes; it does not share the source's cache entries.
+- Changing cwd, preset, permission policy, or tool set may be required for a
+  clone, but it must be labeled as a cache-breaking choice.
+- New model tools or prompt sections invalidate the prefix for every affected
+  session; Phase 1 must add none.
+- Use DSH's fork/seed closing rules for an open tail; do not hand-build an
+  unbalanced log.
+- Test with a fake LLM adapter by comparing canonical request prefixes, not by
+  asserting a provider cache hit.
+
+The complete cache checklist is in [`HANDOFF.md`](HANDOFF.md#6-缓存友好设计硬性原则).
+
+## 9. Permissions and workspace preservation
 
 The plugin's guarantee is negative and testable:
 
@@ -318,7 +352,7 @@ that only the plugin's own storage is written.
 Displaying a policy is not changing it. If a session's permission changes later,
 the next `/state` read shows the new value; the composition does not pin it.
 
-## 9. Failure handling
+## 10. Failure handling
 
 | Failure | Behavior |
 |---|---|
@@ -333,9 +367,9 @@ the next `/state` read shows the new value; the composition does not pin it.
 Never delete the user's composition because a session disappeared. Session ids
 are stable; a temporarily unavailable session may return.
 
-## 10. Implementation phases
+## 11. Implementation phases
 
-### Phase 0 — scaffold (this commit)
+### Phase 0 — initial scaffold
 
 - project contract, license, Git;
 - pure graph model + tests;
@@ -352,29 +386,39 @@ are stable; a temporarily unavailable session may return.
 - observation badges;
 - tests and manual GUI verification.
 
-### Phase 2 — native enrichment
+### Phase 2 — snapshot / clone / bud
 
-- native catalog tree badges and external leaves;
-- live status/token usage;
-- archived/stale handling;
-- accessibility and keyboard pass.
+- verify a clone spike against the real Host (seed, preset mounting, catalog
+  rebuild, permission reconstruction, open-tail closing);
+- clone a selected subtree into new Sessions under a new root;
+- bud a subagent snapshot into an independent root;
+- mark clones with source id and snapshot time;
+- preserve cwd, preset, route, and policy where possible;
+- compute and check a canonical request-prefix fingerprint;
+- clean up partial clones;
+- never mutate the source tree.
 
-### Phase 3 — optional coordination
+### Phase 3 — controlled bridge
 
 Only after an explicit product decision:
 
-- per-edge routing capability for live local sessions;
+- per-edge delivery grant for live local sessions;
+- append-only delivery with attribution;
 - audit log;
 - cold-resume ownership policy;
-- no external/one-shot delivery.
+- no external/one-shot delivery;
+- no implicit interrupt, archive, or Team authority.
 
-### Phase 4 — optional materialization
+### Phase 4 — hardening and enrichment
 
-- create a new native tree from the chart with per-node `cwd`/preset;
-- label new agents as clones, not as the attached originals;
-- do not copy permissions silently.
+- native catalog badges and external leaves;
+- live status/token usage;
+- archived/stale handling;
+- Team task copy/remap decision;
+- accessibility, keyboard, narrow-width and theme pass;
+- DSH version re-verification.
 
-## 11. Acceptance criteria for phase 1
+## 12. Acceptance criteria for phase 1
 
 1. A composition can be created for a root session and survives a Host restart.
 2. Sessions from at least two different workspaces and at least one native
@@ -389,7 +433,28 @@ Only after an explicit product decision:
 9. A DSH-side smoke test verifies the tab opens from the header button and the
    guide.
 
-## 12. Risks
+### Phase 2 acceptance
+
+1. A tree with at least two child Sessions clones into a new tree with new ids.
+2. The source tree, its headers, catalogs, Activations, and policies are
+   unchanged.
+3. The clone's canonical request prefix matches the source up to inherited
+   history when cwd/preset/route/tools are unchanged.
+4. Clone notices are appended, not prepended.
+5. A failed clone leaves no published half-tree.
+6. The clone can create a new child (depth/capacity permitting).
+
+### Phase 3 acceptance
+
+1. A granted edge delivers only to the intended live local target.
+2. Delivery is append-only and attributed; the recipient's earlier prefix is
+   unchanged.
+3. External, archived, and unauthorized targets are rejected.
+4. No native `send_message`, Team, interrupt, or archive authority is granted by
+   the edge.
+5. Every delivery has an audit record.
+
+## 13. Risks
 
 - **Expectation gap.** Users may assume reparenting changes `send_message`.
   Mitigate with persistent copy, not a one-time warning.

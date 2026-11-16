@@ -6,7 +6,10 @@ subagents a new reporting composition while preserving each one's own
 workspace, sandbox mode, approval policy, and tool composition.
 
 This is a design review, not a promise of behavior. The repository currently
-contains only the pure graph model and an inert bundle entry.
+contains only the pure graph model and an inert bundle entry. For the
+authoritative product requirements, clone/bridge/bud logic, cache rules, and
+UI handoff, read [`HANDOFF.md`](HANDOFF.md); this document remains the source
+review behind it.
 
 ## 1. Short answer
 
