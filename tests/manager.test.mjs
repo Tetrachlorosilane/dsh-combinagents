@@ -153,6 +153,32 @@ test('moves a whole other composition under a target node', async () => {
   assert.equal((await manager.resolveSession('s-d')).rootSessionId, 's-a')
 })
 
+test('moves one source tree and rekeys the remaining source forest', async () => {
+  const ids = ['s-a', 's-c', 's-d', 's-e']
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(ids) })
+  await manager.create('s-a')
+  const a = (await manager.state('s-a')).composition.nodes[0]
+
+  await manager.create('s-c')
+  const c = (await manager.state('s-c')).composition.nodes[0]
+  await manager.addNode('s-c', { sessionId: 's-d', parentId: c.id })
+  await manager.addNode('s-c', { sessionId: 's-e' })
+  const e = (await manager.state('s-c')).composition.nodes.find((node) => node.sessionId === 's-e')
+
+  const merged = await manager.addNode('s-a', { sessionId: 's-c', parentId: a.id })
+  assert.ok(merged.composition.nodes.some((node) => node.sessionId === 's-c'))
+  assert.ok(merged.composition.nodes.some((node) => node.sessionId === 's-d'))
+  assert.ok(!merged.composition.nodes.some((node) => node.sessionId === 's-e'))
+
+  const remaining = await manager.state('s-e')
+  assert.ok(remaining)
+  assert.equal(remaining.composition.rootSessionId, 's-e')
+  assert.deepEqual(remaining.composition.nodes.map((node) => node.sessionId), ['s-e'])
+  assert.equal((await manager.resolveSession('s-e')).rootSessionId, 's-e')
+  assert.equal((await manager.resolveSession('s-c')).rootSessionId, 's-a')
+  assert.equal(e.sessionId, 's-e')
+})
+
 test('moves a subtree out of another composition without deleting the source root', async () => {
   const ids = ['s-a', 's-b', 's-e', 's-f', 's-g']
   const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(ids) })

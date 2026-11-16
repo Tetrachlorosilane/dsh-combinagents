@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, and a guide entry
   (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (78 total);
+  client-registration, host-wiring, controls, and bundle-shape tests (79 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`). Live
@@ -101,8 +101,8 @@ Structural edits (add, remove, reparent) are blocked while an affected agent,
 one of its composition ancestors, or one of its composition descendants is
 running; a collateral branch stays editable. Adding an existing session moves
 its composition subtree; adding a session from another composition moves that
-subtree into the target, and selecting the source root moves the whole source
-forest. Native `subagent/start` events are
+subtree into the target; selecting the source root moves that tree, and a
+remaining source forest is re-keyed to another local root. Native `subagent/start` events are
 mirrored into the owning composition as new nodes/edges, without changing any
 tool schema or routing authority.
 

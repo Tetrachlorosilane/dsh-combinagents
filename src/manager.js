@@ -21,6 +21,7 @@ import {
   removeNode as removeGraphNode,
   removeSubtree,
   renameNode as renameGraphNode,
+  rootsOf,
   setParent as setGraphParent,
 } from './graph.js'
 
@@ -604,8 +605,8 @@ export function createManager({ store, discovery, agents = () => undefined, now 
 
   /**
    * Move one subtree from another composition into the target composition.
-   * A selected source root moves the whole source forest; a selected non-root
-   * moves only its subtree and leaves the source root intact.
+   * A selected source root moves only that tree; if it was the composition root,
+   * the remaining forest is re-keyed to another local root.
    * @param {string} targetRoot - target composition owner.
    * @param {object} input - add request.
    * @param {string} sourceRoot - current composition owner.
@@ -628,26 +629,31 @@ export function createManager({ store, discovery, agents = () => undefined, now 
       throw new CompositionError('AGENT_BUSY', 'cannot move a node: that agent is running')
     }
     assertIdle(sourceRecord.composition, [sourceNode.id], 'move a node')
-    const hasParent = sourceRecord.composition.edges.some((edge) => edge.childId === sourceNode.id)
-    const detached = hasParent
-      ? detachSubtree(sourceRecord.composition, sourceNode.id)
-      : {
-          subtree: {
-            rootId: sourceNode.id,
-            nodes: sourceRecord.composition.nodes,
-            edges: sourceRecord.composition.edges,
-          },
-          remaining: null,
-        }
+    const detached = detachSubtree(sourceRecord.composition, sourceNode.id)
+    const remaining = detached.remaining
+    let nextSourceRoot = current.rootSessionId
+    if (remaining !== null && remaining.rootSessionId === null) {
+      const nextRoot = rootsOf(remaining).find((node) => typeof node.sessionId === 'string')
+      if (nextRoot === undefined) {
+        throw new CompositionError('MOVE_WOULD_ORPHAN', 'the remaining composition has no local root session to own it')
+      }
+      nextSourceRoot = nextRoot.sessionId
+      remaining.rootSessionId = nextSourceRoot
+    }
     const targetComposition = attachSubtree(targetRecord.composition, detached.subtree, parentId)
     const saved = await save(targetRoot, targetComposition)
     indexComposition(targetRoot, targetComposition)
-    if (detached.remaining === null) {
+    if (remaining === null) {
       await store.delete(current.rootSessionId)
       unindexComposition(current.rootSessionId, sourceRecord.composition)
+    } else if (nextSourceRoot !== current.rootSessionId) {
+      await save(nextSourceRoot, remaining)
+      await store.delete(current.rootSessionId)
+      indexComposition(nextSourceRoot, remaining)
+      unindexComposition(current.rootSessionId, sourceRecord.composition)
     } else {
-      await save(current.rootSessionId, detached.remaining)
-      indexComposition(current.rootSessionId, detached.remaining)
+      await save(current.rootSessionId, remaining)
+      indexComposition(current.rootSessionId, remaining)
     }
     return saved
   }
