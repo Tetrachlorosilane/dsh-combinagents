@@ -147,6 +147,6 @@ test('composed config mounts the native-name tool surface', async () => {
   apply(ctx, { mode: 'composed' })
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.deepEqual(tools.map((tool) => tool.name).sort(), [
-    'interrupt_agent', 'list_agents', 'send_message', 'subagent', 'subagent_fork', 'wait_agent',
+    'composition_task', 'interrupt_agent', 'list_agents', 'send_message', 'subagent', 'subagent_fork', 'wait_agent',
   ])
 })

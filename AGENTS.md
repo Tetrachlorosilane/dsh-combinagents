@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, and a guide entry
   (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 17 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (71 total);
+  client-registration, host-wiring, controls, and bundle-shape tests (72 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`). Live
@@ -41,7 +41,7 @@ tab UI) is implemented with status transitions and a revision guard. A
 `mode: 'composed'` tool surface (native names/descriptions/parameter schemas) is
 implemented behind config but not enabled in this profile. It includes
 `list_agents`, `send_message`, `interrupt_agent`, `subagent`, `subagent_fork`,
-and `wait_agent`; `subagent`/`subagent_fork` start a native activation under the
+`wait_agent`, and `composition_task`; `subagent`/`subagent_fork` start a native activation under the
 caller, mirror the child into the composition, label it with its native name,
 and auto-grant the delegation edge. `send_message` prefers the native relay for
 native descendants (including cold resume), falling back to `followup`/`steer`
@@ -49,7 +49,9 @@ for live cross-tree nodes. Composed mode also restores the native
 `subagent:identity` context and `tool:subagent` delegation guidance. A clean
 headless profile verified the real chain: tool list, `subagent` → child node +
 edge, `wait_agent`, child reply, `send_message` follow-up with native resume,
-second `wait_agent`, and `interrupt_agent` + termination notice. Enabling
+second `wait_agent`, and `interrupt_agent` + termination notice. The
+plugin-owned `composition_task` tool lists, creates, and updates board tasks
+(never DSH Team). Enabling
 composed mode in the desktop profile still requires disabling the native
 subagent control tools and verifying tool ordering and the prefix fingerprint.
 The GUI visual check is still
@@ -131,7 +133,7 @@ src/store.js              DSH storage-domain adapter + memory fallback
 src/discovery.js          Live/persisted session discovery and observations
 src/manager.js            Serialized mutations, grants, path authorization
 src/http.js               Loopback, token-authenticated JSON bridge
-src/controls.js           Composition control tools (overlay 3, composed 6)
+src/controls.js           Composition tools (overlay 3, composed 7)
 tests/graph.test.mjs      Graph tests (17)
 tests/store.test.mjs      Domain adapter, fallback, record schema
 tests/manager.test.mjs    Creation, serialization, root protection

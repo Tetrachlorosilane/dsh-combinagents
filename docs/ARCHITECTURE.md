@@ -385,8 +385,9 @@ Three static composition control tools:
 
 The composed mode later replaces these names with the native tool names and
 copies the native descriptions; the overlay mode keeps the distinct names above.
-`Config.mode: 'composed'` registers six native-name tools: the three control
-tools plus `subagent`, `subagent_fork`, and `wait_agent`. `subagent` /
+`Config.mode: 'composed'` registers six native-name tools plus the plugin-owned
+`composition_task`: the three control tools, `subagent`, `subagent_fork`,
+`wait_agent`, and the task board tool. `subagent` /
 `subagent_fork` call `ctx.subagents.startActivation` with the caller as parent,
 mirror the started child into the composition with its native name, and
 auto-grant the created edge (configurable with `autoGrantDelegatedEdges: false`).

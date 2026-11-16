@@ -772,8 +772,90 @@ export function createControls({
     },
   }
 
+  const taskTool = {
+    name: 'composition_task',
+    description:
+      'List, create, or update a task on the composition\'s plugin-owned task board. '
+      + 'This is not a DSH Team task and does not write native Team state. '
+      + 'Creating a task assigns it to your composition node; updates use an expected revision.',
+    parameters: objectSchema({
+      action: {
+        type: 'string',
+        enum: ['list', 'create', 'update'],
+        description: 'list reads the board; create adds a task; update changes its status.',
+      },
+      subject: {
+        type: 'string',
+        description: 'Task subject; required for create.',
+      },
+      description: {
+        type: 'string',
+        description: 'Optional task details.',
+      },
+      taskId: {
+        type: 'string',
+        description: 'Task id; required for update.',
+      },
+      status: {
+        type: 'string',
+        enum: ['pending', 'in_progress', 'completed'],
+        description: 'Target status; required for update.',
+      },
+      expected_revision: {
+        type: 'integer',
+        description: 'Current task revision; required for update and used as a conflict guard.',
+      },
+    }, ['action']),
+    output: {
+      schema: objectSchema({
+        tasks: {
+          type: 'array',
+          items: objectSchema({
+            id: { type: 'string' },
+            subject: { type: 'string' },
+            description: { type: 'string' },
+            status: { type: 'string' },
+            ownerNodeId: { type: 'string' },
+            revision: { type: 'integer' },
+          }, ['id', 'subject', 'status', 'revision']),
+        },
+      }, ['tasks']),
+      render: (_args, value) => [{
+        type: 'text',
+        text: value.tasks.map((task) => `${task.status}: ${task.subject}`).join('\n') || 'no tasks',
+      }],
+    },
+    async execute(args, exec) {
+      if (exec.agent === undefined) throw new CompositionError('NO_CALLER', 'composition_task requires a calling agent')
+      const caller = await callerContext(exec.agent)
+      if (caller === null) throw new CompositionError('NOT_IN_COMPOSITION', NOT_IN_COMPOSITION)
+      if (args.action === 'list') {
+        return { tasks: await manager.getTasks(caller.rootSessionId) }
+      }
+      if (args.action === 'create') {
+        return {
+          tasks: await manager.createTask(caller.rootSessionId, {
+            subject: args.subject,
+            description: args.description,
+            ownerNodeId: caller.callerNode.id,
+          }),
+        }
+      }
+      const action = args.status === 'in_progress'
+        ? 'start'
+        : args.status === 'completed' ? 'complete' : 'reopen'
+      return {
+        tasks: await manager.updateTask(caller.rootSessionId, {
+          taskId: args.taskId,
+          expectedRevision: args.expected_revision,
+          action,
+        }),
+      }
+    },
+  }
+
   const definitions = composed
-    ? [listAgents, sendMessage, interruptAgent, subagentTool, forkTool, waitTool]
+    ? [listAgents, sendMessage, interruptAgent, subagentTool, forkTool, waitTool, taskTool]
     : [listAgents, sendMessage, interruptAgent]
 
   /**

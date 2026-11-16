@@ -16,6 +16,7 @@ function harness(options = {}) {
   const attached = []
   const grantedEdges = []
   const nativeSends = []
+  const taskCalls = []
   const listeners = new Map()
   const promptContexts = []
   const promptSections = []
@@ -49,6 +50,18 @@ function harness(options = {}) {
     },
     async grantDelegatedEdge(rootSessionId, parentSessionId, childSessionId) {
       grantedEdges.push({ rootSessionId, parentSessionId, childSessionId })
+    },
+    async getTasks() {
+      taskCalls.push({ kind: 'list' })
+      return [{ id: 't1', subject: 'Review', status: 'pending', revision: 1 }]
+    },
+    async createTask(rootSessionId, input) {
+      taskCalls.push({ kind: 'create', rootSessionId, ...input })
+      return [{ id: 't2', subject: input.subject, status: 'pending', revision: 1 }]
+    },
+    async updateTask(rootSessionId, input) {
+      taskCalls.push({ kind: 'update', rootSessionId, ...input })
+      return [{ id: input.taskId, subject: 'Review', status: 'in_progress', revision: 2 }]
     },
     async recordAudit() {},
   }
@@ -147,6 +160,7 @@ function harness(options = {}) {
     attached,
     grantedEdges,
     nativeSends,
+    taskCalls,
     composition,
     callerAgent,
     promptContexts,
@@ -236,7 +250,7 @@ test('composed mode exposes native tool names, descriptions, and parameter schem
   const { controls } = harness({ mode: 'composed' })
   const byName = new Map(controls.definitions.map((definition) => [definition.name, definition]))
   assert.deepEqual([...byName.keys()].sort(), [
-    'interrupt_agent', 'list_agents', 'send_message', 'subagent', 'subagent_fork', 'wait_agent',
+    'composition_task', 'interrupt_agent', 'list_agents', 'send_message', 'subagent', 'subagent_fork', 'wait_agent',
   ])
   for (const contract of [
     NATIVE_TOOL_CONTRACTS.list,
@@ -337,6 +351,31 @@ test('composed subagent_fork uses the fork provider and mirrors the child', asyn
     parentSessionId: 's-a', childId: 's-child', local: true, provider: 'fork', label: 'agent-1',
   }])
   assert.deepEqual(harnessed.grantedEdges, [{ rootSessionId: 's-a', parentSessionId: 's-a', childSessionId: 's-child' }])
+})
+
+test('composed task tool lists, creates, and updates the plugin board', async () => {
+  const harnessed = harness({ mode: 'composed' })
+  const exec = { agent: harnessed.callerAgent, signal: new AbortController().signal }
+  const listed = await harnessed.tool('composition_task').execute({ action: 'list' }, exec)
+  assert.equal(listed.tasks[0].id, 't1')
+  const created = await harnessed.tool('composition_task').execute({
+    action: 'create',
+    subject: 'Review',
+    description: 'Read the diff',
+  }, exec)
+  assert.equal(created.tasks[0].id, 't2')
+  const updated = await harnessed.tool('composition_task').execute({
+    action: 'update',
+    taskId: 't2',
+    status: 'in_progress',
+    expected_revision: 1,
+  }, exec)
+  assert.equal(updated.tasks[0].status, 'in_progress')
+  assert.deepEqual(harnessed.taskCalls, [
+    { kind: 'list' },
+    { kind: 'create', rootSessionId: 's-a', subject: 'Review', description: 'Read the diff', ownerNodeId: 'n-a' },
+    { kind: 'update', rootSessionId: 's-a', taskId: 't2', expectedRevision: 1, action: 'start' },
+  ])
 })
 
 test('composed prompt restores native identity and delegation guidance', () => {

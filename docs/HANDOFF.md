@@ -617,7 +617,8 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
   跨工作区 + 非完全权限时的 approval 门、审计表；
 - 已实现：插件自有任务板（`tasks` 表 + tab UI + `/tasks`、`/create-task`、
   `/update-task`，revision 冲突保护）；不写 DSH Team；
-- 已实现（未启用）：`mode: 'composed'` 注册六个原生同名工具，其中
+- 已实现（未启用）：`mode: 'composed'` 注册七个工具（三控制 + `subagent`/
+  `subagent_fork`/`wait_agent` + `composition_task`）；其中
   `subagent`/`subagent_fork` 通过 `startActivation` 创建、挂入组合、用原生名
   标记并自动授权该边；`send_message` 对原生后代优先走原生 relay（含冷恢复），
   `wait_agent` 复制原生 inbox 等待语义；clean headless profile 已实测
