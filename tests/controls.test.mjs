@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 
 import { createControls, NATIVE_TOOL_CONTRACTS } from '../src/controls.js'
@@ -307,6 +308,13 @@ test('composed tool order follows the native control/delegation order', () => {
     'wait_agent', 'list_agents', 'send_message', 'interrupt_agent',
     'subagent', 'subagent_fork', 'composition_task',
   ])
+  const canonical = controls.definitions.map((definition) => ({
+    name: definition.name,
+    description: definition.description,
+    parameters: definition.parameters,
+  }))
+  const fingerprint = createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
+  assert.equal(fingerprint, 'af83912ba9f7d54e3e002de3e8a8c59958de7958b033bcd43810d7ef5b98956b')
 })
 
 test('composed subagent validates and forwards explicit model selection', async () => {
