@@ -13,8 +13,8 @@ Phase 1 **walking skeleton** is implemented in this checkout:
   loopback token bridge (`src/http.js`), wired by `index.js`;
 - Client: one right-sidebar tab, a session-header utility, and a guide entry
   (`client.js`), with complete `en`/`zh` copy;
-- Graph: `src/graph.js` with 17 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (74 total);
+- Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
+  client-registration, host-wiring, controls, and bundle-shape tests (78 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`). Live
@@ -39,7 +39,8 @@ are registered and were exercised live (`composition_list_agents`, a delivered
 plugin-owned task board (`tasks` table, `/tasks`, `/create-task`, `/update-task`,
 tab UI) is implemented with status transitions and a revision guard. A
 `mode: 'composed'` tool surface (native names/descriptions/parameter schemas) is
-implemented behind config but not enabled in this profile. It includes
+implemented and the desktop profile now has the composed overlay applied; a Host
+restart is still required to load it. It includes
 `list_agents`, `send_message`, `interrupt_agent`, `subagent`, `subagent_fork`,
 `wait_agent`, and `composition_task`; `subagent`/`subagent_fork` start a native activation under the
 caller, mirror the child into the composition, label it with its native name,
@@ -53,14 +54,14 @@ headless profile verified the real chain: tool list, `subagent` → child node +
 edge, `wait_agent`, child reply, `send_message` follow-up with native resume,
 second `wait_agent`, and `interrupt_agent` + termination notice. The
 plugin-owned `composition_task` tool lists, creates, and updates board tasks
-(never DSH Team). Enabling
-composed mode in the desktop profile still requires disabling the native
-subagent control tools and verifying tool ordering and the prefix fingerprint.
-The GUI visual check is still
+(never DSH Team). Composed mode is configured in the desktop profile but not yet validated after a
+Host restart; sessions using `standard`/`ptc` still mount the native tools and
+shadow the composed names. Tool ordering and the prefix fingerprint are covered
+by tests, not yet compared against a live native request. The GUI visual check is still
 pending: the headless browser has no Web auth launch token, and its SSRF guard
 blocks loopback unless the obscura plugin allows private networks.
-Clone/bridge/bud and the enabled composed-mode profile switch are not
-implemented. Do not describe native re-parenting as implemented.
+Clone/bridge/bud are not implemented. Do not describe native re-parenting as
+implemented.
 
 ## 2. Product contract
 
@@ -98,7 +99,10 @@ One session belongs to **at most one composition**. The tab resolves that shared
 composition from any member session, so all members see the same configuration.
 Structural edits (add, remove, reparent) are blocked while an affected agent,
 one of its composition ancestors, or one of its composition descendants is
-running; a collateral branch stays editable. Native `subagent/start` events are
+running; a collateral branch stays editable. Adding an existing session moves
+its composition subtree; adding a session from another composition moves that
+subtree into the target, and selecting the source root moves the whole source
+forest. Native `subagent/start` events are
 mirrored into the owning composition as new nodes/edges, without changing any
 tool schema or routing authority.
 
@@ -136,7 +140,7 @@ src/discovery.js          Live/persisted session discovery and observations
 src/manager.js            Serialized mutations, grants, path authorization
 src/http.js               Loopback, token-authenticated JSON bridge
 src/controls.js           Composition tools (overlay 3, composed 7)
-tests/graph.test.mjs      Graph tests (17)
+tests/graph.test.mjs      Graph tests (18)
 tests/store.test.mjs      Domain adapter, fallback, record schema
 tests/manager.test.mjs    Creation, serialization, root protection
 tests/discovery.test.mjs  Read-only discovery and observations
@@ -155,11 +159,10 @@ docs/COMPOSED-PROFILE.md  How to enable composed mode without duplicate tools
 package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
 
-Remaining work: enable composed mode in the desktop profile (native tools off,
-tool-order/prefix fingerprint), GUI visual acceptance (grant toggles, task board,
-picker scroll, header count chip, details/reparent/rename/external flows,
-sync-native button), light/dark and narrow-width checks, Host-restart reload,
-and clone/bud.
+Remaining work: restart and validate the desktop composed profile, GUI visual
+acceptance (grant toggles, task board, picker scroll, header count chip,
+details/reparent/rename/external flows, sync-native button), light/dark and
+narrow-width checks, Host-restart reload, and clone/bud.
 
 ## 5. Development rules
 

@@ -363,6 +363,33 @@ test('stores per-edge grants and exposes them on state', async () => {
   assert.equal(grants.data.grants[edge.id].allowMessage, true)
 })
 
+test('moves another composition root under a target node through add-node', async () => {
+  const { api } = makeHarness()
+  const a = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  const aRoot = a.data.composition.nodes[0]
+  await call(api, authorized('POST', '/dsh-combinagents/add-node', JSON.stringify({
+    rootSessionId: 's-a',
+    sessionId: 's-b',
+    parentId: aRoot.id,
+  })))
+  const c = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-c' })))
+  const cRoot = c.data.composition.nodes[0]
+
+  const moved = await call(api, authorized('POST', '/dsh-combinagents/add-node', JSON.stringify({
+    rootSessionId: 's-a',
+    sessionId: 's-c',
+    parentId: aRoot.id,
+  })))
+  assert.equal(moved.status, 200)
+  assert.equal(moved.data.composition.nodes.length, 3)
+  assert.ok(moved.data.composition.edges.some(
+    (edge) => edge.parentId === aRoot.id && edge.childId === cRoot.id,
+  ))
+  const source = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-c'))
+  assert.equal(source.data.rootSessionId, 's-a')
+  assert.equal(source.data.composition.nodes.length, 3)
+})
+
 test('creates and transitions plugin-owned tasks with revision conflicts', async () => {
   const { api } = makeHarness()
   const created = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))

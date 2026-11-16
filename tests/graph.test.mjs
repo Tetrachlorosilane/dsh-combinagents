@@ -6,10 +6,12 @@ import {
   addEdge,
   addNode,
   ancestorsOf,
+  attachSubtree,
   assertComposition,
   childrenOf,
   createComposition,
   descendantsOf,
+  detachSubtree,
   isAncestor,
   removeNode,
   removeSubtree,
@@ -71,6 +73,25 @@ test('supports multiple roots and detaching a node', () => {
   assert.deepEqual(childrenOf(composition, b.id).map((node) => node.label), ['C'])
   composition = setParent(composition, c.id, null)
   assert.deepEqual(rootsOf(composition).map((node) => node.label), ['A', 'B', 'C'])
+})
+
+test('detaches a subtree and attaches it to another composition', () => {
+  let source = createComposition({ title: 'Source', nodes: [root('A', 's-a'), root('D', 's-d')] })
+  const a = source.nodes.find((node) => node.sessionId === 's-a')
+  source = addNode(source, child('B', 's-b'), { parentId: a.id })
+  const b = source.nodes.find((node) => node.sessionId === 's-b')
+  source = addNode(source, child('C', 's-c'), { parentId: b.id })
+
+  const detached = detachSubtree(source, b.id)
+  assert.deepEqual(detached.subtree.nodes.map((node) => node.sessionId), ['s-b', 's-c'])
+  assert.deepEqual(detached.remaining.nodes.map((node) => node.sessionId), ['s-a', 's-d'])
+
+  let target = createComposition({ title: 'Target', nodes: [root('X', 's-x')] })
+  const x = target.nodes[0]
+  target = attachSubtree(target, detached.subtree, x.id)
+  assert.deepEqual(childrenOf(target, x.id).map((node) => node.sessionId), ['s-b'])
+  assert.deepEqual(descendantsOf(target, x.id).map((node) => node.sessionId), ['s-b', 's-c'])
+  assert.equal(validateComposition(target).ok, true)
 })
 
 test('rejects duplicate session ids', () => {

@@ -614,6 +614,85 @@ export function descendantsOf(composition, nodeId) {
 }
 
 /**
+ * Detach one subtree from a composition without touching any DSH session.
+ * The caller may attach it to another composition; the remaining composition
+ * is returned alongside the detached nodes and edges.
+ * @param {Composition} composition - source graph.
+ * @param {string} nodeId - subtree root.
+ * @param {{now?: number}} [options] - timestamp override.
+ * @returns {{subtree: {rootId: string, nodes: CompositionNode[], edges: CompositionEdge[]},
+ *   remaining: Composition|null}}
+ */
+export function detachSubtree(composition, nodeId, options = {}) {
+  assertComposition(composition)
+  if (!composition.nodes.some((node) => node.id === nodeId)) {
+    fail('UNKNOWN_NODE', `node ${JSON.stringify(nodeId)} does not exist`)
+  }
+  const ids = new Set([nodeId, ...descendantsOf(composition, nodeId).map((node) => node.id)])
+  const nodes = composition.nodes.filter((node) => ids.has(node.id))
+  const edges = composition.edges.filter((edge) => ids.has(edge.parentId) && ids.has(edge.childId))
+  const remainingNodes = composition.nodes.filter((node) => !ids.has(node.id))
+  const remainingEdges = composition.edges.filter(
+    (edge) => !ids.has(edge.parentId) && !ids.has(edge.childId),
+  )
+  const subtree = { rootId: nodeId, nodes, edges }
+  if (remainingNodes.length === 0) return { subtree, remaining: null }
+  const rootRemoved = composition.rootSessionId !== null
+    && nodes.some((node) => node.sessionId === composition.rootSessionId)
+  const remaining = assertComposition({
+    ...composition,
+    rootSessionId: rootRemoved ? null : composition.rootSessionId,
+    nodes: remainingNodes,
+    edges: remainingEdges,
+    updatedAt: timestamp(options.now, 'now', Date.now()),
+  })
+  return { subtree, remaining }
+}
+
+/**
+ * Attach a detached subtree under an existing node (or as a root).
+ * @param {Composition} composition - target graph.
+ * @param {{rootId: string, nodes: CompositionNode[], edges: CompositionEdge[]}} subtree - detached graph.
+ * @param {string|null} parentId - target parent, or null for a new root.
+ * @param {{now?: number}} [options] - timestamp override.
+ * @returns {Composition}
+ */
+export function attachSubtree(composition, subtree, parentId, options = {}) {
+  assertComposition(composition)
+  if (subtree === null || typeof subtree !== 'object' || !Array.isArray(subtree.nodes) || !Array.isArray(subtree.edges)) {
+    fail('INVALID_FIELD', 'subtree must contain nodes and edges')
+  }
+  if (subtree.nodes.length === 0) fail('INVALID_FIELD', 'subtree must contain at least one node')
+  if (!subtree.nodes.some((node) => node.id === subtree.rootId)) {
+    fail('INVALID_FIELD', 'subtree rootId must name a node in the subtree')
+  }
+  if (parentId !== null && !composition.nodes.some((node) => node.id === parentId)) {
+    fail('UNKNOWN_NODE', `parent ${JSON.stringify(parentId)} does not exist`)
+  }
+  const nodeIds = new Set(composition.nodes.map((node) => node.id))
+  const sessionIds = new Set(
+    composition.nodes.map((node) => node.sessionId).filter((sessionId) => typeof sessionId === 'string'),
+  )
+  for (const node of subtree.nodes) {
+    if (nodeIds.has(node.id)) fail('DUPLICATE_NODE', `node ${JSON.stringify(node.id)} already exists`)
+    if (typeof node.sessionId === 'string' && sessionIds.has(node.sessionId)) {
+      fail('DUPLICATE_SESSION', `session ${JSON.stringify(node.sessionId)} already belongs to this composition`)
+    }
+  }
+  const now = timestamp(options.now, 'now', Date.now())
+  let next = assertComposition({
+    ...composition,
+    nodes: [...composition.nodes, ...subtree.nodes],
+    edges: [...composition.edges, ...subtree.edges],
+    updatedAt: now,
+  })
+  if (parentId !== null) {
+    next = addEdge(next, { parentId, childId: subtree.rootId }, { now })
+  }
+  return next
+}
+
+/**
  * Return a node's ancestor chain, nearest parent first.
  * @param {Composition} composition - composition to inspect.
  * @param {string} nodeId - node whose ancestors are requested.

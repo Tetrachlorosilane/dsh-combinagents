@@ -10,9 +10,10 @@ composition; the tab resolves that shared composition from any member, walking
 native ancestors when the member is not mirrored yet. The Client half registers a
 right-sidebar tab, a session-header utility, a guide entry, and a separate
 composition-count header chip; the shipped subagent tree entry is retained. It
-provides node details, rename, reparent, external placeholders, per-edge
-message/interrupt grants, open-conversation for every local session (including
-persisted ones), and a sync-native action. Three static model tools
+provides node details, rename, reparent, moving a whole tree/subtree between
+compositions, external placeholders, per-edge message/interrupt grants,
+open-conversation for every local session (including persisted ones), and a
+sync-native action. Three static model tools
 (`composition_list_agents`, `composition_send_message`,
 `composition_interrupt_agent`) mirror the native control parameters and are
 gated by per-edge grants; cross-workspace delivery without full permission asks
@@ -25,9 +26,10 @@ schemas for the control/delegation tools and a plugin-owned task tool.
 `subagent`/`subagent_fork` start a native activation under the caller, mirror
 the child into the composition, and auto-grant the delegation edge;
 `send_message` prefers the native relay for native descendants (including cold
-resume), falling back to live cross-tree delivery. Composed mode is implemented
-but not enabled in the desktop profile; a clean headless profile verified the
-full chain (start → child edge → wait → follow-up message → wait → interrupt). Native `subagent/start` events are mirrored into the
+resume), falling back to live cross-tree delivery. Composed mode is implemented and the desktop profile has the composed overlay
+applied; a Host restart is still required to load it. A clean headless profile
+verified the full chain (start → child edge → wait → follow-up message → wait →
+interrupt). Native `subagent/start` events are mirrored into the
 composition as new nodes without changing any tool schema or routing authority.
 Session status distinguishes `live`, `saved`, and the workspace registry's true
 `archived` set; the picker lists headers immediately and folds titles lazily so

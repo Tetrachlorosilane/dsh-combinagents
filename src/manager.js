@@ -13,8 +13,10 @@ import {
   CompositionError,
   addNode as addGraphNode,
   ancestorsOf,
+  attachSubtree,
   createComposition,
   descendantsOf,
+  detachSubtree,
   isAncestor,
   removeNode as removeGraphNode,
   removeSubtree,
@@ -73,6 +75,7 @@ function nodeFromSummary(summary) {
 export function createManager({ store, discovery, agents = () => undefined, now = () => Date.now() }) {
   /** @type {Map<string, Promise<void>>} */
   const tails = new Map()
+  let mergeTail = Promise.resolve()
   /** @type {Map<string, string>|null} session id -> owning root session id */
   let membership = null
 
@@ -215,6 +218,19 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     void tail.then(() => {
       if (tails.get(key) === tail) tails.delete(key)
     })
+    return result
+  }
+
+  /**
+   * Serialize cross-composition merges; they touch two durable records and
+   * cannot use the single-root lock safely.
+   * @param {() => Promise<unknown>} task - merge mutation.
+   * @returns {Promise<unknown>}
+   */
+  function withMergeLock(task) {
+    const previous = mergeTail
+    const result = previous.then(task, task)
+    mergeTail = result.then(() => undefined, () => undefined)
     return result
   }
 
@@ -561,7 +577,85 @@ export function createManager({ store, discovery, agents = () => undefined, now 
   }
 
   /**
-   * Attach one discovered session, optionally under an existing node.
+   * Add one discovered session under a target node. The caller owns the target
+   * lock and has already validated the parent.
+   * @param {object} record - target composition record.
+   * @param {string} rootSessionId - target owner.
+   * @param {object} input - add request.
+   * @param {string|null} parentId - target parent.
+   * @returns {Promise<object>} saved record.
+   */
+  async function attachDiscovered(record, rootSessionId, input, parentId) {
+    if (isWorking(input.sessionId)) {
+      throw new CompositionError('AGENT_BUSY', 'cannot add a node: that agent is running')
+    }
+    const summary = await discovery.describe(input.sessionId)
+    if (summary === null) {
+      throw new CompositionError('SESSION_NOT_DISCOVERED', `session ${JSON.stringify(input.sessionId)} was not discovered`)
+    }
+    const node = nodeFromSummary(summary)
+    const label = labelOf(input.label)
+    if (label !== null) node.label = label
+    const composition = addGraphNode(record.composition, node, { parentId })
+    const saved = await save(rootSessionId, composition)
+    indexComposition(rootSessionId, composition)
+    return saved
+  }
+
+  /**
+   * Move one subtree from another composition into the target composition.
+   * A selected source root moves the whole source forest; a selected non-root
+   * moves only its subtree and leaves the source root intact.
+   * @param {string} targetRoot - target composition owner.
+   * @param {object} input - add request.
+   * @param {string} sourceRoot - current composition owner.
+   * @returns {Promise<object>} saved target record.
+   */
+  async function moveAcross(targetRoot, input, sourceRoot) {
+    const current = await resolveSession(input.sessionId)
+    if (current === null || current.rootSessionId === targetRoot) {
+      return addNode(targetRoot, input)
+    }
+    const sourceRecord = await requireRecord(current.rootSessionId)
+    const targetRecord = await requireRecord(targetRoot)
+    const parentId = typeof input.parentId === 'string' && input.parentId.length > 0 ? input.parentId : null
+    assertIdle(targetRecord.composition, parentId === null ? [] : [parentId], 'move a node into')
+    const sourceNode = sourceRecord.composition.nodes.find((node) => node.sessionId === input.sessionId)
+    if (sourceNode === undefined) {
+      return attachDiscovered(targetRecord, targetRoot, input, parentId)
+    }
+    if (isWorking(input.sessionId)) {
+      throw new CompositionError('AGENT_BUSY', 'cannot move a node: that agent is running')
+    }
+    assertIdle(sourceRecord.composition, [sourceNode.id], 'move a node')
+    const hasParent = sourceRecord.composition.edges.some((edge) => edge.childId === sourceNode.id)
+    const detached = hasParent
+      ? detachSubtree(sourceRecord.composition, sourceNode.id)
+      : {
+          subtree: {
+            rootId: sourceNode.id,
+            nodes: sourceRecord.composition.nodes,
+            edges: sourceRecord.composition.edges,
+          },
+          remaining: null,
+        }
+    const targetComposition = attachSubtree(targetRecord.composition, detached.subtree, parentId)
+    const saved = await save(targetRoot, targetComposition)
+    indexComposition(targetRoot, targetComposition)
+    if (detached.remaining === null) {
+      await store.delete(current.rootSessionId)
+      unindexComposition(current.rootSessionId, sourceRecord.composition)
+    } else {
+      await save(current.rootSessionId, detached.remaining)
+      indexComposition(current.rootSessionId, detached.remaining)
+    }
+    return saved
+  }
+
+  /**
+   * Attach one discovered session, optionally under an existing node. Sessions
+   * already in this composition move their subtree; sessions in another
+   * composition are moved (root selection moves the whole source forest).
    * @param {string} rootSessionId - composition owner.
    * @param {{sessionId: string, parentId?: string|null, label?: string}} input - node.
    * @returns {Promise<{composition: object, updatedAt: number}>}
@@ -570,28 +664,24 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     if (typeof input.sessionId !== 'string' || input.sessionId.length === 0) {
       throw new CompositionError('INVALID_FIELD', 'sessionId must be a non-empty string')
     }
+    const owner = await resolveSession(input.sessionId)
+    if (owner !== null && owner.rootSessionId !== rootSessionId) {
+      return withMergeLock(() => moveAcross(rootSessionId, input, owner.rootSessionId))
+    }
     return withLock(rootSessionId, async () => {
       const record = await requireRecord(rootSessionId)
-      const owner = await resolveSession(input.sessionId)
-      if (owner !== null && owner.rootSessionId !== rootSessionId) {
-        throw new CompositionError('SESSION_ALREADY_COMPOSED', `session ${JSON.stringify(input.sessionId)} already belongs to another composition`)
-      }
-      if (isWorking(input.sessionId)) {
-        throw new CompositionError('AGENT_BUSY', 'cannot add a node: that agent is running')
-      }
       const parentId = typeof input.parentId === 'string' && input.parentId.length > 0 ? input.parentId : null
-      assertIdle(record.composition, parentId === null ? [] : [parentId], 'add a node')
-      const summary = await discovery.describe(input.sessionId)
-      if (summary === null) {
-        throw new CompositionError('SESSION_NOT_DISCOVERED', `session ${JSON.stringify(input.sessionId)} was not discovered`)
+      const existing = record.composition.nodes.find((node) => node.sessionId === input.sessionId)
+      if (existing !== undefined) {
+        assertIdle(record.composition, [existing.id], 'move a node')
+        if (parentId !== null) assertIdle(record.composition, [parentId], 'move a node under a parent')
+        const composition = setGraphParent(record.composition, existing.id, parentId)
+        const saved = await save(rootSessionId, composition)
+        indexComposition(rootSessionId, composition)
+        return saved
       }
-      const node = nodeFromSummary(summary)
-      const label = labelOf(input.label)
-      if (label !== null) node.label = label
-      const composition = addGraphNode(record.composition, node, { parentId })
-      const saved = await save(rootSessionId, composition)
-      indexComposition(rootSessionId, composition)
-      return saved
+      assertIdle(record.composition, parentId === null ? [] : [parentId], 'add a node')
+      return attachDiscovered(record, rootSessionId, input, parentId)
     })
   }
 

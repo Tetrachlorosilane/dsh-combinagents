@@ -110,7 +110,7 @@ test('creates one composition per root and is idempotent', async () => {
   assert.deepEqual(again, record)
 })
 
-test('adds discovered sessions and rejects duplicates or unknown ids', async () => {
+test('adds discovered sessions and moves an existing node instead of rejecting it', async () => {
   const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery() })
   await manager.create('s-a')
   const root = (await manager.state('s-a')).composition.nodes[0]
@@ -122,9 +122,56 @@ test('adds discovered sessions and rejects duplicates or unknown ids', async () 
   assert.equal(added.source, 'top-level')
   assert.equal(record.composition.edges.length, 1)
 
-  await rejectsWithCode(manager.addNode('s-a', { sessionId: 's-b' }), 'DUPLICATE_SESSION_ID')
+  await manager.addNode('s-a', { sessionId: 's-b' })
+  let moved = await manager.state('s-a')
+  assert.equal(moved.composition.edges.length, 0)
+  assert.ok(moved.composition.nodes.some((node) => node.sessionId === 's-b'))
+
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: root.id })
+  moved = await manager.state('s-a')
+  assert.equal(moved.composition.edges.length, 1)
+
   await rejectsWithCode(manager.addNode('s-a', { sessionId: 's-missing' }), 'SESSION_NOT_DISCOVERED')
   await rejectsWithCode(manager.addNode('s-missing', { sessionId: 's-b' }), 'COMPOSITION_NOT_FOUND')
+})
+
+test('moves a whole other composition under a target node', async () => {
+  const ids = ['s-a', 's-b', 's-c', 's-d']
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(ids) })
+  await manager.create('s-a')
+  const a = (await manager.state('s-a')).composition.nodes[0]
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: a.id })
+
+  await manager.create('s-c')
+  const c = (await manager.state('s-c')).composition.nodes[0]
+  await manager.addNode('s-c', { sessionId: 's-d', parentId: c.id })
+
+  const merged = await manager.addNode('s-a', { sessionId: 's-c', parentId: a.id })
+  assert.deepEqual(merged.composition.nodes.map((node) => node.sessionId).sort(), ['s-a', 's-b', 's-c', 's-d'])
+  assert.ok(merged.composition.edges.some((edge) => edge.parentId === a.id && edge.childId === c.id))
+  assert.equal(await manager.state('s-c'), null)
+  assert.equal((await manager.resolveSession('s-d')).rootSessionId, 's-a')
+})
+
+test('moves a subtree out of another composition without deleting the source root', async () => {
+  const ids = ['s-a', 's-b', 's-e', 's-f', 's-g']
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(ids) })
+  await manager.create('s-a')
+  const a = (await manager.state('s-a')).composition.nodes[0]
+
+  await manager.create('s-e')
+  const e = (await manager.state('s-e')).composition.nodes[0]
+  await manager.addNode('s-e', { sessionId: 's-f', parentId: e.id })
+  const f = (await manager.state('s-e')).composition.nodes.find((node) => node.sessionId === 's-f')
+  await manager.addNode('s-e', { sessionId: 's-g', parentId: f.id })
+
+  const merged = await manager.addNode('s-a', { sessionId: 's-f', parentId: a.id })
+  assert.ok(merged.composition.nodes.some((node) => node.sessionId === 's-f'))
+  assert.ok(merged.composition.nodes.some((node) => node.sessionId === 's-g'))
+  assert.ok(merged.composition.edges.some((edge) => edge.parentId === a.id && edge.childId === f.id))
+  const source = await manager.state('s-e')
+  assert.deepEqual(source.composition.nodes.map((node) => node.sessionId), ['s-e'])
+  assert.equal(source.composition.edges.length, 0)
 })
 
 test('promotes reports when a non-root node is removed', async () => {
@@ -227,7 +274,8 @@ test('resolves one shared composition from a member session', async () => {
 
   const created = await manager.create('s-b')
   assert.equal(created.composition.rootSessionId, 's-a')
-  await rejectsWithCode(manager.addNode('s-a', { sessionId: 's-b' }), 'DUPLICATE_SESSION_ID')
+  const moved = await manager.addNode('s-a', { sessionId: 's-b' })
+  assert.equal(moved.composition.edges.length, 0)
 })
 
 test('blocks structural edits in a working branch but not collateral nodes', async () => {

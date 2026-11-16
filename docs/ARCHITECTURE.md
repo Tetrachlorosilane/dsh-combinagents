@@ -276,8 +276,12 @@ Rules:
 - structural edits return `AGENT_BUSY` (409) while an affected node, one of its
   composition ancestors, or one of its composition descendants is running;
   collateral branches remain editable;
-- attaching a session that already belongs to another composition returns
-  `SESSION_ALREADY_COMPOSED` (409).
+- attaching a session that already belongs to this composition moves its
+  subtree under the requested parent (or detaches it to a root); attaching a
+  session from another composition moves that subtree, and selecting the source
+  root moves the whole source forest;
+- cross-composition moves serialize through a merge lock and delete the source
+  record only when the source root itself moved;
 
 A future routing phase should add its routes only after the authority design is
 settled; do not hide routing behind the phase-1 API.
@@ -458,7 +462,8 @@ the next `/state` read shows the new value; the composition does not pin it.
 | Root session missing | Composition still readable by record id; title falls back |
 | Open conversation on external/archived node | Disabled with a reason; no navigation |
 | Affected branch is running | Structural edit rejected with `AGENT_BUSY`; siblings stay editable |
-| Session already in another composition | Rejected with `SESSION_ALREADY_COMPOSED`; the tab resolves the existing owner |
+| Session already in another composition | `add-node` moves that subtree; selecting the source root moves the whole source forest; no rejection |
+| Session already in this composition | `add-node` moves its subtree under the requested parent or detaches it to a root |
 | Native subagent starts | Mirrored into the owning composition under its native parent; no tool or routing change |
 | Graph cycle / duplicate | Rejected with a typed error; no partial write |
 
