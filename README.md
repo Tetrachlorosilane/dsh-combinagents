@@ -36,7 +36,10 @@ the child into the composition, and auto-grant the delegation edge;
 resume), falling back to live cross-tree delivery. Composed mode is applied and
 loaded in the desktop profile after a Host restart; the current desktop session
 runs the composed preset with the native-name tools plus the unshadowed
-`composition_*` aliases. A clean headless profile verified
+`composition_*` aliases. The composed preset mirrors the installed `standard`
+plugin list and removes only the three native delegation rows, so the other
+standard tools and `/compact` are present in new sessions after the Host
+restart. A clean headless profile verified
 the full chain (start → child edge → wait → follow-up message → wait →
 interrupt). Native `subagent/start` events are mirrored into the composition as
 new nodes without changing any tool schema or routing authority. Session status
@@ -48,10 +51,13 @@ the shipped `subagent-catalog` entry, the picker filters and adds/removes
 sessions, details show cwd/sandbox/preset/native parent, rename/reparent and
 per-edge grants work, external placeholders render collapsed, the task board
 transitions, sync-native is callable, and composition create/delete leaves the
-DSH sessions untouched. Clone and bud execution are not implemented; a pure
+DSH sessions untouched. Clone and bud execution are implemented: the pure
 planner in `src/clone.js` covers whole-root tree selection, clone markers, and
-task-copy owner mapping, and [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md) records
-the DSH API findings. The cross-tree
+task-copy owner mapping,
+and `src/clone-manager.js` provides the host adapter. A live two-node spike
+passed; live GUI re-verification of clone details and workspace visibility is
+still open. [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md) records the DSH API
+findings. The cross-tree
 delivery capability described as the Bridge is implemented as the composition
 control tools (per-edge grants, approval gate, audit), not as a separate layer.
 

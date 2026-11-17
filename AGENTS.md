@@ -61,21 +61,32 @@ instruct the child, which replied `ROOT_ACK` through the composition. Audit rows
 recorded each delivery. Composed mode is configured in the desktop profile and
 was loaded after a Host restart; the current desktop session runs the composed
 preset, exposes the native-name tools plus the unshadowed `composition_*` aliases,
-and includes the compatibility prompt. Sessions using `standard`/`ptc` still
-mount the native tools and shadow the composed names. Tool ordering and the
-prefix fingerprint are covered by tests, not yet compared against a live native
-request. The real GUI was visually verified on 2026-11-17 in dark and light
-themes and at 420 px width: both header entries open the tab, the count chip
+and includes the compatibility prompt. The composed preset now mirrors the
+installed `standard` plugin list and omits only `tool-subagent-control`,
+`tool-subagent`, and `tool-subagent-fork`; it therefore also carries planning,
+compaction plus the tool-result pruner, workflow, skills, schedule, goals,
+office, and the plugin manager; `/compact` becomes available to new composed
+sessions after the pending Host restart. See
+[`docs/COMPOSED-PROFILE.md`](docs/COMPOSED-PROFILE.md), which also records the
+2026-11-17 missing-`/compact` incident (the old hand-written preset omitted the
+compaction group). Sessions using `standard`/`ptc` still mount the native tools
+and shadow the composed names. Tool ordering and the prefix fingerprint are
+covered by tests, not yet compared against a live native request. The real GUI
+was visually verified on 2026-11-17 in dark and light themes and at 420 px
+width: both header entries open the tab, the count chip
 coexists with the shipped
 `subagent-catalog` entry, the picker filters and adds/removes sessions, details
 show cwd/sandbox/preset/native parent, rename/reparent and per-edge grants work,
 external placeholders render collapsed, the task board transitions, sync-native
 is callable, and composition create/delete leaves DSH sessions untouched.
-Clone and bud execution is not implemented yet; the pure planner in
-`src/clone.js` covers whole-root tree selection, clone markers, and task-copy
-owner mapping. A live two-node Host spike (root + seeded child, native catalog,
-persisted-idle child, source unchanged) passed; the whole-tree adapter remains.
-The findings are in [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md).
+Clone and bud execution is implemented: `src/clone.js` is the pure planner
+(whole-root tree selection, clone markers, task-copy owner mapping) and
+`src/clone-manager.js` is the host adapter (seeded root, native children,
+post-order idle, task copy, workspace attach, failure cleanup); `/clone-tree`
+and `/bud` are the product routes. A live two-node Host spike passed and the
+formal adapter followed; live GUI re-verification of the clone badge/details,
+the 16-node clone, and workspace visibility is still open. The findings are in
+[`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md).
 The cross-tree delivery capability described
 as the Bridge is implemented as the composition control tools (per-edge grants,
 approval gate, audit), not as a separate layer. Do not describe native
@@ -186,9 +197,11 @@ docs/CLONE-SPIKE.md       DSH seed/catalog/permission findings for clone/bud
 package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
 
-Remaining work: clone/bud; compare composed tool order and the prefix fingerprint
-against a live native request; enforce the desktop model-selection allowlist;
-stop `standard`/`ptc` sessions from shadowing the composed names; keep
+Remaining work: re-verify clone/bud live (GUI badge/details, 16-node clone,
+workspace attach); remove the temporary `/clone-spike` route once the formal
+adapter is fully verified; compare composed tool order and the prefix
+fingerprint against a live native request; enforce the desktop model-selection
+allowlist; stop `standard`/`ptc` sessions from shadowing the composed names; keep
 large-session tab latency under observation. Decisions (2026-11-17): direct
 reparenting migrates edge grants while detaching or moving across compositions
 starts edges from deny; composition title editing is implemented; archived nodes
@@ -275,8 +288,8 @@ registration, and the rendered GUI are verified. Completed on 2026-11-17:
 - dark and light themes and 420 px width (no horizontal overflow; action buttons
   no longer split mid-word).
 
-Still open: clone/bud, the composed-surface parity items listed above, and
-large-session tab paint.
+Still open: live clone/bud re-verification, the composed-surface parity items
+listed above, and large-session tab paint.
 
 
 ## 7. Known pitfalls

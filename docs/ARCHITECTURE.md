@@ -4,11 +4,13 @@
 verified on 2026-11-17 in dark/light themes and at 420 px width. The Host
 bridge, durable domain write, root protection, shared membership resolution,
 busy-branch guard, native-subagent mirror, client slot occupants, and the
-rendered tab are verified. Composed mode is loaded after a Host restart.
+rendered tab are verified. Composed mode's mirrored preset is on disk and takes
+effect for new sessions after the next Host restart.
 
 **Scope update:** the authoritative product brief is
 [`HANDOFF.md`](HANDOFF.md). It adds **snapshot/clone** (branch a team, bud a
-subagent as a new root; not implemented) and a **controlled bridge** (explicitly
+subagent as a new root; implemented, with live GUI re-verification pending) and a
+**controlled bridge** (explicitly
 authorized cross-tree messages; implemented as the composition control tools,
 not a separate layer). Clones are new Sessions, never native re-parenting.
 
@@ -414,11 +416,18 @@ live cross-tree targets fall back to `followup`/`steer`. `wait_agent` mirrors th
 native caller-inbox wait. Composed mode also restores the native
 `subagent:identity` context and `tool:subagent` delegation guidance. Explicit
 child LLM selection is validated through the live LLM route and forwarded as
-child agent options. Composed mode is enabled and loaded in the desktop profile;
-a clean headless profile also verified the real chain: tool list, subagent
-creation and attachment, wait, follow-up send with cold resume, second wait, and
-interrupt. The remaining parity work is comparing tool order and the prefix
-fingerprint against a live native request, enforcing the model-selection
+child agent options. Composed mode is enabled in the desktop profile; the
+mirrored preset takes effect for new sessions after the next Host restart. Its
+agent preset mirrors the installed `standard` plugin list and omits only
+`tool-subagent-control`, `tool-subagent`, and `tool-subagent-fork`, so planning,
+compaction, workflow, skills, schedule, goals, office, and plugin-manager tools
+remain and `/compact` stays available; a hand-written subset once lost the
+compaction group and is recorded as the 2026-11-17 incident in
+[`COMPOSED-PROFILE.md`](COMPOSED-PROFILE.md). A clean headless profile also
+verified the real chain: tool list, subagent creation and attachment, wait,
+follow-up send with cold resume, second wait, and interrupt. The remaining
+parity work is comparing tool order and the prefix fingerprint against a live
+native request, enforcing the model-selection
 allowlist, and preventing `standard`/`ptc` sessions from shadowing the composed
 names.
 
@@ -533,20 +542,23 @@ Walking skeleton:
 - [x] pure clone/bud planner (`src/clone.js`): whole root tree, clone markers,
       task-copy owner mapping; source-level DSH API spike in
       [`CLONE-SPIKE.md`](CLONE-SPIKE.md);
-- [ ] live Host adapter: seed a new root, create cataloged children, preserve
-      permission/cwd/preset, idle-child behavior, failure cleanup;
-- verify a clone spike against the real Host (seed, preset mounting, catalog
-  rebuild, permission reconstruction, open-tail closing);
-- clone the **whole root tree** into new Sessions under a new root (no
-  subtree-only selection);
-- bud a subagent snapshot plus its subtree into an independent root; keep the
-  original node, never auto-archive it, and leave two parallel trees;
-- copy the plugin-owned task board and remap each owner to the cloned node;
-- preserve cwd, preset, route, and policy; the UI exposes no override;
-- mark clones with source id and snapshot time;
-- compute and check a canonical request-prefix fingerprint;
-- clean up partial clones;
-- never mutate the source tree.
+- [x] live Host adapter: seed a new root, create cataloged children, preserve
+      permission/cwd/preset, attach to the source workspace, post-order idle,
+      failure cleanup;
+- [x] live two-node Host spike against the real Host (seed, preset mounting,
+      catalog rebuild, permission reconstruction, open-tail closing);
+- [x] clone the **whole root tree** into new Sessions under a new root (no
+      subtree-only selection);
+- [x] bud a subagent snapshot plus its subtree into an independent root; keep the
+      original node, never auto-archive it, and leave two parallel trees;
+- [x] copy the plugin-owned task board and remap each owner to the cloned node;
+- [x] preserve cwd, preset, route, and policy; the UI exposes no override;
+- [x] mark clones with source id and snapshot time;
+- [ ] compute and check a canonical request-prefix fingerprint;
+- [x] clean up partial clones;
+- [x] never mutate the source tree;
+- [ ] live GUI re-verification of the clone badge/details, a 16-node clone, and
+      workspace visibility.
 
 ### Phase 3 — controlled bridge (implemented as composition tools)
 
