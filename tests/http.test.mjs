@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { CompositionError } from '../src/graph.js'
 import { createApi, isLoopback, MAX_BODY_BYTES, TOKEN_HEADER } from '../src/http.js'
 import { createManager } from '../src/manager.js'
 
@@ -294,6 +295,18 @@ test('wires clone-tree and bud routes to the clone adapter', async () => {
   assert.equal(bud.status, 200)
   assert.equal(bud.data.clone.newRootSessionId, 'session-bud')
   assert.deepEqual(calls, [['clone', 's-a'], ['bud', 's-a', 'n-b']])
+})
+
+test('maps a concurrent clone to 409', async () => {
+  const cloneManager = {
+    async cloneTree() {
+      throw new CompositionError('CLONE_IN_PROGRESS', 'another clone is running')
+    },
+  }
+  const { api } = makeHarness({ cloneManager })
+  const response = await call(api, authorized('POST', '/dsh-combinagents/clone-tree', JSON.stringify({ rootSessionId: 's-a' })))
+  assert.equal(response.status, 409)
+  assert.equal(response.data.error.code, 'CLONE_IN_PROGRESS')
 })
 
 test('lists sessions and deletes a composition', async () => {
