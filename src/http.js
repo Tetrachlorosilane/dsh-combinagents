@@ -40,6 +40,7 @@ const ROUTES = new Set([
   '/rename-node',
   '/set-grant',
   '/delete-composition',
+  '/clone-spike',
 ])
 
 class HttpError extends Error {
@@ -144,6 +145,7 @@ function errorOf(error) {
 export function createApi({
   manager,
   discovery,
+  cloneSpike = undefined,
   token,
   version = '0.1.0',
   platform = process.platform,
@@ -372,6 +374,22 @@ export function createApi({
         mode: body.mode,
       })
       return json(200, { composition: record.composition, updatedAt: record.updatedAt })
+    }
+    if (route === '/clone-spike') {
+      if (cloneSpike === undefined) {
+        return json(503, {
+          error: { code: 'CLONE_SPIKE_UNAVAILABLE', message: 'the temporary clone spike is not wired in this Host' },
+        })
+      }
+      if (body.action === 'cleanup') {
+        return json(200, await cloneSpike.cleanup(body.cloneRootSessionId))
+      }
+      return json(200, await cloneSpike.run({
+        rootSessionId: body.rootSessionId,
+        childSessionId: body.childSessionId,
+        mode: body.mode,
+        cleanup: body.cleanup === true,
+      }))
     }
     if (route === '/delete-composition') {
       await manager.deleteComposition(body.rootSessionId)

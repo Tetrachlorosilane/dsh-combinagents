@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { createApi, createNodeHandler, ROUTE_PREFIX } from './src/http.js'
+import { createCloneSpike } from './src/clone-spike.js'
 import { createControls } from './src/controls.js'
 import { createDiscovery } from './src/discovery.js'
 import { createManager } from './src/manager.js'
@@ -33,6 +34,7 @@ export function apply(ctx, config = {}) {
   const store = createStore(ctx)
   const discovery = createDiscovery(ctx)
   const manager = createManager({ store, discovery, agents: () => ctx.get('agents') })
+  const cloneSpike = createCloneSpike({ ctx, discovery })
   const controls = createControls({
     ctx,
     manager,
@@ -63,6 +65,10 @@ export function apply(ctx, config = {}) {
   }), 'dsh-combinagents: native subagent mirror')
 
   ctx.effect(() => () => {
+    cloneSpike.dispose()
+  }, 'dsh-combinagents: temporary clone spike')
+
+  ctx.effect(() => () => {
     void store.close()
   }, 'dsh-combinagents: composition storage')
 
@@ -71,6 +77,7 @@ export function apply(ctx, config = {}) {
     const api = createApi({
       manager,
       discovery,
+      cloneSpike,
       token,
       version,
       platform: process.platform,

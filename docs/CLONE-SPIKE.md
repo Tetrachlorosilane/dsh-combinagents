@@ -1,8 +1,9 @@
 # Clone / Bud spike — DSH API findings
 
 **Status:** source-level spike complete against DSH `0.2.2-rc.3` (local source
-checkout). No clone adapter is wired into the Host yet; the live Host spike
-below is still required before claiming clone/bud support.
+checkout). A temporary `POST /clone-spike` route is wired for the live Host
+spike; it is not part of the product API and must be removed after validation.
+The Host must be restarted once to load the route.
 
 ## 1. Confirmed product decisions
 
@@ -104,7 +105,29 @@ raw prefix.
    activations, remove the partial clone composition and tasks, and leave the
    source untouched.
 
-## 4. Live Host spike checklist
+## 4. Temporary `/clone-spike` route
+
+The Host exposes a temporary, token-authenticated POST route for the live spike:
+
+```
+POST /dsh-combinagents/clone-spike
+{ "rootSessionId": "...", "childSessionId": "...", "mode": "dispose" | "live", "cleanup": false }
+```
+
+- It reads the source root and child prefixes via `sessionQuery.observeSession`.
+- It creates one clone root via `ctx.agents.create` and, when `childSessionId`
+  is supplied, one seeded child via the temporary `combinagents-clone-spike`
+  provider and `startActivation`.
+- `mode: "dispose"` disposes the child activation immediately after the catalog
+  entry is established; `mode: "live"` leaves it running.
+- The response is a diagnostic object (ok/error, headers, permissions, catalog
+  counts, source-unchanged flag). It does not create a composition record.
+- To dispose a retained live attempt:
+  `{ "action": "cleanup", "cloneRootSessionId": "..." }`.
+- The route is deliberately outside the product API and must be removed after
+  the spike. The Host needs one restart to load it.
+
+## 5. Live Host spike checklist
 
 These require a debug route/tool and a Host restart; none is implemented yet.
 
@@ -122,7 +145,7 @@ These require a debug route/tool and a Host restart; none is implemented yet.
 7. Bud a child + subtree; verify the original node and tree remain untouched
    and both trees can delegate independently.
 
-## 5. Risks / open items
+## 6. Risks / open items
 
 - **Idle child semantics** are the main unknown; a clone should not silently
   run one model turn per child.
