@@ -197,6 +197,10 @@ export function createStore(ctx, options = {}) {
   let mode = 'memory'
   /** @type {{loaded: boolean, byRoot: Map<string, Map<string, object>>}} */
   const taskIndex = { loaded: false, byRoot: new Map() }
+  /** @type {{loaded: boolean, byRoot: Map<string, Map<string, object>>}} */
+  const cloneIndex = { loaded: false, byRoot: new Map() }
+  let auditWrites = 0
+  const AUDIT_LIMIT = 5000
 
   const ready = open().catch((error) => {
     // open() handles its own failures; this is a defensive net.
@@ -270,6 +274,69 @@ export function createStore(ctx, options = {}) {
   }
 
   /**
+   * @param {string} cloneId - storage key.
+   * @param {object} record - clone record.
+   */
+  function indexClone(cloneId, record) {
+    if (!cloneIndex.loaded || typeof record?.newRootSessionId !== 'string') return
+    let bucket = cloneIndex.byRoot.get(record.newRootSessionId)
+    if (bucket === undefined) {
+      bucket = new Map()
+      cloneIndex.byRoot.set(record.newRootSessionId, bucket)
+    }
+    bucket.set(cloneId, record)
+  }
+
+  /**
+   * @param {string} cloneId - storage key.
+   * @param {object|undefined} record - clone record.
+   */
+  function unindexClone(cloneId, record) {
+    if (!cloneIndex.loaded || typeof record?.newRootSessionId !== 'string') return
+    const bucket = cloneIndex.byRoot.get(record.newRootSessionId)
+    if (bucket === undefined) return
+    bucket.delete(cloneId)
+  }
+
+  /**
+   * @returns {Promise<void>}
+   */
+  async function loadCloneIndex() {
+    if (cloneIndex.loaded) return
+    const table = await tableOf(CLONE_TABLE)
+    const entries = table !== null ? [...table.entries()] : [...memory.get(CLONE_TABLE).entries()]
+    cloneIndex.byRoot.clear()
+    for (const [cloneId, record] of entries) {
+      if (typeof record?.newRootSessionId !== 'string') continue
+      let bucket = cloneIndex.byRoot.get(record.newRootSessionId)
+      if (bucket === undefined) {
+        bucket = new Map()
+        cloneIndex.byRoot.set(record.newRootSessionId, bucket)
+      }
+      bucket.set(cloneId, record)
+    }
+    cloneIndex.loaded = true
+  }
+
+  /**
+   * Trim the append-only audit table to the newest `limit` rows.
+   * @param {number} [limit] - retained rows.
+   * @returns {Promise<number>} removed rows.
+   */
+  async function pruneAudit(limit = AUDIT_LIMIT) {
+    const table = await tableOf(AUDIT_TABLE)
+    const entries = table !== null ? [...table.entries()] : [...memory.get(AUDIT_TABLE).entries()]
+    if (entries.length <= limit) return 0
+    entries.sort((left, right) => Number(left[1]?.at ?? 0) - Number(right[1]?.at ?? 0))
+    const remove = entries.slice(0, entries.length - limit)
+    for (const [id] of remove) {
+      if (table !== null) await table.delete(id)
+      else memory.get(AUDIT_TABLE).delete(id)
+    }
+    return remove.length
+  }
+
+  /**
    * @param {string} name - table name.
    * @returns {Promise<object|null>} durable table or null in memory mode.
    */
@@ -334,10 +401,13 @@ export function createStore(ctx, options = {}) {
       const table = await tableOf(AUDIT_TABLE)
       if (table !== null) {
         await table.put(record.id, record)
-        return
+      } else {
+        memory.get(AUDIT_TABLE).set(record.id, record)
       }
-      memory.get(AUDIT_TABLE).set(record.id, record)
+      auditWrites += 1
+      if (auditWrites % 100 === 0) await pruneAudit()
     },
+    pruneAudit,
     async listAudit(rootSessionId) {
       const table = await tableOf(AUDIT_TABLE)
       const entries = table !== null ? [...table.entries()] : [...memory.get(AUDIT_TABLE).entries()]
@@ -385,21 +455,28 @@ export function createStore(ctx, options = {}) {
       const table = await tableOf(CLONE_TABLE)
       if (table !== null) {
         await table.put(cloneId, record)
-        return
+      } else {
+        memory.get(CLONE_TABLE).set(cloneId, record)
       }
-      memory.get(CLONE_TABLE).set(cloneId, record)
+      indexClone(cloneId, record)
     },
     async deleteClone(cloneId) {
       const table = await tableOf(CLONE_TABLE)
+      const previous = table !== null ? table.get(cloneId) : memory.get(CLONE_TABLE).get(cloneId)
       if (table !== null) {
         await table.delete(cloneId)
-        return
+      } else {
+        memory.get(CLONE_TABLE).delete(cloneId)
       }
-      memory.get(CLONE_TABLE).delete(cloneId)
+      unindexClone(cloneId, previous)
     },
-    async listClones() {
-      const table = await tableOf(CLONE_TABLE)
-      return table !== null ? [...table.entries()] : [...memory.get(CLONE_TABLE).entries()]
+    async listClones(rootSessionId) {
+      if (typeof rootSessionId !== 'string') {
+        const table = await tableOf(CLONE_TABLE)
+        return table !== null ? [...table.entries()] : [...memory.get(CLONE_TABLE).entries()]
+      }
+      await loadCloneIndex()
+      return [...(cloneIndex.byRoot.get(rootSessionId)?.entries() ?? [])]
     },
     async close() {
       await ready.catch(() => {})

@@ -112,7 +112,12 @@ export function createManager({
     if (membership !== null) return membership
     const map = new Map()
     for (const [rootSessionId, record] of await store.list()) {
-      for (const node of record?.composition?.nodes ?? []) {
+      const nodes = record?.composition?.nodes
+      if (!Array.isArray(nodes)) {
+        warn('dsh-combinagents: skipping a composition with malformed nodes', { rootSessionId })
+        continue
+      }
+      for (const node of nodes) {
         if (typeof node.sessionId !== 'string' || node.sessionId.length === 0) continue
         const existing = map.get(node.sessionId)
         if (existing !== undefined && existing !== rootSessionId) {
@@ -1280,7 +1285,7 @@ export function createManager({
       for (const [taskId, task] of await store.listTasks?.(rootSessionId) ?? []) {
         if (task.rootSessionId === rootSessionId) await store.deleteTask?.(taskId)
       }
-      for (const [cloneId, clone] of await store.listClones?.() ?? []) {
+      for (const [cloneId, clone] of await store.listClones?.(rootSessionId) ?? []) {
         if (clone.newRootSessionId === rootSessionId) await store.deleteClone?.(cloneId)
       }
     })

@@ -106,3 +106,19 @@ test('indexes tasks by root after the first list and keeps it current', async ()
   assert.deepEqual((await store.listTasks('root-a')).map(([id]) => id), ['t-c'])
   assert.deepEqual((await store.listTasks('root-b')).map(([id]) => id), ['t-b'])
 })
+
+test('indexes clones by new root and prunes old audit rows', async () => {
+  const store = createStore({ get: () => undefined, logger: { info() {}, warn() {} } })
+  await store.ready
+  await store.putClone('c-a', { id: 'c-a', newRootSessionId: 'root-a', at: 1 })
+  await store.putClone('c-b', { id: 'c-b', newRootSessionId: 'root-b', at: 2 })
+  assert.deepEqual((await store.listClones('root-a')).map(([id]) => id), ['c-a'])
+  await store.deleteClone('c-a')
+  assert.deepEqual(await store.listClones('root-a'), [])
+
+  await store.appendAudit({ id: 'a-1', at: 1 })
+  await store.appendAudit({ id: 'a-2', at: 2 })
+  await store.appendAudit({ id: 'a-3', at: 3 })
+  assert.equal(await store.pruneAudit(2), 1)
+  assert.deepEqual((await store.listAudit()).map(([id]) => id).sort(), ['a-2', 'a-3'])
+})

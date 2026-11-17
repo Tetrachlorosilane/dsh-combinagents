@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (114 total);
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (117 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`) and
@@ -211,12 +211,11 @@ allowlist; stop `standard`/`ptc` sessions from shadowing the composed names; kee
 large-session tab latency under observation. Clone/bud live verification and
 the temporary `/clone-spike` removal are complete (2026-11-18). The 2026-11-18
 audit fixed P0 SEC-1 (Host/Origin), SEC-2 (one-composition membership), SEC-4
-(locked/compensated move), plus P1 SEC-3 (task provenance), PERF-1/2/3/4/5/6/7/8/9
+(locked/compensated move), plus P1 SEC-3 (task provenance), PERF-1/2/3/4/5/6/7/8/9/10/11
 (native/corpus/title caches, composition-only summary, title/clone bounds, lock
-splitting, record reuse, no implicit sync), and PERF-10 partial (policy cleanup
-and task/policy migration). Remaining audit items: SEC-5/6/7/8/9/10/11/12,
-PERF-10 rotation/clone-record migration, PERF-11 beyond the 200-row cap, and
-R-1..R-8. Decisions
+splitting, record reuse, no implicit sync, task/clone indexes, audit pruning,
+picker cap). R-1/R-4/R-5 are also fixed. Remaining audit items: SEC-5..SEC-12,
+R-7/R-8, and optional cold-title/seed-streaming improvements. Decisions
 (2026-11-18): a connection the user adds manually defaults to bidirectional
 messaging (`allowMessage: true`, `allowInterrupt: false`); direct reparenting
 migrates an existing grant, or defaults the replacement edge to messaging when

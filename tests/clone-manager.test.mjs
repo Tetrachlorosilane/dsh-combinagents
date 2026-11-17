@@ -373,3 +373,17 @@ test('rejects a second clone while one is running', async () => {
   assert.equal(rejected?.reason?.code, 'CLONE_IN_PROGRESS')
   cloneManager.dispose()
 })
+
+test('caps the generated clone title at the graph limit', async () => {
+  const { store, cloneManager } = createHarness()
+  installSource(store, createComposition({
+    id: 'source',
+    title: 'x'.repeat(120),
+    rootSessionId: 's-a',
+    nodes: [node('n-a', 's-a', 'Root')],
+    edges: [],
+  }))
+  const result = await cloneManager.cloneTree('s-a')
+  assert.equal(result.composition.title.length <= 120, true)
+  cloneManager.dispose()
+})

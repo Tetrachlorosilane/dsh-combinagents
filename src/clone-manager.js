@@ -242,11 +242,10 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     const presetService = presets()
     let agentPreset
     let setup
-    if (presetService?.resolve !== undefined && presetService?.mount !== undefined) {
+    if (typeof source.header.agentPreset === 'string' && source.header.agentPreset.length > 0
+      && presetService?.resolve !== undefined && presetService?.mount !== undefined) {
       const resolved = await presetService.resolve(source.header.agentPreset)
-      if (typeof source.header.agentPreset === 'string' && source.header.agentPreset.length > 0) {
-        agentPreset = resolved.id
-      }
+      agentPreset = resolved.id
       setup = async (agentCtx) => { await presetService.mount(agentCtx, resolved.id) }
     }
     const handle = await registry.create({
@@ -459,7 +458,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
 
       const composition = createComposition({
         id: randomUUID(),
-        title: `${sourceComposition.title} (clone)`,
+        title: `${sourceComposition.title} (clone)`.slice(0, 120),
         rootSessionId: root.id,
         nodes,
         edges,
@@ -549,7 +548,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
           }
         } catch {}
         try {
-          for (const [cloneId, clone] of await store.listClones()) {
+          for (const [cloneId, clone] of await store.listClones(root.id)) {
             if (clone.newRootSessionId === root.id) await store.deleteClone(cloneId)
           }
         } catch {}

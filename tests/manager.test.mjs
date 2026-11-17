@@ -753,3 +753,16 @@ test('sync-native does not hold the root lock while reading the native tree', as
   releaseTree()
   await syncing
 })
+
+test('skips malformed composition records when building membership', async () => {
+  const store = fakeStore()
+  await store.put('bad-root', { composition: { nodes: 5 }, updatedAt: 1 })
+  const warnings = []
+  const manager = createManager({
+    store,
+    discovery: fakeDiscovery(),
+    logger: { warn(...args) { warnings.push(args) } },
+  })
+  assert.equal(await manager.resolveSession('s-a'), null)
+  assert.ok(warnings.some((entry) => entry[0].includes('malformed nodes')))
+})
