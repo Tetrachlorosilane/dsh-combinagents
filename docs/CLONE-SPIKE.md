@@ -1,0 +1,137 @@
+# Clone / Bud spike — DSH API findings
+
+**Status:** source-level spike complete against DSH `0.2.2-rc.3` (local source
+checkout). No clone adapter is wired into the Host yet; the live Host spike
+below is still required before claiming clone/bud support.
+
+## 1. Confirmed product decisions
+
+- Clone the **whole tree rooted at the composition root session**; do not offer
+  a middle-subtree selection.
+- Copy the plugin-owned `tasks` board and remap every `ownerNodeId` to the
+  cloned node.
+- Do not allow cwd / preset / permission overrides during clone; preserve the
+  source values.
+- Budding a subagent keeps the original node, never auto-archives it, and leaves
+  two parallel independent trees.
+
+## 2. What DSH already supports
+
+### Root creation with a seed
+
+`CreateAgentOptions` (`packages/core/agent/src/index.ts`) supports:
+
+- `seed` — contiguous events from seq 0;
+- `inheritedEventCount` — exact copied prefix length;
+- `meta.cwd`, `meta.isSeeded`, `meta.agentPreset`, `meta.parentSession`,
+  `meta.origin`, `meta.delegationDepth`;
+- `setup` — mount the resolved agent preset before publication;
+- `agentOptions` — provider/model/effort route.
+
+`SessionStore.fork` (`packages/core/session/src/index.ts`) copies a live
+session's prefix, `cwd`, and `isSeeded`; it does **not** create a native child
+catalog entry. The ordinary session-controller fork command
+(`packages/api/session-controller/src/commands.ts`) shows the canonical root
+recipe: read `sessionQuery.observeSession`, `buildForkSeed`, resolve the source
+preset through `agentPresets`, then `ctx.agents.create` with the seed and
+`setup`. It preserves the source `cwd` and `agentPreset`; it does not attach the
+new session to a native parent.
+
+### Permission preservation is automatic for seeded sessions
+
+`PermissionPresetService.pinInitialPermission`
+(`packages/interaction/permission-presets/src/index.ts`) fills only missing
+permission facts for a seeded/partially initialized session. If the copied
+prefix includes the source `permission/preset`, sandbox-mode, and approval
+events, the clone's effective preset is preserved without a
+`permissionPresets.set` write. That matches the "no override" decision and
+keeps the graph-mutation invariant intact.
+
+### Child creation with a seed
+
+`startActivation` + a provider with `prepareContinuable`
+(`packages/subagent/subagent/src/index.ts`,
+`packages/subagent/subagent-fork-in-process/src/index.ts`) is the public path
+that creates a **native child**: the manager reserves the child id, sets
+`parentSession`/`origin: 'subagent'`/`delegationDepth`, creates the agent with
+the seed, and appends the parent-owned `subagent/catalog` entry. A seeding
+provider returns a raw completed-turn prefix; the session constructor and
+manager add the inherited marker/closers.
+
+`ContinuableCreateRequest` exposes the parent and reserved child id, not an
+arbitrary source id. A clone provider therefore needs a closure map
+`childId -> sourceSessionId`, filled before each `startActivation` call. Its
+`prepareContinuable` reads the source observation, picks the latest completed
+turn boundary (same rule as `latestCompletedPrefixBoundary`), and returns the
+raw prefix.
+
+### What is not available
+
+- There is no public "attach an existing session as a child" API.
+- `startActivation` always submits an initial prompt and wakes a turn; it does
+  not create an idle cataloged child.
+- The root clone's route comes from the current default model selection, not
+  from the source header. The source preset/cwd/permission can be preserved;
+  the exact provider/model route is not recovered from the session header.
+- External placeholders have no local session to fork; they can only be copied
+  as external placeholders with a `cloneOf` marker.
+
+## 3. Proposed adapter
+
+1. **Plan** the clone with a pure function: root node + all composition
+   descendants, edges by source node id, task copy with owner remap, clone
+   markers (`cloneOf`, `snapshotAt`, `sourceCompositionId`).
+2. **Root**: `ctx.agents.create` with `seed`, `inheritedEventCount`, `meta.cwd`,
+   `meta.isSeeded`, `meta.agentPreset`, and a `setup` that mounts the source
+   preset via `agentPresets.resolve/mount`. The source prefix carries the
+   permission facts.
+3. **Children**: register a plugin-owned provider (for example
+   `combinagents-clone`). For each source child in parent-before-child order:
+   map the reserved child id to the source session, call `startActivation` with
+   the source `cwd`, source `agentPreset`, and a short clone notice as the
+   initial prompt. The manager creates the session, catalog entry, and native
+   ownership.
+4. **Idle question**: the initial prompt starts a turn. The spike must decide
+   between (a) accept one small acknowledgement turn per cloned child, or
+   (b) dispose the activation immediately after catalog establishment and
+   verify the child remains a usable persisted catalog child. Do not hand-write
+   `subagent/catalog`.
+5. **Tasks**: copy `tasks` rows, reset `revision` to 1, remap `ownerNodeId`
+   through the node mapping, and write them under the clone root.
+6. **Composition**: create a new composition record for the cloned root with
+   cloned `sessionId`s and `cloneOf` markers; never mutate the source record.
+7. **Failure cleanup**: if any child creation fails, dispose created
+   activations, remove the partial clone composition and tasks, and leave the
+   source untouched.
+
+## 4. Live Host spike checklist
+
+These require a debug route/tool and a Host restart; none is implemented yet.
+
+1. Clone a two-node tree (root + one child) and verify the cloned root's
+   `header.cwd`, `agentPreset`, permission preset, and native child catalog.
+2. Verify the source session headers/catalogs/permissions do not change.
+3. Compare the first request prefix of the clone with the source; record the
+   route/model difference, if any.
+4. Determine the child-idle behavior of `startActivation` + immediate
+   `dispose()`; inspect whether the child remains listable, resumable, and
+   messageable.
+5. Clone the 16-node rich composition; measure time and failure cleanup.
+6. Copy a task board with owners on both root and child nodes; verify the
+   remapped owners.
+7. Bud a child + subtree; verify the original node and tree remain untouched
+   and both trees can delegate independently.
+
+## 5. Risks / open items
+
+- **Idle child semantics** are the main unknown; a clone should not silently
+  run one model turn per child.
+- **Route/model** is not source-preserved by the public create path; the
+  request-prefix fingerprint may differ even when preset/cwd/permissions match.
+- **Permission events** must be present in the copied prefix; older sessions
+  without them fall back to current defaults.
+- **Team tasks** are plugin-owned; copying is straightforward, but owner ids
+  must be remapped and revisions reset.
+- **External nodes** are copied as placeholders, not resurrected executions.
+- **Failure atomicity** spans sessions, catalogs, compositions, and tasks; the
+  current storage domain has no cross-table transaction.

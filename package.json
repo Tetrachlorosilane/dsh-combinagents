@@ -16,6 +16,7 @@
   "exports": {
     ".": "./index.js",
     "./graph": "./src/graph.js",
+    "./clone": "./src/clone.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
@@ -51,6 +52,6 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check index.js src/graph.js src/store.js src/discovery.js src/manager.js src/http.js src/controls.js client.js"
+    "check": "node --check index.js src/graph.js src/clone.js src/store.js src/discovery.js src/manager.js src/http.js src/controls.js client.js"
   }
 }

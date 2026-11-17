@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (85 total);
+  client-registration, host-wiring, controls, and bundle-shape tests (89 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`) and
@@ -71,7 +71,10 @@ coexists with the shipped
 show cwd/sandbox/preset/native parent, rename/reparent and per-edge grants work,
 external placeholders render collapsed, the task board transitions, sync-native
 is callable, and composition create/delete leaves DSH sessions untouched.
-Clone and bud are not implemented. The cross-tree delivery capability described
+Clone and bud execution is not implemented; the pure planner in
+`src/clone.js` covers whole-root tree selection, clone markers, and task-copy
+owner mapping. The DSH API spike is in [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md).
+The cross-tree delivery capability described
 as the Bridge is implemented as the composition control tools (per-edge grants,
 approval gate, audit), not as a separate layer. Do not describe native
 re-parenting as implemented.
@@ -149,12 +152,15 @@ client.js                 Right-sidebar tab, header utility, guide entry,
 cordis.patch.yml          Bundle patch for the Host entry
 src/graph.js              Pure composition graph: validation, forest, cycle checks,
                           promote/cascade removal
+src/clone.js              Pure clone/bud planner: whole-root tree, markers,
+                          task-copy owner mapping
 src/store.js              DSH storage-domain adapter + memory fallback
 src/discovery.js          Live/persisted session discovery and observations
 src/manager.js            Serialized mutations, grants, path authorization
 src/http.js               Loopback, token-authenticated JSON bridge
 src/controls.js           Composition tools (overlay 3, composed 10)
 tests/graph.test.mjs      Graph tests (18)
+tests/clone.test.mjs      Clone/bud plan tests
 tests/store.test.mjs      Domain adapter, fallback, record schema
 tests/manager.test.mjs    Creation, serialization, root protection
 tests/discovery.test.mjs  Read-only discovery and observations
@@ -170,6 +176,7 @@ docs/HANDOFF.md           Authoritative product requirements, clone/bridge/bud l
 docs/FEASIBILITY.md       DSH source review, options, verdicts
 docs/ARCHITECTURE.md      Phase-1 design, storage, HTTP, UI, acceptance criteria
 docs/COMPOSED-PROFILE.md  How to enable composed mode without duplicate tools
+docs/CLONE-SPIKE.md       DSH seed/catalog/permission findings for clone/bud
 package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
 
@@ -180,6 +187,9 @@ large-session tab latency under observation. Decisions (2026-11-17): direct
 reparenting migrates edge grants while detaching or moving across compositions
 starts edges from deny; composition title editing is implemented; archived nodes
 keep the current "offer open conversation, the workspace decides" behavior.
+Clone/bud decisions: clone the **whole root tree**; copy the plugin-owned task
+board and remap owners; expose no cwd/preset/permission override; budding keeps
+the original node, never auto-archives it, and leaves two parallel trees.
 
 ## 5. Development rules
 
@@ -229,7 +239,7 @@ keep the current "offer open conversation, the workspace decides" behavior.
 Before handing a change back:
 
 ```bash
-node --check index.js src/graph.js src/store.js src/discovery.js src/manager.js src/http.js src/controls.js client.js
+node --check index.js src/graph.js src/clone.js src/store.js src/discovery.js src/manager.js src/http.js src/controls.js client.js
 node --test tests/*.test.mjs
 node -e "for (const f of ['package.json', 'locale/en.json', 'locale/zh.json']) JSON.parse(require('fs').readFileSync(f,'utf8'))"
 ```
@@ -245,7 +255,9 @@ registration, and the rendered GUI are verified. Completed on 2026-11-17:
 - direct reparenting carries the edge's grants to the replacement edge
   (`setParent` and same-composition `addNode`), covered by manager tests;
 - composition title editing through `/set-title` and the tab header, covered by
-  manager and HTTP tests;
+  manager/HTTP tests and exercised live after the Host restart;
+- direct reparenting grant migration exercised live on the B512 composition
+  (the edge id changed, `allowMessage`/`allowInterrupt` stayed true/false);
 - external placeholder rendering (collapsed, provider/native parent, no open
   conversation); added through `/add-external` because this profile had no
   discovered external leaf to click, with a fake-catalog bridge test covering
@@ -258,8 +270,7 @@ registration, and the rendered GUI are verified. Completed on 2026-11-17:
   no longer split mid-word).
 
 Still open: clone/bud, the composed-surface parity items listed above, and
-large-session tab paint. Live GUI verification of title editing and grant
-migration needs the next Host restart because those are Host-side changes.
+large-session tab paint.
 
 
 ## 7. Known pitfalls

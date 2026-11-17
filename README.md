@@ -48,7 +48,10 @@ the shipped `subagent-catalog` entry, the picker filters and adds/removes
 sessions, details show cwd/sandbox/preset/native parent, rename/reparent and
 per-edge grants work, external placeholders render collapsed, the task board
 transitions, sync-native is callable, and composition create/delete leaves the
-DSH sessions untouched. Clone and bud are not implemented; the cross-tree
+DSH sessions untouched. Clone and bud execution are not implemented; a pure
+planner in `src/clone.js` covers whole-root tree selection, clone markers, and
+task-copy owner mapping, and [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md) records
+the DSH API findings. The cross-tree
 delivery capability described as the Bridge is implemented as the composition
 control tools (per-edge grants, approval gate, audit), not as a separate layer.
 
@@ -79,6 +82,8 @@ permissions possible.
   foundation, storage, UI, and phased plan.
 - [Composed profile overlay](docs/COMPOSED-PROFILE.md) — how to enable the
   native-name composed surface without duplicate tool registration.
+- [Clone/bud spike](docs/CLONE-SPIKE.md) — DSH seed, catalog, permission, and
+  idle-child findings before the Host adapter is written.
 - [AGENTS.md](AGENTS.md) — the working contract for changing this repository.
 
 ## What is in the repository
@@ -88,18 +93,20 @@ index.js                 Host entry: storage, discovery, manager, HTTP bridge
 client.js                Right-sidebar tab, header utility, guide entry,
                          composition-count chip
 src/graph.js             Pure composition graph (forest, cycles, subtree removal)
+src/clone.js             Pure clone/bud planner (whole root tree, markers, tasks)
 src/store.js             DSH storage-domain adapter + memory fallback
 src/discovery.js         Read-only live/persisted session discovery
 src/manager.js           Serialized mutations and root-session protection
 src/http.js              Loopback, token-authenticated JSON bridge
 src/controls.js          Composition control tools and composed delegation surface
-tests/                   Graph, store, manager, discovery, HTTP, controls, host,
-                         client-registration, and bundle tests
+tests/                   Graph, clone-plan, store, manager, discovery, HTTP,
+                         controls, host, client-registration, and bundle tests
 locale/{en,zh}.json      Plugin Manager metadata
 icon.svg                 Bundle icon
 docs/HANDOFF.md          Product requirements, design logic, cache and UI handoff
 docs/FEASIBILITY.md      DSH source review and design options
 docs/ARCHITECTURE.md     Architecture, decisions, and implementation plan
+docs/CLONE-SPIKE.md      DSH clone/bud API findings and live spike checklist
 cordis.patch.yml         Bundle patch for the Host entry
 ```
 
@@ -107,7 +114,7 @@ cordis.patch.yml         Bundle patch for the Host entry
 
 ```bash
 node --test tests/*.test.mjs
-node --check index.js src/graph.js src/store.js src/discovery.js src/manager.js src/http.js src/controls.js client.js
+node --check index.js src/graph.js src/clone.js src/store.js src/discovery.js src/manager.js src/http.js src/controls.js client.js
 ```
 
 No build step and no runtime dependencies. The graph model is ordinary ESM

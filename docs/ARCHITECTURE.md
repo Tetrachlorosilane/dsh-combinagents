@@ -530,12 +530,20 @@ Walking skeleton:
 
 ### Phase 2 — snapshot / clone / bud
 
+- [x] pure clone/bud planner (`src/clone.js`): whole root tree, clone markers,
+      task-copy owner mapping; source-level DSH API spike in
+      [`CLONE-SPIKE.md`](CLONE-SPIKE.md);
+- [ ] live Host adapter: seed a new root, create cataloged children, preserve
+      permission/cwd/preset, idle-child behavior, failure cleanup;
 - verify a clone spike against the real Host (seed, preset mounting, catalog
   rebuild, permission reconstruction, open-tail closing);
-- clone a selected subtree into new Sessions under a new root;
-- bud a subagent snapshot into an independent root;
+- clone the **whole root tree** into new Sessions under a new root (no
+  subtree-only selection);
+- bud a subagent snapshot plus its subtree into an independent root; keep the
+  original node, never auto-archive it, and leave two parallel trees;
+- copy the plugin-owned task board and remap each owner to the cloned node;
+- preserve cwd, preset, route, and policy; the UI exposes no override;
 - mark clones with source id and snapshot time;
-- preserve cwd, preset, route, and policy where possible;
 - compute and check a canonical request-prefix fingerprint;
 - clean up partial clones;
 - never mutate the source tree.
@@ -589,7 +597,7 @@ viewer.
 11. A DSH-side smoke test verifies the tab opens from the header button and the
     guide.
 
-Verified on 2026-11-17: criteria 1, 3-11 through the 85 unit tests and the real
+Verified on 2026-11-17: criteria 1, 3-11 through the 89 unit tests and the real
 GUI (dark/light/420 px). Criterion 2 was demonstrated by adding a
 mahjong-workspace session to a `dsh-combinagents` composition and by the rich
 composition with 15 native subagent nodes; the cross-workspace node was removed
@@ -602,14 +610,20 @@ Host-side routes require the next Host restart before a live GUI pass.
 
 ### Phase 2 acceptance
 
-1. A tree with at least two child Sessions clones into a new tree with new ids.
+1. A whole root tree (root plus every child and external placeholder) clones
+   into a new tree with new Session ids.
 2. The source tree, its headers, catalogs, Activations, and policies are
    unchanged.
 3. The clone's canonical request prefix matches the source up to inherited
-   history when cwd/preset/route/tools are unchanged.
+   history; cwd, preset, route, tool set, and policy are unchanged because the
+   UI exposes no override.
 4. Clone notices are appended, not prepended.
 5. A failed clone leaves no published half-tree.
 6. The clone can create a new child (depth/capacity permitting).
+7. The plugin-owned task board is copied and every owner is remapped to the
+   cloned node.
+8. Budding a subagent keeps the original node, never auto-archives it, and
+   leaves two parallel independent trees.
 
 ### Phase 3 acceptance
 
