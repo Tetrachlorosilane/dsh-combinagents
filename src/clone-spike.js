@@ -209,6 +209,17 @@ export function createCloneSpike({ ctx, discovery }) {
         diagnostics.rootEventTail = rootEvents.slice(-16).map((event) => event.type)
         await new Promise((resolve) => setTimeout(resolve, 150))
         await sessions()?.refreshProjections?.(rootSession.header.id)
+        const rootObservation = await query().observeSession(rootSession.header.id)
+        try {
+          diagnostics.observationSource = rootObservation.source
+          diagnostics.observationInheritedEventCount = rootObservation.inheritedEventCount
+          diagnostics.observationCatalogEventSeqs = rootObservation.events
+            .filter((event) => event.type === 'subagent/catalog')
+            .map((event) => event.seq)
+          diagnostics.observationCatalogCount = rootObservation.projections?.values.subagentCatalog?.length ?? null
+        } finally {
+          rootObservation[Symbol.dispose]?.()
+        }
         diagnostics.catalogsWithChild = await subagents()?.listChildren?.(rootSession.header.id) ?? []
         diagnostics.cloneChildLiveBeforeDispose = sessions()?.get?.(cloneChildId) !== undefined
         diagnostics.cloneChildPermission = await permissionOf(cloneChildId)
