@@ -77,6 +77,8 @@ function createHarness({ failChild = false, workspaces = [] } = {}) {
   const live = new Map()
   const providers = new Map()
   const created = []
+  let activeChildren = 0
+  let peakChildren = 0
   const agents = {
     async create(options) {
       created.push(options.sessionId)
@@ -115,6 +117,8 @@ function createHarness({ failChild = false, workspaces = [] } = {}) {
         cwd: spec.cwd,
         signal: spec.signal,
       })
+      activeChildren += 1
+      peakChildren = Math.max(peakChildren, activeChildren)
       const agent = {
         id: spec.childId,
         session: {
@@ -134,7 +138,10 @@ function createHarness({ failChild = false, workspaces = [] } = {}) {
       return {
         childId: spec.childId,
         messageId: 'message-1',
-        async dispose() { live.delete(agent.id) },
+        async dispose() {
+          live.delete(agent.id)
+          activeChildren -= 1
+        },
       }
     },
   }
@@ -172,7 +179,7 @@ function createHarness({ failChild = false, workspaces = [] } = {}) {
   }
   const manager = createManager({ store, discovery, agents: () => agents })
   const cloneManager = createCloneManager({ ctx, store, discovery, manager, now: () => 5000 })
-  return { store, manager, cloneManager, live, created }
+  return { store, manager, cloneManager, live, created, peakChildren: () => peakChildren }
 }
 
 function installSource(store, composition, tasks = []) {
@@ -228,6 +235,29 @@ test('clones the whole root tree, copies tasks, and leaves children idle', async
   assert.equal(cloneManager.liveCount, 1)
   cloneManager.dispose()
   assert.equal(live.size, 0)
+})
+
+test('builds a wide tree depth-first so active children stay under the Host limit', async () => {
+  const { store, cloneManager, peakChildren } = createHarness()
+  const children = Array.from({ length: 12 }, (_, index) => node(`n-${index}`, `s-${index}`, `Child ${index}`))
+  installSource(store, createComposition({
+    id: 'source',
+    title: 'Wide',
+    rootSessionId: 's-a',
+    nodes: [node('n-a', 's-a', 'Root'), ...children],
+    edges: children.map((child, index) => ({
+      id: `e-${index}`,
+      parentId: 'n-a',
+      childId: child.id,
+      role: 'reports-to',
+    })),
+  }))
+
+  const result = await cloneManager.cloneTree('s-a')
+  assert.equal(result.composition.nodes.length, 13)
+  assert.equal(result.composition.edges.length, 12)
+  assert.ok(peakChildren() <= 1, `peak active children was ${peakChildren()}`)
+  cloneManager.dispose()
 })
 
 test('attaches the clone root by cwd when the source has no workspace membership', async () => {

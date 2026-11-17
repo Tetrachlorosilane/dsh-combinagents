@@ -70,27 +70,6 @@ async function observe(query, sessionId) {
 }
 
 /**
- * @param {object} plan - pure clone plan.
- * @returns {string[]} source node ids in parent-before-child order.
- */
-function preorder(plan) {
-  const children = new Map()
-  for (const edge of plan.edges) {
-    const list = children.get(edge.parentSourceNodeId) ?? []
-    list.push(edge.childSourceNodeId)
-    children.set(edge.parentSourceNodeId, list)
-  }
-  const result = []
-  const queue = [plan.rootSourceNodeId]
-  while (queue.length > 0) {
-    const id = queue.shift()
-    result.push(id)
-    for (const child of children.get(id) ?? []) queue.push(child)
-  }
-  return result
-}
-
-/**
  * Create the clone/bud adapter.
  * @param {{ctx: object, store: object, discovery: object, manager: object,
  *   now?: () => number}} deps - Host services and composition manager.
@@ -292,7 +271,11 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
           : {}),
         maxDepth: 32,
         signal: AbortSignal.timeout(30000),
-        delivery: 'parent',
+        // `caller` still catalogs the child (the catalog commit runs for local
+        // activations), but suppresses the settlement notice that `parent`
+        // would inject into the clone root. Otherwise disposing each cloned
+        // child wakes the clone root and it starts a new turn.
+        delivery: 'caller',
       })
       const agent = agents()?.get?.(id)
       if (agent === undefined) {
@@ -319,10 +302,9 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     if (rootSourceNode === undefined) {
       throw new CompositionError('UNKNOWN_NODE', 'the clone plan has no root node')
     }
-    const createdActivations = []
+    const pendingActivations = new Set()
     let root
     const cloneNodeBySource = new Map()
-    const liveAgentBySource = new Map()
     const nodes = []
     const edges = []
     try {
@@ -333,7 +315,6 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
         id: randomUUID(),
         sessionId: root.id,
       })
-      liveAgentBySource.set(rootSourceNode.sourceNodeId, root.handle.agent)
       const rootCloneNode = cloneNodeBySource.get(rootSourceNode.sourceNodeId)
       nodes.push({
         id: rootCloneNode.id,
@@ -351,71 +332,88 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
         addedAt: snapshotAt,
       })
 
-      const order = preorder(plan)
-      for (const sourceNodeId of order) {
-        if (sourceNodeId === plan.rootSourceNodeId) continue
-        const sourceNode = plan.nodes.find((node) => node.sourceNodeId === sourceNodeId)
-        if (sourceNode === undefined) continue
-        const parentEdge = plan.edges.find((edge) => edge.childSourceNodeId === sourceNodeId)
-        if (parentEdge === undefined) continue
-        const parentClone = cloneNodeBySource.get(parentEdge.parentSourceNodeId)
-        if (parentClone === undefined) continue
-        const parentAgent = liveAgentBySource.get(parentEdge.parentSourceNodeId)
-        const nodeId = randomUUID()
-        if (sourceNode.kind === 'external') {
-          cloneNodeBySource.set(sourceNodeId, { id: nodeId, sessionId: null })
+      const childrenOf = new Map()
+      for (const edge of plan.edges) {
+        const list = childrenOf.get(edge.parentSourceNodeId) ?? []
+        list.push(edge)
+        childrenOf.set(edge.parentSourceNodeId, list)
+      }
+      /**
+       * Build one source subtree depth-first. A child is disposed only after its
+       * own descendants are built, so no more than one sibling per depth stays
+       * live and a wide team never exceeds the Host's active-child limit.
+       * @param {string} sourceNodeId - source node whose children to build.
+       * @param {object} parentAgent - live cloned parent.
+       * @returns {Promise<void>}
+       */
+      const build = async (sourceNodeId, parentAgent) => {
+        for (const parentEdge of childrenOf.get(sourceNodeId) ?? []) {
+          const sourceNode = plan.nodes.find((node) => node.sourceNodeId === parentEdge.childSourceNodeId)
+          if (sourceNode === undefined) continue
+          const parentClone = cloneNodeBySource.get(sourceNodeId)
+          if (parentClone === undefined) continue
+          const nodeId = randomUUID()
+          if (sourceNode.kind === 'external') {
+            cloneNodeBySource.set(sourceNode.sourceNodeId, { id: nodeId, sessionId: null })
+            nodes.push({
+              id: nodeId,
+              sessionId: null,
+              label: sourceNode.label,
+              kind: 'external',
+              source: 'external',
+              provider: sourceNode.provider,
+              nativeParentSessionId: parentClone.sessionId ?? null,
+              cwd: null,
+              permissionPreset: null,
+              cloneOf: sourceNode.cloneOf,
+              cloneSnapshotAt: snapshotAt,
+              sourceCompositionId: sourceComposition.id,
+              addedAt: snapshotAt,
+            })
+            edges.push({
+              id: randomUUID(),
+              parentId: parentClone.id,
+              childId: nodeId,
+              role: 'reports-to',
+            })
+            continue
+          }
+          const child = await createChild(sourceNode, parentAgent, snapshotAt)
+          pendingActivations.add(child.activation)
+          cloneNodeBySource.set(sourceNode.sourceNodeId, { id: nodeId, sessionId: child.id })
           nodes.push({
             id: nodeId,
-            sessionId: null,
+            sessionId: child.id,
             label: sourceNode.label,
-            kind: 'external',
-            source: 'external',
+            kind: 'session',
+            source: sourceNode.source,
             provider: sourceNode.provider,
             nativeParentSessionId: parentClone.sessionId ?? null,
-            cwd: null,
-            permissionPreset: null,
+            cwd: sourceNode.cwd ?? child.sourceHeader.cwd ?? null,
+            permissionPreset: sourceNode.permissionPreset,
             cloneOf: sourceNode.cloneOf,
             cloneSnapshotAt: snapshotAt,
             sourceCompositionId: sourceComposition.id,
             addedAt: snapshotAt,
           })
-          continue
+          edges.push({
+            id: randomUUID(),
+            parentId: parentClone.id,
+            childId: nodeId,
+            role: 'reports-to',
+          })
+          await build(sourceNode.sourceNodeId, child.agent)
+          try {
+            await child.activation.dispose()
+          } catch (error) {
+            ctx.logger?.warn?.('dsh-combinagents: clone child dispose failed', error)
+          } finally {
+            pendingActivations.delete(child.activation)
+          }
         }
-        if (parentAgent === undefined) {
-          throw new CompositionError('CLONE_FAILED', `clone parent ${JSON.stringify(parentEdge.parentSourceNodeId)} is not live`)
-        }
-        const child = await createChild(sourceNode, parentAgent, snapshotAt)
-        createdActivations.push(child.activation)
-        cloneNodeBySource.set(sourceNodeId, { id: nodeId, sessionId: child.id })
-        liveAgentBySource.set(sourceNodeId, child.agent)
-        nodes.push({
-          id: nodeId,
-          sessionId: child.id,
-          label: sourceNode.label,
-          kind: 'session',
-          source: sourceNode.source,
-          provider: sourceNode.provider,
-          nativeParentSessionId: parentClone.sessionId ?? null,
-          cwd: sourceNode.cwd ?? child.sourceHeader.cwd ?? null,
-          permissionPreset: sourceNode.permissionPreset,
-          cloneOf: sourceNode.cloneOf,
-          cloneSnapshotAt: snapshotAt,
-          sourceCompositionId: sourceComposition.id,
-          addedAt: snapshotAt,
-        })
       }
 
-      for (const edge of plan.edges) {
-        const parent = cloneNodeBySource.get(edge.parentSourceNodeId)
-        const child = cloneNodeBySource.get(edge.childSourceNodeId)
-        if (parent === undefined || child === undefined) continue
-        edges.push({
-          id: randomUUID(),
-          parentId: parent.id,
-          childId: child.id,
-          role: 'reports-to',
-        })
-      }
+      await build(rootSourceNode.sourceNodeId, root.handle.agent)
 
       const composition = createComposition({
         id: randomUUID(),
@@ -424,16 +422,6 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
         nodes,
         edges,
       })
-
-      // Children are cataloged and persisted; dispose post-order so the tree is
-      // idle while remaining cold-resumable.
-      for (const activation of [...createdActivations].reverse()) {
-        try {
-          await activation.dispose()
-        } catch (error) {
-          ctx.logger?.warn?.('dsh-combinagents: clone child dispose failed', error)
-        }
-      }
 
       const installed = await manager.installComposition(root.id, composition)
       const cloneId = randomUUID()
@@ -500,7 +488,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
         tasks: await manager.getTasks(root.id),
       }
     } catch (error) {
-      for (const activation of [...createdActivations].reverse()) {
+      for (const activation of [...pendingActivations].reverse()) {
         try {
           await activation.dispose()
         } catch {}
