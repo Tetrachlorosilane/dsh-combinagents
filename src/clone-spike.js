@@ -167,7 +167,10 @@ export function createCloneSpike({ ctx, discovery }) {
         },
         ...(setup === undefined ? {} : { setup }),
       })
+      diagnostics.phase = 'root-created'
       const rootSession = rootHandle.agent.session
+      diagnostics.cloneRootAgentId = rootHandle.agent.id
+      diagnostics.cloneRootAgentSessionId = rootSession.header.id
       diagnostics.cloneRootHeader = rootSession.header
       diagnostics.cloneRootPermission = await permissionOf(cloneRootId)
       diagnostics.cloneRootLive = sessions()?.get?.(cloneRootId) !== undefined
@@ -179,7 +182,9 @@ export function createCloneSpike({ ctx, discovery }) {
         diagnostics.sourceChildPermission = await permissionOf(childSessionId)
         const cloneChildId = `session-${randomUUID()}`
         diagnostics.cloneChildSessionId = cloneChildId
+        diagnostics.pendingChildSource = childSessionId
         pendingSources.set(cloneChildId, childSessionId)
+        diagnostics.providerNames = subagents()?.list?.() ?? null
         childActivation = await subagents().startActivation({
           provider: SPIKE_PROVIDER,
           label: `clone:${childSessionId}`,
@@ -197,11 +202,13 @@ export function createCloneSpike({ ctx, discovery }) {
           delivery: 'caller',
         })
         diagnostics.cloneChildActivation = { childId: childActivation.childId, messageId: childActivation.messageId }
+        diagnostics.phase = 'child-created'
         diagnostics.catalogsWithChild = await subagents()?.listChildren?.(rootSession.header.id) ?? []
         diagnostics.cloneChildLiveBeforeDispose = sessions()?.get?.(cloneChildId) !== undefined
         diagnostics.cloneChildPermission = await permissionOf(cloneChildId)
         if (mode === 'dispose') {
           await childActivation.dispose()
+          diagnostics.phase = 'child-disposed'
           diagnostics.childDisposed = true
           diagnostics.catalogsAfterDispose = await subagents()?.listChildren?.(rootSession.header.id) ?? []
           diagnostics.cloneChildLiveAfterDispose = sessions()?.get?.(cloneChildId) !== undefined
@@ -218,6 +225,7 @@ export function createCloneSpike({ ctx, discovery }) {
       return { ok: true, diagnostics }
     } catch (error) {
       diagnostics.error = String(error?.message ?? error)
+      diagnostics.stack = String(error?.stack ?? '')
       try {
         if (childActivation !== undefined) await childActivation.dispose()
       } catch {}
