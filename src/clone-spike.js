@@ -49,7 +49,7 @@ async function observe(query, sessionId) {
   const observation = await query.observeSession(sessionId)
   try {
     const seed = completedPrefix(observation.events)
-    return { header: observation.session.header, seed, eventCount: observation.events.length }
+    return { header: observation.header, seed, eventCount: observation.events.length }
   } finally {
     observation[Symbol.dispose]?.()
   }

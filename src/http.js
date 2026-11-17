@@ -381,15 +381,26 @@ export function createApi({
           error: { code: 'CLONE_SPIKE_UNAVAILABLE', message: 'the temporary clone spike is not wired in this Host' },
         })
       }
-      if (body.action === 'cleanup') {
-        return json(200, await cloneSpike.cleanup(body.cloneRootSessionId))
+      try {
+        if (body.action === 'cleanup') {
+          return json(200, await cloneSpike.cleanup(body.cloneRootSessionId))
+        }
+        return json(200, await cloneSpike.run({
+          rootSessionId: body.rootSessionId,
+          childSessionId: body.childSessionId,
+          mode: body.mode,
+          cleanup: body.cleanup === true,
+        }))
+      } catch (error) {
+        return json(200, {
+          ok: false,
+          diagnostics: {
+            error: String(error?.message ?? error),
+            code: error?.code ?? 'CLONE_SPIKE_FAILED',
+            stack: String(error?.stack ?? ''),
+          },
+        })
       }
-      return json(200, await cloneSpike.run({
-        rootSessionId: body.rootSessionId,
-        childSessionId: body.childSessionId,
-        mode: body.mode,
-        cleanup: body.cleanup === true,
-      }))
     }
     if (route === '/delete-composition') {
       await manager.deleteComposition(body.rootSessionId)
