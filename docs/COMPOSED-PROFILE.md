@@ -128,8 +128,7 @@ yields no custom directory and the default project/user roots still work.
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:
-              customSkillDirs:
-                - !!js "process.env.DSH_INSTALL_DIR ? [process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.env.DSH_INSTALL_DIR), 'dsh-agent-preset', 'skills')] : []"
+              customSkillDirs: !!js "process.env.DSH_INSTALL_DIR ? [process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.env.DSH_INSTALL_DIR), 'dsh-agent-preset', 'skills')] : []"
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
           - id: command-goal
