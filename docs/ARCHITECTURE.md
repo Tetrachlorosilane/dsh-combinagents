@@ -1,23 +1,24 @@
 # Architecture proposal
 
-**Status:** Phase 1 walking skeleton is installed in the `desktop` profile. The
-Host bridge, durable domain write, root protection, shared membership
-resolution, busy-branch guard, native-subagent mirror, and the client slot
-occupants are verified; the rendered GUI is not visually verified (the headless
-browser lacks the Web auth launch token and obscura blocks loopback by default).
+**Status:** Phase 1 is installed in the `desktop` profile and was visually
+verified on 2026-11-17 in dark/light themes and at 420 px width. The Host
+bridge, durable domain write, root protection, shared membership resolution,
+busy-branch guard, native-subagent mirror, client slot occupants, and the
+rendered tab are verified. Composed mode is loaded after a Host restart.
 
 **Scope update:** the authoritative product brief is
-[`HANDOFF.md`](HANDOFF.md). It adds two layers beyond this document's overlay
-foundation: **snapshot/clone** (branch a team, bud a subagent as a new root) and
-a **controlled bridge** (explicitly authorized cross-tree messages). Clones are
-new Sessions, never native re-parenting.
+[`HANDOFF.md`](HANDOFF.md). It adds **snapshot/clone** (branch a team, bud a
+subagent as a new root; not implemented) and a **controlled bridge** (explicitly
+authorized cross-tree messages; implemented as the composition control tools,
+not a separate layer). Clones are new Sessions, never native re-parenting.
 
 **Decision record (2026-11-16, reading A):** storage is one profile-level
 `combinagents` domain holding one record per root session; ownership, UI entry,
 and lifecycle stay per-root. The root-session node is protected from removal.
 Delete is promote-or-cascade for non-root nodes; external agents are discovered
 conditionally but stay visible once attached, collapsed by default; the node
-detail may open a live local session. See §2, §3, §5.4, §6, §10, §12.
+detail may open any local session (including persisted ones). See §2, §3, §5.4,
+§6, §10, §12.
 
 The recommended product starts with an **overlay composition**: a user-owned
 reporting graph layered over DSH's immutable native agent lineage. The overlay is
@@ -29,7 +30,8 @@ particular:
 
 - Native re-parenting is not a plugin feature.
 - Overlay edges do not change `send_message` authority.
-- Phase 1 adds no model-facing tools.
+- The overlay adds three static composition control tools; composed mode adds the
+  native-name surface. Native tool schemas stay unchanged.
 - External/one-shot agents can be visible leaves but cannot receive follow-ups.
 - Cache-friendly behavior is a design constraint, not an optimization detail.
 
@@ -144,13 +146,13 @@ corrupt record fails visibly instead of being adopted.
 
 ## 4. Persistence
 
-Proposed DSH storage domain (not implemented):
+Implemented DSH storage domain:
 
 ```
 domain: combinagents
 version: 1
 layout: per-record
-tables: compositions
+tables: compositions, policies, audit, tasks
 ```
 
 Record id: `rootSessionId`. Record payload: the composition (including its
@@ -241,6 +243,7 @@ Routes for phase 1:
 ```
 GET  /bootstrap                    { token, version, platform, supported }
 GET  /sessions?query=...           discoverable sessions + metadata
+GET  /titles?ids=...               lazy title batch for the picker
 GET  /external?rootSessionId=...   external/one-shot native leaves
 GET  /summary?sessionId=...        resolved root, composition size, subagent count
 GET  /state?rootSessionId=...      composition + observed nodes
@@ -257,8 +260,11 @@ POST /set-grant                    { edgeId, allowMessage?, allowInterrupt? }
 GET  /tasks?rootSessionId=...      plugin-owned composition tasks
 POST /create-task                  { subject, description?, ownerNodeId? }
 POST /update-task                  { taskId, expectedRevision, action }
-POST /set-title
+POST /delete-composition           remove the overlay record; sessions untouched
 ```
+
+The graph model has `setTitle`, but no manager method, HTTP route, or UI action
+is wired yet. The composition title is display-only.
 
 Rules:
 
@@ -300,8 +306,10 @@ kind: dsh-combinagents
 Register a guide entry so the tab is reachable from the sidebar's add control.
 Add a session-header utility button (order after built-in utilities) that calls
 `ctx.sidebarRight.openTab('dsh-combinagents')`; fall back to nothing if the
-sidebar service is unavailable. Do not duplicate the editor in a modal unless
-the fallback is needed.
+sidebar service is unavailable. Add a separate `dsh-combinagents-count` chip in
+`conversation.session.header.actions` (order 11); never reuse the native
+`subagent-catalog` id. Do not duplicate the editor in a modal unless the fallback
+is needed.
 
 The graph is wider than a typical sidebar tab. The tab's content should support
 the sidebar's fullscreen presentation, and use a vertical tree/list at narrow
@@ -312,7 +320,7 @@ phase 1.
 
 ```
 Header
-  Title (editable)
+  Title (display only; editing not implemented)
   Root session badge
   Reload / fullscreen
 
@@ -343,10 +351,11 @@ Interaction:
   reports to roots, or cascade the subtree; both remove composition nodes only;
 - the root-session node offers no delete mode; deleting the composition is a
   separate, confirmed action;
-- "open conversation" is enabled only for a live local session; external and
-  archived nodes are disabled with a reason. It changes the selected session, so
-  the composition tab stays in the root session's layout and returning means
-  selecting the root again;
+- "open conversation" is offered for every local session node, including
+  persisted/archived ones; external nodes are disabled with a reason. Whether an
+  archived session can actually resume is left to the DSH workspace. It changes
+  the selected session, so the composition tab stays in the root session's
+  layout and returning means selecting the root again;
 - no action writes to the underlying session.
 
 ### 6.3 Visual rules
@@ -387,11 +396,13 @@ Three static composition control tools:
 - Every delivered/denied/approval-denied action writes an audit row; graph state
   is never stored in session events.
 
-The composed mode later replaces these names with the native tool names and
-copies the native descriptions; the overlay mode keeps the distinct names above.
+Composed mode replaces these names with the native tool names and copies the
+native descriptions; the overlay mode keeps the distinct names above.
 `Config.mode: 'composed'` registers six native-name tools plus the plugin-owned
 `composition_task`: the three control tools, `subagent`, `subagent_fork`,
-`wait_agent`, and the task board tool. `subagent` /
+`wait_agent`, and the task board tool, plus unshadowed
+`composition_list_agents` / `composition_send_message` /
+`composition_interrupt_agent` aliases for roots on a native preset. `subagent` /
 `subagent_fork` call `ctx.subagents.startActivation` with the caller as parent,
 mirror the started child into the composition with its native name, and
 auto-grant the created edge (configurable with `autoGrantDelegatedEdges: false`).
@@ -401,12 +412,13 @@ live cross-tree targets fall back to `followup`/`steer`. `wait_agent` mirrors th
 native caller-inbox wait. Composed mode also restores the native
 `subagent:identity` context and `tool:subagent` delegation guidance. Explicit
 child LLM selection is validated through the live LLM route and forwarded as
-child agent options. Composed
-mode is not enabled in the desktop profile. A clean headless profile verified
-the real chain: tool list, subagent creation and attachment, wait, follow-up
-send with cold resume, second wait, and interrupt. Enabling it in the desktop
-profile requires disabling the native subagent control tools and verifying tool
-ordering and the prefix fingerprint.
+child agent options. Composed mode is enabled and loaded in the desktop profile;
+a clean headless profile also verified the real chain: tool list, subagent
+creation and attachment, wait, follow-up send with cold resume, second wait, and
+interrupt. The remaining parity work is comparing tool order and the prefix
+fingerprint against a live native request, enforcing the model-selection
+allowlist, and preventing `standard`/`ptc` sessions from shadowing the composed
+names.
 
 ## 8. Cache-friendly constraints
 
@@ -460,7 +472,8 @@ the next `/state` read shows the new value; the composition does not pin it.
 | External agent | Discovered conditionally; once attached stays visible, collapsed; actions that require a local session disabled |
 | Root-session node removal | Rejected with `ROOT_PROTECTED`; deleting the composition is separate |
 | Root session missing | Composition still readable by record id; title falls back |
-| Open conversation on external/archived node | Disabled with a reason; no navigation |
+| Open conversation on external node | Disabled with a reason; no navigation |
+| Open conversation on archived local node | Button is offered; the workspace may refuse to resume; the plugin writes nothing |
 | Affected branch is running | Structural edit rejected with `AGENT_BUSY`; siblings stay editable |
 | Session already in another composition | `add-node` moves that subtree; selecting the source root moves that tree; a remaining source forest is re-keyed; no rejection |
 | Session already in this composition | `add-node` moves its subtree under the requested parent or detaches it to a root |
@@ -479,7 +492,7 @@ are stable; a temporarily unavailable session may return.
 - feasibility and architecture docs;
 - inert bundle entry.
 
-### Phase 1 — read-only composition editor (in progress)
+### Phase 1 — read-only composition editor (completed)
 
 Walking skeleton:
 
@@ -489,8 +502,8 @@ Walking skeleton:
 - [x] right-sidebar tab, header button, guide entry;
 - [x] create, add, remove (promote or cascade), delete composition;
 - [x] external/catalog leaf discovery;
-- [x] reparent/rename UI and node details (open conversation for live local
-      sessions);
+- [x] reparent/rename UI and node details (open conversation for local sessions,
+      including persisted ones);
 - [x] observation badges (cwd, sandbox mode, permission preset, native parent);
 - [x] shared membership: one composition per session, resolved from any member;
 - [x] busy-branch guard for structural edits;
@@ -502,10 +515,13 @@ Walking skeleton:
       with a revision guard and no DSH Team writes;
 - [x] composed-mode control/delegation surface: native names for list/send/
       interrupt/subagent/subagent_fork/wait, activation mirroring, and inbox wait
-      (implemented behind config; not enabled);
+      (enabled and loaded in the desktop profile);
 - [x] separate `dsh-combinagents-count` header chip opens this tab; the shipped
       subagent tree entry is retained;
-- [ ] install and manual GUI verification (installed; visual check pending).
+- [x] install and manual GUI verification (2026-11-17; dark/light/420 px; picker,
+      details, rename/reparent, grants, external, tasks, create/delete,
+      sync-native, both header entries, native catalog retained);
+- [x] count chip refreshes after tab mutations; narrow rows keep whole controls.
 
 ### Phase 2 — snapshot / clone / bud
 
@@ -519,16 +535,18 @@ Walking skeleton:
 - clean up partial clones;
 - never mutate the source tree.
 
-### Phase 3 — controlled bridge
+### Phase 3 — controlled bridge (implemented as composition tools)
 
-Only after an explicit product decision:
-
-- per-edge delivery grant for live local sessions;
+- per-edge delivery grant for local sessions; native descendants may cold-resume
+  through the native service;
 - append-only delivery with attribution;
 - audit log;
-- cold-resume ownership policy;
-- no external/one-shot delivery;
-- no implicit interrupt, archive, or Team authority.
+- external/one-shot delivery rejected;
+- interrupt is a separate per-edge grant and only ancestor-to-descendant;
+- no implicit archive or Team authority.
+
+Remaining: document the archived/cold-resume boundary and consider an audit
+viewer.
 
 ### Phase 4 — hardening and enrichment
 
@@ -537,6 +555,9 @@ Only after an explicit product decision:
 - archived/stale handling;
 - Team task copy/remap decision;
 - accessibility, keyboard, narrow-width and theme pass;
+- composition title editing, archived-node open policy, and whether reparenting
+  preserves edge grants;
+- large-composition tab paint under an oversized session transcript;
 - DSH version re-verification.
 
 ## 12. Acceptance criteria for phase 1
@@ -552,14 +573,26 @@ Only after an explicit product decision:
 5. External agents are discovered conditionally; an attached external node stays
    visible without the `subagents` service, collapsed by default, with routing,
    clone, and open-conversation actions disabled.
-6. Open conversation is enabled only for a live local session and never writes
-   to that session.
+6. Open conversation is offered for local session nodes (including persisted
+   ones) and never writes to that session; external nodes are disabled.
 7. The UI clearly states that the overlay does not change native messaging.
-8. No new model tools or prompt text are registered.
+8. Overlay mode registers only the three static composition tools and no prompt
+   text. Composed mode additionally registers the native-name surface and
+   restores the native identity/delegation prompt sections. Native tool schemas
+   are unchanged.
 9. No session header, cwd, sandbox, approval, or permission-preset write occurs.
 10. Unit tests pass; the GUI is checked in light/dark themes and at narrow width.
 11. A DSH-side smoke test verifies the tab opens from the header button and the
     guide.
+
+Verified on 2026-11-17: criteria 1, 3-11 through the 81 unit tests and the real
+GUI (dark/light/420 px). Criterion 2 was demonstrated by adding a
+mahjong-workspace session to a `dsh-combinagents` composition and by the rich
+composition with 15 native subagent nodes; the cross-workspace node was removed
+afterward. The only external leaf in this profile was an API-added placeholder
+(no discovered external child existed), so external discovery itself was not
+exercised end to end. The guide entry is registered and covered by the client
+test; the header utility and count chip were clicked live.
 
 ### Phase 2 acceptance
 
@@ -577,7 +610,8 @@ Only after an explicit product decision:
 1. A granted edge delivers only to the intended live local target.
 2. Delivery is append-only and attributed; the recipient's earlier prefix is
    unchanged.
-3. External, archived, and unauthorized targets are rejected.
+3. External and unauthorized targets are rejected; an archived target is
+   rejected unless the native relay can cold-resume it for a native descendant.
 4. No native `send_message`, Team, interrupt, or archive authority is granted by
    the edge.
 5. Every delivery has an audit record.
@@ -594,4 +628,13 @@ Only after an explicit product decision:
 - **Release drift.** The subagent/session contracts are release-sensitive. Pin
   the verified DSH version in docs and re-review before claiming support.
 - **Scope creep into routing.** Routing is the point where the clean permission
-  story ends. Keep it a separately approved phase.
+  story ends. Keep it separately approved.
+- **Reparenting resets edge grants.** A move creates a new edge id, so the old
+  message/interrupt grants no longer apply. This is conservative but surprising;
+  preserve or re-apply grants deliberately.
+- **Title editing and archived-open policy are unresolved.** The title is
+  display-only and archived nodes still offer "open conversation" with the
+  workspace deciding whether it can resume.
+- **Large-session tab paint.** A 16-node composition under an oversized live
+  transcript can keep the tab's loading state for tens of seconds even though
+  `/state` returns in about 143 ms.

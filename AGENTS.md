@@ -11,16 +11,16 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Host: durable per-root composition domain (`src/store.js`), read-only
   discovery (`src/discovery.js`), serialized mutations (`src/manager.js`), and a
   loopback token bridge (`src/http.js`), wired by `index.js`;
-- Client: one right-sidebar tab, a session-header utility, and a guide entry
-  (`client.js`), with complete `en`/`zh` copy;
+- Client: one right-sidebar tab, a session-header utility, a guide entry, and a
+  separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
   client-registration, host-wiring, controls, and bundle-shape tests (81 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
-Installed in the `desktop` profile on 2026-11-16 (`application: applied`). Live
-checks: the tab body, header utility, and separate `dsh-combinagents-count`
-header chip are active slot occupants; the shipped `subagent-catalog` entry is
-retained; the bridge returned 200 for
+Installed in the `desktop` profile on 2026-11-16 (`application: applied`) and
+visually verified on 2026-11-17. Live checks: the tab body, header utility, and
+separate `dsh-combinagents-count` header chip are active slot occupants; the
+shipped `subagent-catalog` entry is retained; the bridge returned 200 for
 bootstrap/create/add/state/add-external/rename/set-parent/summary/sync-native and
 403 for `ROOT_PROTECTED`; `state?sessionId=` and the `rootSessionId=` fallback
 resolve the shared composition from a member session, including a native
@@ -39,10 +39,10 @@ are registered and were exercised live (`composition_list_agents`, a delivered
 plugin-owned task board (`tasks` table, `/tasks`, `/create-task`, `/update-task`,
 tab UI) is implemented with status transitions and a revision guard. A
 `mode: 'composed'` tool surface (native names/descriptions/parameter schemas) is
-implemented and the desktop profile now has the composed overlay applied; a Host
-restart is still required to load it. It includes
-`list_agents`, `send_message`, `interrupt_agent`, `subagent`, `subagent_fork`,
-`wait_agent`, and `composition_task`; `subagent`/`subagent_fork` start a native activation under the
+implemented, the desktop profile has the composed overlay applied, and it is
+loaded after the Host restart. It includes `list_agents`, `send_message`,
+`interrupt_agent`, `subagent`, `subagent_fork`, `wait_agent`, and
+`composition_task`; `subagent`/`subagent_fork` start a native activation under the
 caller, mirror the child into the composition, label it with its native name,
 and auto-grant the delegation edge. Explicit child
 `provider`/`model`/`reasoning_effort` selection is validated through the live
@@ -58,14 +58,23 @@ plugin-owned `composition_task` tool lists, creates, and updates board tasks
 to the native-root session with correct composition-label attribution, and a
 native-preset root used the unshadowed `composition_send_message` alias to
 instruct the child, which replied `ROOT_ACK` through the composition. Audit rows
-recorded each delivery. Composed mode is configured in the desktop profile but not yet validated after a
-Host restart; sessions using `standard`/`ptc` still mount the native tools and
-shadow the composed names. Tool ordering and the prefix fingerprint are covered
-by tests, not yet compared against a live native request. The GUI visual check is still
-pending: the headless browser has no Web auth launch token, and its SSRF guard
-blocks loopback unless the obscura plugin allows private networks.
-Clone/bridge/bud are not implemented. Do not describe native re-parenting as
-implemented.
+recorded each delivery. Composed mode is configured in the desktop profile and
+was loaded after a Host restart; the current desktop session runs the composed
+preset, exposes the native-name tools plus the unshadowed `composition_*` aliases,
+and includes the compatibility prompt. Sessions using `standard`/`ptc` still
+mount the native tools and shadow the composed names. Tool ordering and the
+prefix fingerprint are covered by tests, not yet compared against a live native
+request. The real GUI was visually verified on 2026-11-17 in dark and light
+themes and at 420 px width: both header entries open the tab, the count chip
+coexists with the shipped
+`subagent-catalog` entry, the picker filters and adds/removes sessions, details
+show cwd/sandbox/preset/native parent, rename/reparent and per-edge grants work,
+external placeholders render collapsed, the task board transitions, sync-native
+is callable, and composition create/delete leaves DSH sessions untouched.
+Clone and bud are not implemented. The cross-tree delivery capability described
+as the Bridge is implemented as the composition control tools (per-edge grants,
+approval gate, audit), not as a separate layer. Do not describe native
+re-parenting as implemented.
 
 ## 2. Product contract
 
@@ -135,7 +144,8 @@ feature, not this plugin.
 
 ```
 index.js                  Host entry: store, discovery, manager, HTTP bridge
-client.js                 Right-sidebar tab, header utility, guide entry
+client.js                 Right-sidebar tab, header utility, guide entry,
+                          count chip
 cordis.patch.yml          Bundle patch for the Host entry
 src/graph.js              Pure composition graph: validation, forest, cycle checks,
                           promote/cascade removal
@@ -163,10 +173,12 @@ docs/COMPOSED-PROFILE.md  How to enable composed mode without duplicate tools
 package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
 
-Remaining work: restart and validate the desktop composed profile, GUI visual
-acceptance (grant toggles, task board, picker scroll, header count chip,
-details/reparent/rename/external flows, sync-native button), light/dark and
-narrow-width checks, Host-restart reload, and clone/bud.
+Remaining work: clone/bud; compare composed tool order and the prefix fingerprint
+against a live native request; enforce the desktop model-selection allowlist;
+stop `standard`/`ptc` sessions from shadowing the composed names; decide whether
+reparenting should preserve edge grants; add composition title editing; resolve
+the archived-node "open conversation" policy; keep large-session tab latency
+under observation.
 
 ## 5. Development rules
 
@@ -221,18 +233,26 @@ node --test tests/*.test.mjs
 node -e "for (const f of ['package.json', 'locale/en.json', 'locale/zh.json']) JSON.parse(require('fs').readFileSync(f,'utf8'))"
 ```
 
-Installed in the desktop profile; the Host bridge, external-leaf listing,
+Installed in the desktop profile. The Host bridge, external-leaf listing,
 rename/reparent endpoints, shared membership resolution (including native
-ancestors), busy guard, native-subagent mirroring/sync, and client slot
-registration are verified. Still pending before claiming a working GUI:
+ancestors), busy guard, native-subagent mirroring/sync, client slot
+registration, and the rendered GUI are verified. Completed on 2026-11-17:
 
-1. Refresh the page and verify the scrollable picker, one-line filter, details,
-   reparent/rename, external add, delete dialog, the separate
-   `dsh-combinagents-count` chip (it must open this tab), the retained native
-   `subagent-catalog` entry, and the sync-native button.
-2. Check light/dark themes and narrow width.
-3. Restart the Host and confirm the composition reloads (the durable record file
-   exists; the restart itself was not performed).
+- the scrollable picker and one-line filter; add/remove a session node;
+- details (cwd/sandbox/permission preset/agent preset/native parent), rename,
+  reparent, per-edge grant toggles;
+- external placeholder rendering (collapsed, provider/native parent, no open
+  conversation); added through `/add-external` because this profile had no
+  discovered external leaf to click;
+- promote/cascade remove dialog; composition create and delete;
+- both header entries open the tab; the count chip coexists with the native
+  `subagent-catalog`; the count refreshes after tab mutations;
+- sync-native on a 16-node composition;
+- dark and light themes and 420 px width (no horizontal overflow; action buttons
+  no longer split mid-word).
+
+Still open: clone/bud, composition title editing, the archived-node open policy,
+and the composed-surface parity items listed above.
 
 
 ## 7. Known pitfalls
@@ -258,6 +278,16 @@ registration are verified. Still pending before claiming a working GUI:
   is plugin-owned data, not a session log concern.
 - **Client bundles are cached in the page.** Refresh after `client.js` changes
   unless the client HMR watcher is running.
+- **Reparenting replaces the edge.** `setParent` removes the old `reports-to`
+  edge and creates a new one, so that edge's `allowMessage`/`allowInterrupt`
+  grants fall back to deny. Re-apply grants after moving a node until this is
+  changed deliberately.
+- **A very large session can delay the tab paint.** For a 16-node composition
+  under a huge live transcript, the tab showed its loading state for tens of
+  seconds while the bridge `/state` response measured about 143 ms. Profile the
+  surrounding session UI before blaming the bridge.
+- **The composition title is display-only.** `src/graph.js` has `setTitle`, but
+  no manager method, HTTP route, or UI action is wired.
 
 ## 8. Commit hygiene
 

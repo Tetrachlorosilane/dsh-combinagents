@@ -6,6 +6,14 @@ control/delegation tools, because both would register `list_agents`,
 `send_message`, `interrupt_agent`, `subagent`, `subagent_fork`, and
 `wait_agent`.
 
+**Status:** applied and loaded in the desktop profile after a Host restart. The
+current desktop session runs the `composed` preset, exposes the native-name
+tools plus the unshadowed `composition_*` aliases, and includes the
+compatibility prompt. The GUI shows the shipped `subagent-catalog` entry and the
+`dsh-combinagents-count` chip together; the composed chain (start → child edge →
+wait → follow-up → wait → interrupt) was verified in a clean headless profile
+and in live desktop message checks.
+
 The desktop profile mounts those native tools inside the agent-preset
 `delegation` group, so a top-level `- id: tool-subagent` patch cannot disable
 them. Use a composed agent preset that omits the group instead.
@@ -13,7 +21,9 @@ them. Use a composed agent preset that omits the group instead.
 ## Apply
 
 Append this to the **profile** `cordis.patch.yml` (for the desktop profile:
-`$DSH_HOME/profiles/desktop/cordis.patch.yml`), then restart the Host:
+`$DSH_HOME/profiles/desktop/cordis.patch.yml`), then restart the Host. This
+checkout's desktop profile already has the overlay applied and loaded. The
+reference overlay is:
 
 ```yaml
 # ---- composed mode test/profile overlay ----
@@ -89,7 +99,7 @@ Append this to the **profile** `cordis.patch.yml` (for the desktop profile:
 ## Known gaps
 
 - Tool order and the exact model-prefix fingerprint have not been compared with
-  the native tool set.
+  a live native request.
 - Explicit child `provider`/`model`/`reasoning_effort` selection is validated
   through the live LLM route and forwarded as child agent options. The composed
   tool does not enforce the desktop subagent model-selection allowlist; it only
@@ -97,3 +107,5 @@ Append this to the **profile** `cordis.patch.yml` (for the desktop profile:
 - The native `subagent`/`subagent_fork`/`control` tools are disabled only for
   sessions using this preset; a session on `standard`/`ptc` still mounts the
   native tools and shadows the composed names.
+- A very large session transcript can delay the composition tab's paint even
+  though the bridge responds quickly; this is not specific to composed mode.

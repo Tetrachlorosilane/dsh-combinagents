@@ -18,6 +18,7 @@ window.__ModuleLoader__.load({
     const KIND = 'dsh-combinagents'
     const PREFIX = '/dsh-combinagents'
     const TOKEN_HEADER = 'x-dsh-combinagents-token'
+    const COMPOSITION_CHANGED = 'dsh-combinagents:composition-changed'
 
     const DICTS = {
       en: {
@@ -207,6 +208,7 @@ window.__ModuleLoader__.load({
       row: {
         display: 'flex',
         alignItems: 'center',
+        flexWrap: 'wrap',
         gap: '6px',
         minHeight: '28px',
         padding: '2px 4px',
@@ -273,6 +275,7 @@ window.__ModuleLoader__.load({
         padding: '3px 9px',
         fontSize: '12px',
         cursor: 'pointer',
+        whiteSpace: 'nowrap',
       },
       linkButton: {
         border: 'none',
@@ -281,6 +284,7 @@ window.__ModuleLoader__.load({
         padding: '2px 4px',
         fontSize: '12px',
         cursor: 'pointer',
+        whiteSpace: 'nowrap',
       },
       confirm: {
         display: 'flex',
@@ -929,6 +933,7 @@ window.__ModuleLoader__.load({
           await action()
           await load({ silent: true })
           setNotice(successMessage ?? null)
+          window.dispatchEvent(new CustomEvent(COMPOSITION_CHANGED, { detail: { sessionId } }))
         } catch (error) {
           setNotice(error.code === 'AGENT_BUSY' ? t('agentBusy') : error.message)
         } finally {
@@ -1191,6 +1196,14 @@ window.__ModuleLoader__.load({
     function CompositionHeaderAction(props) {
       const { sessionId, t, ctx } = props
       const [summary, setSummary] = React.useState(null)
+      const [revision, setRevision] = React.useState(0)
+      React.useEffect(() => {
+        const onChange = (event) => {
+          if (event?.detail?.sessionId === sessionId) setRevision((value) => value + 1)
+        }
+        window.addEventListener(COMPOSITION_CHANGED, onChange)
+        return () => window.removeEventListener(COMPOSITION_CHANGED, onChange)
+      }, [sessionId])
       React.useEffect(() => {
         let cancelled = false
         if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined
@@ -1198,7 +1211,7 @@ window.__ModuleLoader__.load({
           .then((data) => { if (!cancelled) setSummary(data) })
           .catch(() => { if (!cancelled) setSummary(null) })
         return () => { cancelled = true }
-      }, [sessionId])
+      }, [sessionId, revision])
       const sidebar = ctx.get('sidebarRight')
       if (sidebar === undefined || summary === null) return null
       const native = summary.subagents ?? 0

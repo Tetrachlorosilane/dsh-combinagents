@@ -5,11 +5,11 @@
 subagents a new reporting composition while preserving each one's own
 workspace, sandbox mode, approval policy, and tool composition.
 
-This is a design review, not a promise of behavior. The repository currently
-contains only the pure graph model and an inert bundle entry. For the
-authoritative product requirements, clone/bridge/bud logic, cache rules, and
-UI handoff, read [`HANDOFF.md`](HANDOFF.md); this document remains the source
-review behind it.
+This is a design review, not a promise of behavior. The repository now
+implements the phase-1 overlay, discovery, durable storage, and control-tool
+surface; clone/bud remain future work. For the authoritative product
+requirements, clone/bridge/bud logic, cache rules, and UI handoff, read
+[`HANDOFF.md`](HANDOFF.md); this document remains the source review behind it.
 
 ## 1. Short answer
 
@@ -217,7 +217,11 @@ handling of cold resume ownership. It is **not** part of phase 1.
 
 ## 6. Recommended shape for phase 1
 
-Phase 1 should be an **overlay editor with no model-facing tools**:
+The original recommendation was an **overlay editor with no model-facing
+tools**. The implemented phase 1 keeps the overlay but adds three **static**
+composition control tools (and an opt-in composed surface), per `HANDOFF.md`
+R8. It adds no dynamic prompt or tool text in overlay mode, and it still never
+mutates session headers, cwd, sandbox policy, or approval policy.
 
 - one right-sidebar tab (or a tab that can go fullscreen) for the composition;
 - nodes discovered from live/persisted sessions, with source and native-parent
@@ -225,13 +229,13 @@ Phase 1 should be an **overlay editor with no model-facing tools**:
 - editable `reports-to` forest with cycle and duplicate checks;
 - clear labels for workspace, effective sandbox mode, permission preset, and
   "native parent" versus "composition parent";
-- zero new model tools and no prompt injection;
+- no dynamic model tools and no dynamic prompt injection; the static control
+  tools are documented in [`ARCHITECTURE.md`](ARCHITECTURE.md#7-model-surface);
 - no mutation of session headers, cwd, sandbox policy, or approval policy;
 - no claim that the overlay changes native messaging authority.
 
 This gives users the organizational view they asked for while preserving the
-exact per-agent permissions DSH already enforces. It also keeps the model
-surface thin.
+exact per-agent permissions DSH already enforces.
 
 ## 7. Phase 2 options, in order of risk
 

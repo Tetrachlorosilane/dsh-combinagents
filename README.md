@@ -4,7 +4,8 @@
 
 **Status: installed in the `desktop` profile; Host bridge, shared membership
 (including native ancestors), busy guard, native-subagent mirror/sync,
-rename/reparent, and client registration verified; GUI visual check pending.**
+rename/reparent, client registration, and the real desktop GUI are verified
+(2026-11-17, dark/light themes and 420 px width).**
 The Host half provides a durable per-root composition domain, read-only session
 discovery (including external/one-shot leaves), serialized graph mutations,
 busy-branch protection, and a loopback JSON bridge. A session belongs to one
@@ -31,17 +32,24 @@ native-preset root can still direct composition children.
 `subagent`/`subagent_fork` start a native activation under the caller, mirror
 the child into the composition, and auto-grant the delegation edge;
 `send_message` prefers the native relay for native descendants (including cold
-resume), falling back to live cross-tree delivery. Composed mode is implemented and the desktop profile has the composed overlay
-applied; a Host restart is still required to load it. A clean headless profile
-verified the full chain (start → child edge → wait → follow-up message → wait →
-interrupt). Native `subagent/start` events are mirrored into the
-composition as new nodes without changing any tool schema or routing authority.
-Session status distinguishes `live`, `saved`, and the workspace registry's true
-`archived` set; the picker lists headers immediately and folds titles lazily so
-opening it no longer scans every session log. The headless browser could not
-authenticate to the Web GUI (no launch token) and could not reach loopback
-without the obscura SSRF allowance, so the rendered tab is not visually verified
-yet. Clone, bridge, bud, and native re-parenting are not implemented.
+resume), falling back to live cross-tree delivery. Composed mode is applied and
+loaded in the desktop profile after a Host restart; the current desktop session
+runs the composed preset with the native-name tools plus the unshadowed
+`composition_*` aliases. A clean headless profile verified
+the full chain (start → child edge → wait → follow-up message → wait →
+interrupt). Native `subagent/start` events are mirrored into the composition as
+new nodes without changing any tool schema or routing authority. Session status
+distinguishes `live`, `saved`, and the workspace registry's true `archived` set;
+the picker lists headers immediately and folds titles lazily so opening it no
+longer scans every session log. The real GUI was visually verified: both header
+entries (the count chip and the icon) open the tab, the count chip coexists with
+the shipped `subagent-catalog` entry, the picker filters and adds/removes
+sessions, details show cwd/sandbox/preset/native parent, rename/reparent and
+per-edge grants work, external placeholders render collapsed, the task board
+transitions, sync-native is callable, and composition create/delete leaves the
+DSH sessions untouched. Clone and bud are not implemented; the cross-tree
+delivery capability described as the Bridge is implemented as the composition
+control tools (per-edge grants, approval gate, audit), not as a separate layer.
 
 `dsh-combinagents` is an exploration for DSH (DeepSeek Harness): let a user
 arrange multiple **agents** and **subagents**, possibly from different sources
@@ -76,14 +84,16 @@ permissions possible.
 
 ```
 index.js                 Host entry: storage, discovery, manager, HTTP bridge
-client.js                Right-sidebar tab, header utility, guide entry
+client.js                Right-sidebar tab, header utility, guide entry,
+                         composition-count chip
 src/graph.js             Pure composition graph (forest, cycles, subtree removal)
 src/store.js             DSH storage-domain adapter + memory fallback
 src/discovery.js         Read-only live/persisted session discovery
 src/manager.js           Serialized mutations and root-session protection
 src/http.js              Loopback, token-authenticated JSON bridge
-src/controls.js          Static composition list/message/interrupt tools
-tests/                   Graph, store, manager, HTTP, and client-registration tests
+src/controls.js          Composition control tools and composed delegation surface
+tests/                   Graph, store, manager, discovery, HTTP, controls, host,
+                         client-registration, and bundle tests
 locale/{en,zh}.json      Plugin Manager metadata
 icon.svg                 Bundle icon
 docs/HANDOFF.md          Product requirements, design logic, cache and UI handoff
@@ -111,7 +121,21 @@ storage contract changes.
 - Merging sessions or moving an existing session to another workspace.
 - Widening a session's sandbox or approval policy.
 - Cross-host or multi-user composition. This is a local-profile feature.
-- A new model-facing tool surface in phase 1.
+- A drag-and-drop canvas; narrow widths use the vertical tree.
+
+## Known limitations
+
+- Reparenting a node replaces its reporting edge, so that edge's message and
+  interrupt grants return to the default deny. Re-apply them after a move.
+- The composition title is display-only; the graph model can set it but no HTTP
+  route or UI action is wired yet.
+- A large archived 16-node composition can paint slowly while a very large
+  session transcript is loading. The bridge `/state` response itself was
+  measured at about 143 ms; the delay is in the surrounding session UI, not the
+  composition route.
+- "Open conversation" is offered for every local session node, including saved
+  ones; whether an archived session can actually resume is left to the DSH
+  workspace. External nodes never offer it.
 
 ## Compatibility
 

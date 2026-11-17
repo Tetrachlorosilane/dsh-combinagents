@@ -3,18 +3,21 @@
 > **文档地位**：这是交给下一位实现代理的产品需求与设计基线。  
 > 与 `docs/ARCHITECTURE.md` 或 `docs/FEASIBILITY.md` 冲突时，**需求以本文为准**；
 > DSH 技术事实仍以 `docs/FEASIBILITY.md` 的源码核对结果为准。  
-> **当前状态**：Phase 1 走路骨架已安装到 `desktop` profile（`application: applied`）。
-> 已实测：Host 桥（bootstrap/create/add/add-external/rename/set-parent/state/summary/
-> sync-native/根保护）、外部叶子列表、共享组合解析（从成员会话或原生祖先打开同一份配置）、
-> 工作时 409 `AGENT_BUSY`、`subagent/start` 自动镜像、观测字段
-> （cwd/sandbox/preset/agentPreset/native parent）、`combinagents` domain 落盘文件、
-> 右侧栏 tab/header 与**另加**的 `dsh-combinagents-count` 入口均为 active；原生
-> `subagent-catalog` 入口保留，非根会话仍可从原生树查看/打开；三工具已注册并实测
-> （list / send / interrupt），逐边授权、审计行与原生 relay source 已落盘；
-> 会话状态区分 live / saved / 真正 archived（`workspaceRegistry.archivedSessionIds`），
-> 选择器先返回元数据、标题按 `/titles` 延迟批量折叠，不再为打开选择器扫描全部会话日志。
-> GUI 渲染尚未目视验证：headless 浏览器拿不到 Web 登录 token，且 obscura 默认拦截
-> loopback。克隆与 Bridge 仍未实现。
+> **当前状态**：Phase 1 已安装到 `desktop` profile（`application: applied`），并于
+> 2026-11-17 通过真实 GUI 目视验收（深色/浅色/420px 窄宽度；tab、计数 chip、picker、
+> 详情、改名/改父、逐边授权、外部占位、任务板、创建/删除组合、sync-native、原生
+> `subagent-catalog` 共存）。已实测：Host 桥（bootstrap/create/add/add-external/rename/
+> set-parent/state/summary/sync-native/根保护）、外部叶子列表、共享组合解析（从成员会话
+> 或原生祖先打开同一份配置）、工作时 409 `AGENT_BUSY`、`subagent/start` 自动镜像、
+> 观测字段（cwd/sandbox/preset/agentPreset/native parent）、`combinagents` domain
+> 落盘文件、右侧栏 tab/header 与**另加**的 `dsh-combinagents-count` 入口均为 active；
+> 原生 `subagent-catalog` 入口保留，非根会话仍可从原生树查看/打开；三工具已注册并实测
+> （list / send / interrupt），逐边授权、审计行与原生 relay source 已落盘；会话状态区分
+> live / saved / 真正 archived（`workspaceRegistry.archivedSessionIds`），选择器先返回
+> 元数据、标题按 `/titles` 延迟批量折叠，不再为打开选择器扫描全部会话日志。Host 重启后
+> `mode: 'composed'` 已实际加载（当前 desktop 会话即 composed preset，工具面含原生同名
+> 工具与未遮蔽的 `composition_*` 别名）；跨树消息（产品中的 Bridge 能力）已以组合控制
+> 工具 + 逐边授权 + approval + 审计实现，不是独立一层；克隆/出芽仍未实现。
 
 ## 0. 给接手代理的摘要
 
@@ -289,7 +292,8 @@ Composition Layer
 - 节点：`sessionId`、label、kind（session/external）、source、provider、native parent、
   cwd 快照、permission preset 快照；
 - 边：`reports-to`，严格森林；
-- 操作：add/remove/rename/set-parent/set-title；
+- 操作：add/remove/rename/set-parent；`set-title` 仅在图模型可用，manager/HTTP/UI
+  尚未接线（标题当前只读）；
 - 删除非根节点时弹框，由用户选择“下属提升为根”或“级联删子树”；两者都只删图节点，
   不删 DSH Session；根会话节点不可删，删除组合是独立动作。
 
@@ -600,16 +604,16 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 
 ### Phase 0 — 脚手架（已完成）
 
-- 纯图模型 + 17 个测试；
+- 纯图模型 + 18 个测试；
 - 需求/可行性/架构文档；
 - Git 初始化；
 - inert bundle entry。
 
-### Phase 1 — Composition 基础（已安装，GUI 待目视验收）
+### Phase 1 — Composition 基础（已完成；GUI 已目视验收）
 
 - 已实现：存储、发现（含外部叶子）、创建/增删/删除组合、改父/重命名、节点详情
-  （live 本地会话可打开会话）、cwd/policy/来源/原生父节点徽章、HTTP、右侧栏 tab、
-  header 按钮、guide；
+  （本地会话，含 persisted，可打开会话）、cwd/policy/来源/原生父节点徽章、HTTP、
+  右侧栏 tab、header 按钮、guide；
 - 已实现：根节点保护、提升/级联删除、按根串行化写入、一个 Session 只属于一个组合
   并从任意成员解析、工作时受影响分支的增删改保护；
 - 已实现：`subagent/start` 镜像原生子代理到组合；保留原生 `subagent-catalog` 入口，
@@ -619,15 +623,19 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
   跨工作区 + 非完全权限时的 approval 门、审计表；
 - 已实现：插件自有任务板（`tasks` 表 + tab UI + `/tasks`、`/create-task`、
   `/update-task`，revision 冲突保护）；不写 DSH Team；
-- 已实现（未启用）：`mode: 'composed'` 注册七个工具（三控制 + `subagent`/
-  `subagent_fork`/`wait_agent` + `composition_task`）；其中
+- 已实现并在 desktop profile 启用/加载：`mode: 'composed'` 注册七个工具（三控制 +
+  `subagent`/`subagent_fork`/`wait_agent` + `composition_task`）；其中
   `subagent`/`subagent_fork` 通过 `startActivation` 创建、挂入组合、用原生名
   标记并自动授权该边；`send_message` 对原生后代优先走原生 relay（含冷恢复），
   `wait_agent` 复制原生 inbox 等待语义；clean headless profile 已实测
   subagent → child → wait → send → wait → interrupt 全链路；
-- 待补：GUI 目视验收（滚动检索、计数入口、详情/改父/重命名/外部添加）、浅色/深色与
-  窄宽度检查、Host 重启后重载验证；
-- 不新增模型工具；
+- 已完成：GUI 目视验收（滚动检索、计数入口、详情/改父/重命名、外部占位渲染、任务板、
+  创建/删除组合、sync-native、原生 `subagent-catalog` 共存）、浅色/深色与 420px
+  窄宽度检查、Host 重启后重载验证；计数 chip 在编辑后即时刷新（窗口事件），窄屏行内
+  按钮不再逐字换行；本 profile 没有发现外部叶子，外部占位通过 `/add-external` 渲染
+  验证，发现式外部添加未端到端点击；
+- 模型表面：overlay 三工具；composed 模式七个原生同名工具 + 三个不遮蔽的
+  `composition_*` 别名；原生工具 schema 不改；
 - 验收：组合持久化、循环/重复拒绝、原 Session 无写入。
 
 ### Phase 2 — Clone / 分支 / 出芽
@@ -639,17 +647,21 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 - 失败清理；
 - 验收：带 2 个子代理的树可克隆成新树，原树不变，前缀指纹符合预期。
 
-### Phase 3 — Bridge
+### Phase 3 — Bridge（已实现，以组合控制工具形式）
 
-- 边级授权；
-- 只对 live 本地 Session；
-- append-only；
-- 审计；
-- 验收：跨树消息可送达，原生树权限不变，外部节点被拒绝。
+- 已实现：逐边 `allowMessage` / `allowInterrupt`、仅组合路径、原生 relay source、
+  跨工作区且非完全权限时的 `approval.request` 门、审计表；
+- 已实现：`composition_send_message` / `composition_interrupt_agent` 以及 composed
+  模式的原生同名工具；外部节点被拒绝；
+- 仍可加强：冷恢复/archived 边界的产品化说明、审计查看 UI、是否需要独立的 Bridge
+  入口（目前不另设）；
+- 验收：跨树消息可送达，原生树权限不变，外部节点被拒绝（已实测）。
 
 ### Phase 4 — 加固
 
 - 冷恢复/容量/Team 任务；
+- 组合标题编辑、archived 节点“打开会话”策略、改父时是否保留逐边授权；
+- 超大组合（16 节点 + 巨大 transcript）的 tab 渲染性能；
 - UI 可访问性、窄屏、深色；
 - DSH 版本升级检查；
 - 文档与迁移。
@@ -679,19 +691,19 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 | 删除节点 | 非根节点弹框二选一：下属提升为根 / 级联删子树；两者都只删图节点；根会话节点不可删 |
 | 根节点保护 | 根会话节点拒绝删除（`ROOT_PROTECTED`）；删除组合是独立确认动作 |
 | 外部/一次性代理 | 发现条件化；已挂节点始终可见；默认折叠为单节点，展开看详情；不可路由/克隆/打开 |
-| 打开会话 | 所有本地 Session 节点（含 saved）可打开；外部节点禁用；跳转会切走当前会话，组合 tab 仍在根会话下 |
+| 打开会话 | 所有本地 Session 节点（含 saved）可打开；archived 节点仍显示按钮，实际能否恢复由 workspace 决定；外部节点禁用；跳转会切走当前会话，组合 tab 仍在根会话下 |
 | 逐边授权 | 消息 `allowMessage`、中断 `allowInterrupt`；默认 deny；按组合路径逐边检查 |
-| 模型工具 | 三个静态 `composition_*` 工具；参数/返回对齐原生；原生工具 schema 不改；`mode: 'composed'` 注册六个原生同名工具（含 `subagent`/`subagent_fork`/`wait_agent`）；未启用，需关原生控制工具、复现 prompt 段并验证顺序/前缀 |
+| 模型工具 | 三个静态 `composition_*` 工具；参数/返回对齐原生；原生工具 schema 不改；`mode: 'composed'` 已在 desktop profile 启用并验证，注册七个原生同名工具 + 三个不遮蔽的 `composition_*` 别名；仍需与真实原生请求比对工具顺序/前缀指纹 |
 | 消息 source | 复用原生 `{ kind: 'agent-message', form: 'relay', senderSessionId }` 与 relay 前缀 |
 | 敏感确认 | 仅跨工作区且调用方非完全权限时走 `approval.request`；`allowed-once` 才继续 |
-| Team | 插件自有任务板已实现（`tasks` 表、创建/开始/完成/重开/删除、revision 冲突）；不写 DSH Team；模型任务工具后置 |
+| Team | 插件自有任务板已实现（`tasks` 表、创建/开始/完成/重开/删除、revision 冲突）；不写 DSH Team；模型任务工具 `composition_task` 已实现 |
 
 ### 仍需确认（后续阶段）
 
 1. 克隆产生**新 Session id** 是否可接受？（原生迁移不可行）
 2. 分支是复制整个根树，还是只复制选中的子树？
 3. Team 任务板：复制并重映射，还是从空板开始？
-4. Bridge 是否需要模型可调用？如果需要，是否接受新增一个显式工具？
+4. ~~Bridge 是否需要模型可调用？~~ 已决定：需要，使用组合控制工具；不另设原生工具。
 5. 出芽后原节点默认保留还是提示归档？
 6. 是否允许“克隆时改 cwd/preset/权限”？（会破缓存，应默认禁止）
 
@@ -727,5 +739,5 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 - `docs/ARCHITECTURE.md` — 组合层技术架构、HTTP、UI、验收；
 - `AGENTS.md` — 工作契约与验证清单；
 - `src/graph.js` — 已实现的纯图模型；
-- `tests/graph.test.mjs` — 17 个图不变量测试；
+- `tests/graph.test.mjs` — 18 个图不变量测试；
 - 另一会话的 `dsh-extraworkspace`（另一插件，仅作入口/兼容校验参考，见第 8.1 节）。
