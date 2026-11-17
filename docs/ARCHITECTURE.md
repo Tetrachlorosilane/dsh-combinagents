@@ -266,9 +266,12 @@ POST /update-task                  { taskId, expectedRevision, action }
 POST /delete-composition           remove the overlay record; sessions untouched
 ```
 
-Title editing is implemented through `/set-title` and the tab header. Direct
-reparenting migrates the edge's grants to the replacement edge; detaching or a
-cross-composition move starts from deny.
+Title editing is implemented through `/set-title` and the tab header. A
+user-created connection defaults to bidirectional messaging
+(`allowMessage: true`, `allowInterrupt: false`); direct reparenting migrates an
+existing grant and otherwise defaults the replacement edge to messaging;
+detaching removes the grant, and native-mirrored edges stay at the deny
+default.
 
 Rules:
 
@@ -516,8 +519,9 @@ Walking skeleton:
 - [x] reparent/rename UI and node details (open conversation for local sessions,
       including persisted and archived ones);
 - [x] composition title editing through `/set-title` and the tab header;
-- [x] direct reparenting migrates edge grants; detaching or a cross-composition
-      move starts from deny;
+- [x] manual connections default to bidirectional messaging; direct reparenting
+      migrates grants, detaching removes them, and native-mirrored edges stay
+      denied;
 - [x] observation badges (cwd, sandbox mode, permission preset, native parent);
 - [x] shared membership: one composition per session, resolved from any member;
 - [x] busy-branch guard for structural edits;
@@ -584,7 +588,7 @@ viewer.
 - archived/stale handling;
 - Team task copy/remap decision;
 - accessibility, keyboard, narrow-width and theme pass;
-- whether cross-composition moves should migrate edge grants (currently deny);
+- cross-composition moves: the new parent connection defaults to messaging, but the moved subtree's internal grants still start from deny;
 - large-composition tab paint under an oversized session transcript;
 - DSH version re-verification.
 
@@ -665,10 +669,11 @@ Host-side routes require the next Host restart before a live GUI pass.
   the verified DSH version in docs and re-review before claiming support.
 - **Scope creep into routing.** Routing is the point where the clean permission
   story ends. Keep it separately approved.
-- **Reparenting migrates grants.** A direct parent change (including a
-  same-composition `add-node` move) carries `allowMessage`/`allowInterrupt` to
-  the replacement edge. Detaching the node or moving it across compositions
-  deletes the old grant and starts from deny.
+- **Manual connections default to messaging.** A user-added or reparented edge
+  starts with `allowMessage: true` and `allowInterrupt: false`; a migrated
+  explicit grant, including an explicit deny, is preserved. Detaching removes
+  the grant. Native-mirrored edges and the internal edges of a cross-composition
+  move still start from deny.
 - **Archived nodes still offer "open conversation".** This is intentional: the
   workspace decides whether the session can resume.
 - **Large-session tab paint.** A 16-node composition under an oversized live

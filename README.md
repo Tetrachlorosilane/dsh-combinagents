@@ -142,9 +142,11 @@ storage contract changes.
 
 ## Known limitations
 
-- Direct reparenting migrates the edge's message/interrupt grants to the new
-  edge. Detaching a node drops those grants, and a cross-composition move starts
-  its edges from the default deny; re-apply them when that matters.
+- A user-added connection defaults to bidirectional messaging
+  (`allowMessage: true`, `allowInterrupt: false`). Direct reparenting migrates
+  an existing grant or defaults the replacement edge to messaging; detaching
+  drops the grant. Native-mirrored edges and the internal edges of a
+  cross-composition move still start from deny.
 - A large archived 16-node composition can paint slowly while a very large
   session transcript is loading. The bridge `/state` response itself was
   measured at about 143 ms; the delay is in the surrounding session UI, not the

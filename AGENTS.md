@@ -205,10 +205,12 @@ fingerprint against a live native request; enforce the desktop model-selection
 allowlist; stop `standard`/`ptc` sessions from shadowing the composed names; keep
 large-session tab latency under observation. Clone/bud live verification and
 the temporary `/clone-spike` removal are complete (2026-11-18). Decisions
-(2026-11-17): direct
-reparenting migrates edge grants while detaching or moving across compositions
-starts edges from deny; composition title editing is implemented; archived nodes
-keep the current "offer open conversation, the workspace decides" behavior.
+(2026-11-18): a connection the user adds manually defaults to bidirectional
+messaging (`allowMessage: true`, `allowInterrupt: false`); direct reparenting
+migrates an existing grant, or defaults the replacement edge to messaging when
+there was none; detaching removes the grant; composition title editing is
+implemented; archived nodes keep the current "offer open conversation, the
+workspace decides" behavior.
 Clone/bud decisions: clone the **whole root tree**; copy the plugin-owned task
 board and remap owners; expose no cwd/preset/permission override; budding keeps
 the original node, never auto-archives it, and leaves two parallel trees.
@@ -319,9 +321,11 @@ passed on 2026-11-18.
   is plugin-owned data, not a session log concern.
 - **Client bundles are cached in the page.** Refresh after `client.js` changes
   unless the client HMR watcher is running.
-- **Reparenting replaces the edge.** Direct reparenting migrates the old edge's
-  `allowMessage`/`allowInterrupt` grants to the new edge. Detaching the node, or
-  moving it across compositions, deletes the old grant and starts from deny.
+- **Manual connections default to messaging.** A user-added or reparented
+  connection starts with `allowMessage: true` and `allowInterrupt: false`, so
+  either endpoint can message the other without a first toggle. A migrated
+  explicit grant (including an explicit deny) is preserved. Detaching removes
+  the grant; native-mirrored edges stay at the deny default.
 - **A very large session can delay the tab paint.** For a 16-node composition
   under a huge live transcript, the tab showed its loading state for tens of
   seconds while the bridge `/state` response measured about 143 ms. Profile the

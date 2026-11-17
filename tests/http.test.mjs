@@ -415,7 +415,8 @@ test('stores per-edge grants and exposes them on state', async () => {
   })))
   const edge = added.data.composition.edges[0]
   let state = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))
-  assert.equal(state.data.grants[edge.id].allowMessage, false)
+  assert.equal(state.data.grants[edge.id].allowMessage, true)
+  assert.equal(state.data.grants[edge.id].allowInterrupt, false)
 
   const updated = await call(api, authorized('POST', '/dsh-combinagents/set-grant', JSON.stringify({
     rootSessionId: 's-a',

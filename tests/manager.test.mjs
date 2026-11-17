@@ -414,7 +414,11 @@ test('imports the existing native tree on create', async () => {
   assert.equal(composition.nodes.filter((node) => node.kind === 'external').length, 1)
   const b = composition.nodes.find((node) => node.sessionId === 's-b')
   const c = composition.nodes.find((node) => node.sessionId === 's-c')
+  const root = composition.nodes.find((node) => node.sessionId === 's-a')
   assert.ok(composition.edges.some((edge) => edge.parentId === b.id && edge.childId === c.id))
+  const nativeEdge = composition.edges.find((edge) => edge.parentId === root.id && edge.childId === b.id)
+  assert.deepEqual((await manager.getGrants('s-a'))[nativeEdge.id], { allowMessage: false, allowInterrupt: false })
+  assert.equal((await manager.authorizeMessage('s-a', root.id, b.id)).allowed, false)
 })
 
 test('authorizes messages and interrupts only along granted edge paths', async () => {
@@ -429,14 +433,16 @@ test('authorizes messages and interrupts only along granted edge paths', async (
   const ab = state.composition.edges.find((edge) => edge.childId === b.id)
   const bc = state.composition.edges.find((edge) => edge.childId === c.id)
 
-  assert.equal((await manager.getGrants('s-a'))[ab.id].allowMessage, false)
-  assert.equal((await manager.authorizeMessage('s-a', root.id, c.id)).allowed, false)
-  await manager.setEdgeGrant('s-a', ab.id, { allowMessage: true })
-  await manager.setEdgeGrant('s-a', bc.id, { allowMessage: true })
+  const defaults = await manager.getGrants('s-a')
+  assert.deepEqual(defaults[ab.id], { allowMessage: true, allowInterrupt: false })
+  assert.deepEqual(defaults[bc.id], { allowMessage: true, allowInterrupt: false })
   assert.equal((await manager.authorizeMessage('s-a', root.id, c.id)).allowed, true)
   assert.equal((await manager.authorizeMessage('s-a', c.id, root.id)).allowed, true)
+  assert.equal((await manager.authorizeInterrupt('s-a', root.id, c.id)).allowed, false)
   await manager.setEdgeGrant('s-a', bc.id, { allowMessage: false })
   assert.equal((await manager.authorizeMessage('s-a', root.id, c.id)).allowed, false)
+  assert.equal((await manager.authorizeMessage('s-a', c.id, root.id)).allowed, false)
+  await manager.setEdgeGrant('s-a', bc.id, { allowMessage: true })
 
   await manager.setEdgeGrant('s-a', ab.id, { allowInterrupt: true })
   await manager.setEdgeGrant('s-a', bc.id, { allowInterrupt: true })
@@ -491,7 +497,7 @@ test('preserves edge grants when a node changes parent and clears them on detach
   state = await manager.state('s-a')
   const reattached = state.composition.edges.find((edge) => edge.childId === b.id)
   grants = await manager.getGrants('s-a')
-  assert.deepEqual(grants[reattached.id], { allowMessage: false, allowInterrupt: false })
+  assert.deepEqual(grants[reattached.id], { allowMessage: true, allowInterrupt: false })
 })
 
 test('creates and transitions plugin-owned tasks with a revision guard', async () => {

@@ -261,8 +261,41 @@ export function createManager({ store, discovery, agents = () => undefined, now 
   }
 
   /**
+   * Default a user-created connection to bidirectional messaging. The grant is
+   * stored per edge because the composition path is undirected: one true
+   * `allowMessage` lets either endpoint reach the other. Interrupt stays denied
+   * until explicitly granted.
+   * @param {string} rootSessionId - composition owner.
+   * @param {object} composition - composition after the manual attach.
+   * @param {string} childNodeId - node whose incoming edge is new.
+   * @returns {Promise<void>}
+   */
+  async function grantManualConnection(rootSessionId, composition, childNodeId) {
+    const edge = composition.edges.find((candidate) => candidate.childId === childNodeId)
+    if (edge === undefined) return
+    const policy = await store.getPolicy(rootSessionId)
+    if (policy?.edges?.[edge.id] !== undefined) return
+    await store.putPolicy(rootSessionId, {
+      version: 1,
+      rootSessionId,
+      edges: {
+        ...(policy?.edges ?? {}),
+        [edge.id]: { allowMessage: true, allowInterrupt: false },
+      },
+      updatedAt: now(),
+    })
+    await recordAudit(rootSessionId, {
+      kind: 'grant',
+      edgeId: edge.id,
+      outcome: 'defaulted',
+      detail: { reason: 'manual-connection' },
+    })
+  }
+
+  /**
    * Carry a child's edge grants to its new incoming edge after a reparent.
-   * Detaching removes the stored grant; a fresh attach starts from deny.
+   * A manually created replacement edge with no previous grant defaults to
+   * bidirectional messaging. Detaching removes the stored grant.
    * @param {string} rootSessionId - composition owner.
    * @param {object} previous - composition before the change.
    * @param {object} next - composition after the change.
@@ -270,19 +303,19 @@ export function createManager({ store, discovery, agents = () => undefined, now 
    */
   async function migrateParentGrants(rootSessionId, previous, next, childNodeId) {
     const previousEdge = previous.edges.find((edge) => edge.childId === childNodeId) ?? null
-    if (previousEdge === null) return
     const nextEdge = next.edges.find((edge) => edge.childId === childNodeId) ?? null
-    if (nextEdge?.id === previousEdge.id) return
+    if (previousEdge !== null && nextEdge?.id === previousEdge.id) return
     const policy = await store.getPolicy(rootSessionId)
-    const grant = policy?.edges?.[previousEdge.id]
-    if (grant === undefined) return
+    const grant = previousEdge === null ? undefined : policy?.edges?.[previousEdge.id]
     const edges = { ...(policy?.edges ?? {}) }
-    delete edges[previousEdge.id]
+    if (previousEdge !== null) delete edges[previousEdge.id]
     if (nextEdge !== null) {
-      edges[nextEdge.id] = {
-        allowMessage: grant.allowMessage === true,
-        allowInterrupt: grant.allowInterrupt === true,
-      }
+      edges[nextEdge.id] = grant === undefined
+        ? { allowMessage: true, allowInterrupt: false }
+        : {
+            allowMessage: grant.allowMessage === true,
+            allowInterrupt: grant.allowInterrupt === true,
+          }
     }
     await store.putPolicy(rootSessionId, {
       version: 1,
@@ -294,8 +327,8 @@ export function createManager({ store, discovery, agents = () => undefined, now 
       await recordAudit(rootSessionId, {
         kind: 'grant',
         edgeId: nextEdge.id,
-        outcome: 'migrated',
-        detail: { fromEdgeId: previousEdge.id },
+        outcome: grant === undefined ? 'defaulted' : 'migrated',
+        ...(previousEdge === null ? {} : { detail: { fromEdgeId: previousEdge.id } }),
       })
     }
   }
@@ -642,6 +675,8 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     const composition = addGraphNode(record.composition, node, { parentId })
     const saved = await save(rootSessionId, composition)
     indexComposition(rootSessionId, composition)
+    const added = composition.nodes.find((candidate) => candidate.sessionId === input.sessionId)
+    if (added !== undefined) await grantManualConnection(rootSessionId, composition, added.id)
     return saved
   }
 
@@ -685,6 +720,7 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     const targetComposition = attachSubtree(targetRecord.composition, detached.subtree, parentId)
     const saved = await save(targetRoot, targetComposition)
     indexComposition(targetRoot, targetComposition)
+    if (parentId !== null) await grantManualConnection(targetRoot, targetComposition, sourceNode.id)
     if (remaining === null) {
       await store.delete(current.rootSessionId)
       unindexComposition(current.rootSessionId, sourceRecord.composition)
