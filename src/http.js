@@ -196,7 +196,7 @@ function errorOf(error) {
         ? 503
         : error.code === 'CLONE_FAILED'
           ? 500
-          : error.code === 'AGENT_BUSY' || error.code === 'SESSION_ALREADY_COMPOSED' || error.code === 'TASK_CONFLICT'
+          : error.code === 'AGENT_BUSY' || error.code === 'SESSION_ALREADY_COMPOSED' || error.code === 'TASK_CONFLICT' || error.code === 'CLONE_IN_PROGRESS'
             ? 409
             : error.code === 'COMPOSITION_NOT_FOUND' || error.code === 'SESSION_NOT_DISCOVERED' || error.code === 'UNKNOWN_NODE' || error.code === 'UNKNOWN_EDGE' || error.code === 'TASK_NOT_FOUND'
               ? 404
@@ -228,7 +228,7 @@ export function createApi({
    */
   async function handle(request) {
     try {
-      const { method = 'GET', url = '/', headers = {}, body = '', remoteAddress, localPort, secure = false } = request
+      const { method = 'GET', url = '/', headers = {}, body = '', remoteAddress, localPort, secure = false, signal } = request
       if (!isLoopback(remoteAddress)) {
         return json(403, { error: { code: 'FORBIDDEN', message: 'this bridge only accepts loopback peers' } })
       }
@@ -266,7 +266,7 @@ export function createApi({
         return json(405, { error: { code: 'METHOD_NOT_ALLOWED', message: 'use GET or POST' } })
       }
       const parsedBody = parseJsonBody(body)
-      return await writeRoute(route, parsedBody)
+      return await writeRoute(route, parsedBody, signal)
     } catch (error) {
       const failure = errorOf(error)
       if (failure.status >= 500) logger?.warn?.('dsh-combinagents: bridge failure', error)
@@ -300,13 +300,16 @@ export function createApi({
       if (sessionId === '') throw new HttpError(400, 'INVALID_REQUEST', 'sessionId is required')
       const resolved = await manager.resolveSession(sessionId)
       const rootSessionId = resolved?.rootSessionId ?? sessionId
-      const native = await discovery.countNative(rootSessionId)
+      const compositionNodes = resolved?.record.composition.nodes.length ?? 0
+      // The header chip only needs the overlay size. Keeping the native
+      // listDescendants walk off this route removes the 2 s cold path; callers
+      // that need native leaves still use /external or /state.
       return json(200, {
         sessionId,
         rootSessionId,
-        compositionNodes: resolved?.record.composition.nodes.length ?? 0,
-        subagents: native.count,
-        available: native.available,
+        compositionNodes,
+        subagents: compositionNodes,
+        available: true,
       })
     }
     if (route === '/grants') {
@@ -361,8 +364,8 @@ export function createApi({
         rootSessionId: effectiveRoot ?? record.composition.rootSessionId,
         updatedAt: record.updatedAt,
         observations,
-        grants: await manager.getGrants(record.composition.rootSessionId),
-        tasks: await manager.getTasks(record.composition.rootSessionId),
+        grants: await manager.getGrants(record.composition.rootSessionId, record),
+        tasks: await manager.getTasks(record.composition.rootSessionId, record),
         storage: manager.storageMode,
       })
     }
@@ -372,9 +375,10 @@ export function createApi({
   /**
    * @param {string} route - path after the prefix.
    * @param {Record<string, unknown>} body - parsed JSON object.
+   * @param {AbortSignal} [signal] - request cancellation.
    * @returns {Promise<object>} response.
    */
-  async function writeRoute(route, body) {
+  async function writeRoute(route, body, signal = undefined) {
     if (route === '/create') {
       const record = await manager.create(body.rootSessionId, { title: body.title })
       return json(200, { composition: record.composition, updatedAt: record.updatedAt })
@@ -459,7 +463,7 @@ export function createApi({
           error: { code: 'CLONE_UNAVAILABLE', message: 'the clone adapter is not wired in this Host' },
         })
       }
-      return json(200, await cloneManager.cloneTree(body.rootSessionId))
+      return json(200, await cloneManager.cloneTree(body.rootSessionId, { signal }))
     }
     if (route === '/bud') {
       if (cloneManager === undefined) {
@@ -467,7 +471,7 @@ export function createApi({
           error: { code: 'CLONE_UNAVAILABLE', message: 'the clone adapter is not wired in this Host' },
         })
       }
-      return json(200, await cloneManager.bud(body.rootSessionId, body.nodeId))
+      return json(200, await cloneManager.bud(body.rootSessionId, body.nodeId, { signal }))
     }
     if (route === '/delete-composition') {
       await manager.deleteComposition(body.rootSessionId)
@@ -489,6 +493,11 @@ export function createApi({
 export function createNodeHandler(api, options = {}) {
   const log = options.logger
   return async function nodeHandler(req, res) {
+    const controller = new AbortController()
+    const onClose = () => {
+      if (!res.writableEnded) controller.abort()
+    }
+    req.on('close', onClose)
     try {
       const body = await readBody(req)
       const response = await api.handle({
@@ -499,6 +508,7 @@ export function createNodeHandler(api, options = {}) {
         remoteAddress: req.socket?.remoteAddress,
         localPort: req.socket?.localPort,
         secure: req.socket?.encrypted === true,
+        signal: controller.signal,
       })
       res.statusCode = response.status
       for (const [name, value] of Object.entries(response.headers)) res.setHeader(name, value)
@@ -515,6 +525,8 @@ export function createNodeHandler(api, options = {}) {
           message: error?.code === 'PAYLOAD_TOO_LARGE' ? `request body exceeds ${MAX_BODY_BYTES} bytes` : 'internal error',
         },
       }))
+    } finally {
+      req.off('close', onClose)
     }
   }
 }

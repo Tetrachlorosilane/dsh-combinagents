@@ -247,7 +247,7 @@ GET  /bootstrap                    { token, version, platform, supported }
 GET  /sessions?query=...           discoverable sessions + metadata
 GET  /titles?ids=...               lazy title batch for the picker
 GET  /external?rootSessionId=...   external/one-shot native leaves
-GET  /summary?sessionId=...        resolved root, composition size, subagent count
+GET  /summary?sessionId=...        resolved root and composition size (no native walk)
 GET  /state?rootSessionId=...      composition + observed nodes
 GET  /state?sessionId=...          same, resolved from a member session
 GET  /grants?rootSessionId=...     per-edge message/interrupt grants
@@ -625,7 +625,7 @@ viewer.
 11. A DSH-side smoke test verifies the tab opens from the header button and the
     guide.
 
-Verified on 2026-11-17: criteria 1, 3-11 through the 104 unit tests and the real
+Verified on 2026-11-17: criteria 1, 3-11 through the 111 unit tests and the real
 GUI (dark/light/420 px). Criterion 2 was demonstrated by adding a
 mahjong-workspace session to a `dsh-combinagents` composition and by the rich
 composition with 15 native subagent nodes; the cross-workspace node was removed
@@ -685,5 +685,6 @@ Host-side routes require the next Host restart before a live GUI pass.
 - **Archived nodes still offer "open conversation".** This is intentional: the
   workspace decides whether the session can resume.
 - **Large-session tab paint.** A 16-node composition under an oversized live
-  transcript can keep the tab's loading state for tens of seconds even though
-  `/state` returns in about 143 ms.
+  transcript can keep the tab's loading state for tens of seconds even though a
+  warm `/state` returns in low milliseconds; the remaining cost is the
+  surrounding transcript UI.

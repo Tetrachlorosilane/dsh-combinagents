@@ -148,9 +148,11 @@ storage contract changes.
   drops the grant. Native-mirrored edges and the internal edges of a
   cross-composition move still start from deny.
 - A large archived 16-node composition can paint slowly while a very large
-  session transcript is loading. The bridge `/state` response itself was
-  measured at about 143 ms; the delay is in the surrounding session UI, not the
-  composition route.
+  session transcript is loading. The bridge `/state` now reuses the session
+  corpus and a single composition record (warm responses are in the low
+  milliseconds); the remaining delay is in the surrounding session UI.
+- The header chip now reads composition size only; it no longer waits for a
+  cold native `listDescendants` walk.
 - "Open conversation" is offered for every local session node, including saved
   ones; whether an archived session can actually resume is left to the DSH
   workspace. External nodes never offer it.

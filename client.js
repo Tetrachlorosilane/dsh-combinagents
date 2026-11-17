@@ -765,12 +765,13 @@ window.__ModuleLoader__.load({
       } = props
       const text = query.trim().toLowerCase()
       const labelOf = (session) => titles[session.sessionId] ?? session.title
-      const visible = text.length === 0
+      const visible = (text.length === 0
         ? sessions
-        : sessions.filter((session) => `${labelOf(session)} ${session.sessionId} ${session.cwd ?? ''}`.toLowerCase().includes(text))
-      const visibleKey = visible.slice(0, 30).map((session) => session.sessionId).join(',')
+        : sessions.filter((session) => `${labelOf(session)} ${session.sessionId} ${session.cwd ?? ''}`.toLowerCase().includes(text)))
+        .slice(0, 200)
+      const visibleKey = visible.slice(0, 20).map((session) => session.sessionId).join(',')
       React.useEffect(() => {
-        if (visible.length > 0) onNeedTitles(visible.slice(0, 30).map((session) => session.sessionId))
+        if (visible.length > 0) onNeedTitles(visible.slice(0, 20).map((session) => session.sessionId))
       }, [visibleKey, onNeedTitles])
       return h('div', { style: styles.picker }, [
         h('div', { key: 'parent', style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } }, [
@@ -930,7 +931,6 @@ window.__ModuleLoader__.load({
       const [confirmDelete, setConfirmDelete] = React.useState(false)
       const [editingTitle, setEditingTitle] = React.useState(false)
       const [titleDraft, setTitleDraft] = React.useState('')
-      const syncOnce = React.useRef(false)
       const requestedTitles = React.useRef(new Set())
 
       const load = React.useCallback(async (options = {}) => {
@@ -940,16 +940,7 @@ window.__ModuleLoader__.load({
         }
         if (options.silent !== true) setState((previous) => ({ ...previous, loading: true, error: null }))
         try {
-          let data = await callApi(`/state?sessionId=${encodeURIComponent(sessionId)}`)
-          if (data.composition !== null && data.composition !== undefined
-            && (data.composition.nodes?.length ?? 0) <= 1 && !syncOnce.current) {
-            syncOnce.current = true
-            await callApi('/sync-native', {
-              method: 'POST',
-              body: { rootSessionId: data.rootSessionId ?? sessionId },
-            })
-            data = await callApi(`/state?sessionId=${encodeURIComponent(sessionId)}`)
-          }
+          const data = await callApi(`/state?sessionId=${encodeURIComponent(sessionId)}`)
           setState({
             loading: false,
             error: null,

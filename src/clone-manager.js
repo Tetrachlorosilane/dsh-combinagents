@@ -19,6 +19,9 @@ export const CLONE_PROVIDER = 'combinagents-clone'
 /** Idle clone roots retained live in one Host process before the oldest is released. */
 export const MAX_LIVE_CLONE_ROOTS = 8
 
+/** Hard upper bound for one whole-tree clone/bud operation. */
+export const CLONE_TOTAL_TIMEOUT_MS = 120000
+
 const CLONE_NOTICE = (sourceId) => [
   'This session is a clone created by dsh-combinagents.',
   `Source session: ${sourceId}.`,
@@ -81,6 +84,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
   const pendingSources = new Map()
   const rootHandles = new Map()
   let providerDispose
+  let cloneActive = false
 
   const agents = () => ctx.get?.('agents')
   const subagents = () => ctx.get?.('subagents')
@@ -197,6 +201,24 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
   }
 
   /**
+   * One clone/bud at a time per Host. A second request fails fast with a stable
+   * 409 instead of doubling session creation and model work.
+   * @param {() => Promise<unknown>} task - clone work.
+   * @returns {Promise<unknown>}
+   */
+  async function withCloneSlot(task) {
+    if (cloneActive) {
+      throw new CompositionError('CLONE_IN_PROGRESS', 'another clone or bud is already running')
+    }
+    cloneActive = true
+    try {
+      return await task()
+    } finally {
+      cloneActive = false
+    }
+  }
+
+  /**
    * Create one seeded root agent.
    * @param {object} sourceNode - plan node for the clone root.
    * @param {number} snapshotAt - clone time.
@@ -250,7 +272,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
    * @param {number} snapshotAt - clone time.
    * @returns {Promise<{id: string, activation: object, agent: object, header: object}>}
    */
-  async function createChild(sourceNode, parentAgent, snapshotAt) {
+  async function createChild(sourceNode, parentAgent, snapshotAt, signal = undefined) {
     if (sourceNode.kind !== 'session' || sourceNode.sourceSessionId === null) {
       throw new CompositionError('CLONE_SOURCE_NOT_SESSION', 'a local clone child requires a session')
     }
@@ -273,7 +295,9 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
           ? { agentPreset: source.header.agentPreset }
           : {}),
         maxDepth: 32,
-        signal: AbortSignal.timeout(30000),
+        signal: signal === undefined
+          ? AbortSignal.timeout(30000)
+          : AbortSignal.any([AbortSignal.timeout(30000), signal]),
         // `caller` still catalogs the child (the catalog commit runs for local
         // activations), but suppresses the settlement notice that `parent`
         // would inject into the clone root. Otherwise disposing each cloned
@@ -299,8 +323,9 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
    * @param {string} kind - clone or bud.
    * @returns {Promise<object>} clone record and installed composition.
    */
-  async function execute(plan, sourceComposition, kind) {
+  async function execute(plan, sourceComposition, kind, signal = undefined) {
     ensureProvider()
+    signal?.throwIfAborted()
     const snapshotAt = plan.snapshotAt
     const rootSourceNode = plan.nodes.find((node) => node.sourceNodeId === plan.rootSourceNodeId)
     if (rootSourceNode === undefined) {
@@ -313,6 +338,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     const edges = []
     try {
       root = await createRoot(rootSourceNode, snapshotAt)
+      signal?.throwIfAborted()
       await attachWorkspace(rootSourceNode.sourceSessionId, root.sourceHeader, root.id)
       rootHandles.set(root.id, root.handle)
       while (rootHandles.size > MAX_LIVE_CLONE_ROOTS) {
@@ -393,7 +419,8 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
             })
             continue
           }
-          const child = await createChild(sourceNode, parentAgent, snapshotAt)
+          signal?.throwIfAborted()
+          const child = await createChild(sourceNode, parentAgent, snapshotAt, signal)
           pendingActivations.add(child.activation)
           cloneNodeBySource.set(sourceNode.sourceNodeId, { id: nodeId, sessionId: child.id })
           nodes.push({
@@ -539,20 +566,25 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
    * @param {string} sourceSessionId - composition owner or member.
    * @returns {Promise<object>}
    */
-  async function cloneTree(sourceSessionId) {
-    if (typeof sourceSessionId !== 'string' || sourceSessionId.length === 0) {
-      throw new CompositionError('INVALID_FIELD', 'rootSessionId must be a non-empty string')
-    }
-    const source = await sourceOf(sourceSessionId)
-    const composition = source.record.composition
-    const tasks = await manager.getTasks(source.rootSessionId)
-    const plan = planClone({
-      composition,
-      tasks,
-      snapshotAt: now(),
-      kind: 'clone',
+  async function cloneTree(sourceSessionId, options = {}) {
+    return withCloneSlot(async () => {
+      if (typeof sourceSessionId !== 'string' || sourceSessionId.length === 0) {
+        throw new CompositionError('INVALID_FIELD', 'rootSessionId must be a non-empty string')
+      }
+      const source = await sourceOf(sourceSessionId)
+      const composition = source.record.composition
+      const tasks = await manager.getTasks(source.rootSessionId)
+      const plan = planClone({
+        composition,
+        tasks,
+        snapshotAt: now(),
+        kind: 'clone',
+      })
+      const signal = options.signal === undefined
+        ? AbortSignal.timeout(CLONE_TOTAL_TIMEOUT_MS)
+        : AbortSignal.any([AbortSignal.timeout(CLONE_TOTAL_TIMEOUT_MS), options.signal])
+      return execute(plan, composition, 'clone', signal)
     })
-    return execute(plan, composition, 'clone')
   }
 
   /**
@@ -561,21 +593,26 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
    * @param {string} nodeId - source node to bud.
    * @returns {Promise<object>}
    */
-  async function bud(sourceSessionId, nodeId) {
-    if (typeof nodeId !== 'string' || nodeId.length === 0) {
-      throw new CompositionError('INVALID_FIELD', 'nodeId must be a non-empty string')
-    }
-    const source = await sourceOf(sourceSessionId)
-    const composition = source.record.composition
-    const tasks = await manager.getTasks(source.rootSessionId)
-    const plan = planClone({
-      composition,
-      rootNodeId: nodeId,
-      tasks,
-      snapshotAt: now(),
-      kind: 'bud',
+  async function bud(sourceSessionId, nodeId, options = {}) {
+    return withCloneSlot(async () => {
+      if (typeof nodeId !== 'string' || nodeId.length === 0) {
+        throw new CompositionError('INVALID_FIELD', 'nodeId must be a non-empty string')
+      }
+      const source = await sourceOf(sourceSessionId)
+      const composition = source.record.composition
+      const tasks = await manager.getTasks(source.rootSessionId)
+      const plan = planClone({
+        composition,
+        rootNodeId: nodeId,
+        tasks,
+        snapshotAt: now(),
+        kind: 'bud',
+      })
+      const signal = options.signal === undefined
+        ? AbortSignal.timeout(CLONE_TOTAL_TIMEOUT_MS)
+        : AbortSignal.any([AbortSignal.timeout(CLONE_TOTAL_TIMEOUT_MS), options.signal])
+      return execute(plan, composition, 'bud', signal)
     })
-    return execute(plan, composition, 'bud')
   }
 
   /**

@@ -355,3 +355,21 @@ test('caps retained clone roots and releases one explicitly', async () => {
   assert.equal(await cloneManager.releaseRoot(roots.at(-1)), false)
   cloneManager.dispose()
 })
+
+test('rejects a second clone while one is running', async () => {
+  const { store, cloneManager } = createHarness()
+  installSource(store, createComposition({
+    id: 'source',
+    title: 'Solo',
+    rootSessionId: 's-a',
+    nodes: [node('n-a', 's-a', 'Root')],
+    edges: [],
+  }))
+  const first = cloneManager.cloneTree('s-a')
+  const second = cloneManager.cloneTree('s-a')
+  const results = await Promise.allSettled([first, second])
+  assert.equal(results.filter((entry) => entry.status === 'fulfilled').length, 1)
+  const rejected = results.find((entry) => entry.status === 'rejected')
+  assert.equal(rejected?.reason?.code, 'CLONE_IN_PROGRESS')
+  cloneManager.dispose()
+})

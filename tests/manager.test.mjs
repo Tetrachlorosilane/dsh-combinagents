@@ -41,6 +41,9 @@ function fakeStore(initial = new Map()) {
     async putPolicy(key, value) {
       policies.set(key, value)
     },
+    async deletePolicy(key) {
+      policies.delete(key)
+    },
     async appendAudit() {},
     async listAudit() {
       return []
@@ -694,4 +697,36 @@ test('records task provenance and limits updates to the owner or an ancestor', a
     actor: 'user',
   })
   assert.equal(remaining.some((entry) => entry.id === userTask.id), false)
+})
+
+
+test('deleting a composition removes its stored policy', async () => {
+  const store = fakeStore()
+  const manager = createManager({ store, discovery: fakeDiscovery(['s-a', 's-b']) })
+  await manager.create('s-a')
+  const root = (await manager.state('s-a')).composition.nodes[0]
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: root.id })
+  let state = await manager.state('s-a')
+  const edge = state.composition.edges[0]
+  await manager.setEdgeGrant('s-a', edge.id, { allowInterrupt: true })
+  assert.ok(await store.getPolicy('s-a'))
+  await manager.deleteComposition('s-a')
+  assert.equal(await store.getPolicy('s-a'), undefined)
+})
+
+test('moves tasks with their subtree across compositions', async () => {
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(['t-root', 's-root', 'b']) })
+  await manager.create('t-root')
+  await manager.create('s-root')
+  const tRoot = (await manager.state('t-root')).composition.nodes[0]
+  const sRoot = (await manager.state('s-root')).composition.nodes[0]
+  await manager.addNode('s-root', { sessionId: 'b', parentId: sRoot.id })
+  const b = (await manager.state('s-root')).composition.nodes.find((node) => node.sessionId === 'b')
+  await manager.createTask('s-root', { subject: 'Moved work', ownerNodeId: b.id })
+
+  await manager.addNode('t-root', { sessionId: 'b', parentId: tRoot.id })
+  const targetTasks = await manager.getTasks('t-root')
+  assert.equal(targetTasks.some((task) => task.subject === 'Moved work'), true)
+  assert.equal(targetTasks.find((task) => task.subject === 'Moved work').rootSessionId, 't-root')
+  assert.equal((await manager.getTasks('s-root')).some((task) => task.subject === 'Moved work'), false)
 })

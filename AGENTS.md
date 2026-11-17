@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (104 total);
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (111 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`) and
@@ -193,6 +193,7 @@ tests/client.test.mjs     Client registration and locale parity
 tests/controls.test.mjs   Relay source, approval, interrupt, composed delegation/wait
 tests/host.test.mjs       Host wiring and bridge registration
 tests/bundle.test.mjs     Manifest, patch, and referenced-file shape
+tests/perf.test.mjs       Summary/state cache and route budget regressions
 locale/{en,zh}.json       Plugin Manager metadata
 icon.svg                  Bundle icon
 docs/HANDOFF.md           Authoritative product requirements, clone/bridge/bud logic,
@@ -210,9 +211,12 @@ allowlist; stop `standard`/`ptc` sessions from shadowing the composed names; kee
 large-session tab latency under observation. Clone/bud live verification and
 the temporary `/clone-spike` removal are complete (2026-11-18). The 2026-11-18
 audit fixed P0 SEC-1 (Host/Origin), SEC-2 (one-composition membership), SEC-4
-(locked/compensated move), plus P1 SEC-3 (task provenance), PERF-1/2 (native and
-corpus caches), and PERF-4 (bounded clone roots). Remaining audit items:
-SEC-5/6/7/8/9/10/11/12, PERF-3/5/6/7/8/9/10/11, and R-1..R-8. Decisions
+(locked/compensated move), plus P1 SEC-3 (task provenance), PERF-1/2/3/4/5/6/7/8/9
+(native/corpus/title caches, composition-only summary, title/clone bounds, lock
+splitting, record reuse, no implicit sync), and PERF-10 partial (policy cleanup
+and task/policy migration). Remaining audit items: SEC-5/6/7/8/9/10/11/12,
+PERF-10 rotation/clone-record migration, PERF-11 beyond the 200-row cap, and
+R-1..R-8. Decisions
 (2026-11-18): a connection the user adds manually defaults to bidirectional
 messaging (`allowMessage: true`, `allowInterrupt: false`); direct reparenting
 migrates an existing grant, or defaults the replacement edge to messaging when
@@ -335,9 +339,9 @@ passed on 2026-11-18.
   explicit grant (including an explicit deny) is preserved. Detaching removes
   the grant; native-mirrored edges stay at the deny default.
 - **A very large session can delay the tab paint.** For a 16-node composition
-  under a huge live transcript, the tab showed its loading state for tens of
-  seconds while the bridge `/state` response measured about 143 ms. Profile the
-  surrounding session UI before blaming the bridge.
+  under a huge live transcript, the tab can still show its loading state for
+  tens of seconds even though a warm `/state` returns in low milliseconds.
+  Profile the surrounding session UI before blaming the bridge.
 - **Archived nodes still offer "open conversation".** The workspace decides
   whether it can resume; this is an intentional 2026-11-17 decision.
 

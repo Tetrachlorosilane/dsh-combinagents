@@ -37,10 +37,14 @@ export function createDiscovery(ctx, options = {}) {
   const describeCache = new Map()
   /** @type {Map<string, {at: number, title: string}>} */
   const titleCache = new Map()
+  /** @type {Map<string, Promise<SessionSummary|null>>} */
+  const describeInFlight = new Map()
   const ARCHIVE_TTL_MS = 2000
   const CORPUS_TTL_MS = 5000
   const DESCRIBE_TTL_MS = 5000
-  const TITLE_TTL_MS = 30000
+  const TITLE_TTL_MS = 60000
+  /** @type {Map<string, Promise<object[]>>} */
+  const titleInFlight = new Map()
   const NATIVE_TTL_MS = 5000
   /** @type {Map<string, {at: number, entries: object[]}>} */
   const nativeCache = new Map()
@@ -156,11 +160,27 @@ export function createDiscovery(ctx, options = {}) {
   }
 
   /**
-   * Describe one exact session without activating it.
+   * Describe one exact session, sharing an in-flight read between concurrent
+   * callers so a cold title/log read is not duplicated.
    * @param {string} sessionId - known or persisted session id.
    * @returns {Promise<SessionSummary|null>}
    */
   async function describe(sessionId) {
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return null
+    const pending = describeInFlight.get(sessionId)
+    if (pending !== undefined) return pending
+    const promise = describeNow(sessionId).finally(() => {
+      describeInFlight.delete(sessionId)
+    })
+    describeInFlight.set(sessionId, promise)
+    return promise
+  }
+
+  /**
+   * @param {string} sessionId - known or persisted session id.
+   * @returns {Promise<SessionSummary|null>}
+   */
+  async function describeNow(sessionId) {
     if (typeof sessionId !== 'string' || sessionId.length === 0) return null
     const cached = describeCache.get(sessionId)
     if (cached !== undefined && Date.now() - cached.at < DESCRIBE_TTL_MS) return cached.value
@@ -206,13 +226,13 @@ export function createDiscovery(ctx, options = {}) {
    * Fold titles for a bounded batch of sessions. The picker calls this after
    * the fast header-only list, so opening the picker never reads hundreds of
    * session logs up front.
-   * @param {readonly string[]} sessionIds - ids to title (at most 100).
+   * @param {readonly string[]} sessionIds - ids to title (at most 20).
    * @returns {Promise<Record<string, string>>}
    */
   async function titles(sessionIds) {
     const unique = [...new Set(sessionIds)]
       .filter((sessionId) => typeof sessionId === 'string' && sessionId.length > 0)
-      .slice(0, 100)
+      .slice(0, 20)
     if (unique.length === 0) return {}
     const query = sessionQuery()
     const now = Date.now()
@@ -221,12 +241,21 @@ export function createDiscovery(ctx, options = {}) {
       return entry === undefined || now - entry.at > TITLE_TTL_MS
     })
     if (missing.length > 0 && query?.readTitleSnapshots) {
+      const key = [...missing].sort().join(',')
+      let pending = titleInFlight.get(key)
+      if (pending === undefined) {
+        pending = query.readTitleSnapshots(missing).finally(() => {
+          titleInFlight.delete(key)
+        })
+        titleInFlight.set(key, pending)
+      }
       try {
-        const results = await query.readTitleSnapshots(missing)
+        const results = await pending
+        const at = Date.now()
         for (const result of results) {
           if (result.status !== 'fulfilled') continue
           const title = result.value.title?.title
-          titleCache.set(result.sessionId, { at: now, title: typeof title === 'string' && title.length > 0 ? title : result.sessionId })
+          titleCache.set(result.sessionId, { at, title: typeof title === 'string' && title.length > 0 ? title : result.sessionId })
         }
       } catch (error) {
         log?.warn?.('dsh-combinagents: title batch unavailable', error)

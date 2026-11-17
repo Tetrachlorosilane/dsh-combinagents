@@ -431,14 +431,15 @@ export function createManager({
 
   /**
    * @param {string} rootSessionId - composition owner.
+   * @param {object} [record] - already-read record for this root.
    * @returns {Promise<Record<string, {allowMessage: boolean, allowInterrupt: boolean}>>}
    */
-  async function getGrants(rootSessionId) {
-    const record = await requireRecord(rootSessionId)
+  async function getGrants(rootSessionId, record = undefined) {
+    const current = record ?? await requireRecord(rootSessionId)
     const stored = (await store.getPolicy(rootSessionId))?.edges ?? {}
     /** @type {Record<string, {allowMessage: boolean, allowInterrupt: boolean}>} */
     const result = {}
-    for (const edge of record.composition.edges) {
+    for (const edge of current.composition.edges) {
       result[edge.id] = {
         allowMessage: stored[edge.id]?.allowMessage === true,
         allowInterrupt: stored[edge.id]?.allowInterrupt === true,
@@ -570,10 +571,11 @@ export function createManager({
   /**
    * List plugin-owned tasks for one composition.
    * @param {string} rootSessionId - composition owner.
+   * @param {object} [record] - already-read record for this root.
    * @returns {Promise<object[]>}
    */
-  async function getTasks(rootSessionId) {
-    await requireRecord(rootSessionId)
+  async function getTasks(rootSessionId, record = undefined) {
+    if (record === undefined) await requireRecord(rootSessionId)
     const entries = await store.listTasks(rootSessionId)
     return entries.map(([, task]) => task).sort((left, right) => left.createdAt - right.createdAt)
   }
@@ -756,6 +758,39 @@ export function createManager({
   }
 
   /**
+   * Carry task rows and policy ownership when a subtree moves. Tasks owned by
+   * moved nodes follow the subtree; tasks left behind follow the remaining
+   * root; an emptied source composition drops its policy.
+   * @param {string} sourceRoot - original composition key.
+   * @param {string} targetRoot - destination composition key.
+   * @param {string|null} remainingRoot - re-keyed source root, or null.
+   * @param {readonly object[]} movedNodes - nodes moved to the target.
+   * @returns {Promise<void>}
+   */
+  async function migrateMovedSideTables(sourceRoot, targetRoot, remainingRoot, movedNodes) {
+    const movedNodeIds = new Set(movedNodes.map((node) => node.id))
+    for (const [taskId, task] of await store.listTasks?.(sourceRoot) ?? []) {
+      if (task.rootSessionId !== sourceRoot) continue
+      if (movedNodeIds.has(task.ownerNodeId)) {
+        await store.putTask(taskId, { ...task, rootSessionId: targetRoot, updatedAt: now() })
+      } else if (remainingRoot === null) {
+        await store.deleteTask?.(taskId)
+      } else if (remainingRoot !== sourceRoot) {
+        await store.putTask(taskId, { ...task, rootSessionId: remainingRoot, updatedAt: now() })
+      }
+    }
+    if (remainingRoot === null) {
+      await store.deletePolicy?.(sourceRoot)
+    } else if (remainingRoot !== sourceRoot) {
+      const policy = await store.getPolicy(sourceRoot)
+      if (policy !== undefined) {
+        await store.putPolicy(remainingRoot, { ...policy, rootSessionId: remainingRoot, updatedAt: now() })
+        await store.deletePolicy?.(sourceRoot)
+      }
+    }
+  }
+
+  /**
    * Add one node while the caller already holds the target root lock.
    * @param {string} rootSessionId - composition owner.
    * @param {{sessionId: string, parentId?: string|null, label?: string}} input - node.
@@ -842,6 +877,12 @@ export function createManager({
       }
       throw error
     }
+    await migrateMovedSideTables(
+      sourceRoot,
+      targetRoot,
+      remaining === null ? null : nextSourceRoot,
+      detached.subtree.nodes,
+    )
     unindexComposition(sourceRoot, sourceRecord.composition)
     if (remaining !== null) indexComposition(nextSourceRoot, remaining)
     indexComposition(targetRoot, targetComposition)
@@ -1111,13 +1152,48 @@ export function createManager({
     if (typeof root !== 'string' || root.length === 0) return null
     const direct = owner?.record ?? await store.get(root)
     if (direct === undefined) return null
+    const tree = await discovery.listTree(root)
+    if (!tree.available || tree.children.length === 0) return direct
+    // Collect the expensive I/O outside the per-root lock. The lock only
+    // re-reads the graph, checks membership, and merges the prepared nodes.
+    const prepared = []
+    for (const entry of tree.children) {
+      let nodeInput = null
+      if (entry.mode === 'external') {
+        nodeInput = {
+          sessionId: null,
+          label: textOf(entry.name ?? entry.label, 120) ?? entry.id,
+          kind: 'external',
+          source: 'external',
+          provider: textOf(entry.mode, 80),
+          nativeParentSessionId: textOf(entry.parentId, 128),
+          cwd: null,
+          permissionPreset: null,
+        }
+      } else {
+        const summary = await discovery.describe(entry.id)
+        if (summary !== null) {
+          nodeInput = nodeFromSummary(summary)
+        } else if (entry.mode === 'one-shot') {
+          nodeInput = {
+            sessionId: null,
+            label: textOf(entry.name ?? entry.label, 120) ?? entry.id,
+            kind: 'external',
+            source: 'external',
+            provider: textOf(entry.mode, 80),
+            nativeParentSessionId: textOf(entry.parentId, 128),
+            cwd: null,
+            permissionPreset: null,
+          }
+        }
+      }
+      if (nodeInput !== null) prepared.push({ entry, nodeInput })
+    }
     return withLock(root, async () => {
       const record = await requireRecord(root)
-      const tree = await discovery.listTree(root)
-      if (!tree.available || tree.children.length === 0) return record
       let composition = record.composition
       let changed = false
-      for (const entry of tree.children) {
+      for (const { entry, nodeInput } of prepared) {
         if (composition.nodes.some((node) => node.sessionId === entry.id)) continue
         const childOwner = await directOwner(entry.id)
         if (childOwner !== null) {
@@ -1132,24 +1208,6 @@ export function createManager({
         }
         const parentNode = composition.nodes.find((node) => node.sessionId === entry.parentId)
         if (parentNode === undefined) continue
-        let nodeInput
-        const summary = await discovery.describe(entry.id)
-        if (summary !== null) {
-          nodeInput = nodeFromSummary(summary)
-        } else if (entry.mode === 'external' || entry.mode === 'one-shot') {
-          nodeInput = {
-            sessionId: null,
-            label: textOf(entry.name ?? entry.label, 120) ?? entry.id,
-            kind: 'external',
-            source: 'external',
-            provider: textOf(entry.mode, 80),
-            nativeParentSessionId: textOf(entry.parentId, 128),
-            cwd: null,
-            permissionPreset: null,
-          }
-        } else {
-          continue
-        }
         try {
           composition = addGraphNode(composition, nodeInput, { parentId: parentNode.id })
           changed = true
@@ -1217,6 +1275,7 @@ export function createManager({
       const record = await requireRecord(rootSessionId)
       assertIdle(record.composition, record.composition.nodes.map((node) => node.id), 'delete the composition')
       await store.delete(rootSessionId)
+      await store.deletePolicy?.(rootSessionId)
       unindexComposition(rootSessionId, record.composition)
       for (const [taskId, task] of await store.listTasks?.(rootSessionId) ?? []) {
         if (task.rootSessionId === rootSessionId) await store.deleteTask?.(taskId)

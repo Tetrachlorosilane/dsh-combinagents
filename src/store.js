@@ -272,6 +272,14 @@ export function createStore(ctx, options = {}) {
       }
       memory.get(POLICY_TABLE).set(rootSessionId, record)
     },
+    async deletePolicy(rootSessionId) {
+      const table = await tableOf(POLICY_TABLE)
+      if (table !== null) {
+        await table.delete(rootSessionId)
+        return
+      }
+      memory.get(POLICY_TABLE).delete(rootSessionId)
+    },
     async appendAudit(record) {
       const table = await tableOf(AUDIT_TABLE)
       if (table !== null) {

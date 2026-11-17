@@ -295,3 +295,69 @@ test('describeMany reuses the corpus cache instead of filterSessions', async () 
   assert.equal(cached['s-b'].sessionId, 's-b')
   assert.equal(filters, 0)
 })
+
+test('coalesces concurrent title batches and keeps the request bounded', async () => {
+  let calls = 0
+  let resolveBatch
+  const batch = new Promise((resolve) => { resolveBatch = resolve })
+  const ctx = {
+    get(name) {
+      if (name === 'sessions') return { get: () => undefined, list: () => [] }
+      if (name === 'sessionQuery') {
+        return {
+          async readTitleSnapshots(ids) {
+            calls += 1
+            return batch.then(() => ids.map((sessionId) => ({
+              sessionId,
+              status: 'fulfilled',
+              value: { title: { title: `Title ${sessionId}` } },
+            })))
+          },
+        }
+      }
+      return undefined
+    },
+    logger: { warn() {} },
+  }
+  const discovery = createDiscovery(ctx)
+  const first = discovery.titles(['s-b'])
+  const second = discovery.titles(['s-b'])
+  resolveBatch()
+  const [a, b] = await Promise.all([first, second])
+  assert.equal(calls, 1)
+  assert.equal(a['s-b'], 'Title s-b')
+  assert.equal(b['s-b'], 'Title s-b')
+
+  const many = Array.from({ length: 30 }, (_, index) => `s-${index}`)
+  await discovery.titles(many)
+  assert.equal(calls, 2)
+})
+
+test('coalesces concurrent describe reads for one cold session', async () => {
+  let reads = 0
+  let resolveRead
+  const read = new Promise((resolve) => { resolveRead = resolve })
+  const ctx = {
+    get(name) {
+      if (name === 'sessions') return { get: () => undefined, list: () => [] }
+      if (name === 'sessionQuery') {
+        return {
+          async readTitleSnapshot(sessionId) {
+            reads += 1
+            return read.then(() => ({ session: { id: sessionId }, title: { title: 'Cold title' } }))
+          },
+        }
+      }
+      return undefined
+    },
+    logger: { warn() {} },
+  }
+  const discovery = createDiscovery(ctx)
+  const first = discovery.describe('s-cold')
+  const second = discovery.describe('s-cold')
+  resolveRead()
+  const [a, b] = await Promise.all([first, second])
+  assert.equal(reads, 1)
+  assert.equal(a.title, 'Cold title')
+  assert.equal(b.title, 'Cold title')
+})
