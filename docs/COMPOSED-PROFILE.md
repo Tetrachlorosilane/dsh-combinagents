@@ -70,6 +70,16 @@ reference overlay is:
               sampleOverCapGlobResults: false
           - id: tool-jobs
             name: "@deepseek-ai/dsh-tool-jobs"
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+            config:
+              - id: compaction-basic
+                name: "@deepseek-ai/dsh-compaction-basic"
+              - id: command-compact
+                name: "@deepseek-ai/dsh-command-compact"
           - id: tool-ask-user
             name: "@deepseek-ai/dsh-tool-ask-user"
           - id: tool-todo
@@ -97,6 +107,12 @@ reference overlay is:
    message/interrupt edge.
 
 ## Known gaps
+
+- The composed preset must include the `compaction` group (`compaction-basic` +
+  `command-compact`, `isolate: { compaction: true }`). The shipped desktop
+  bundle disables those host-level rows, so a composed preset without the group
+  has no `ctx.compaction` and no `/compact` command. This was the cause of the
+  reported missing compression command on 2026-11-17.
 
 - Tool order and the exact model-prefix fingerprint have not been compared with
   a live native request.
