@@ -1,5 +1,7 @@
 # dsh-combinagents
 
+**WARNING: Do NOT install the plugin right now. 
+
 **Status: installed in the `desktop` profile; Host bridge, shared membership
 (including native ancestors), busy guard, native-subagent mirror/sync,
 rename/reparent, and client registration verified; GUI visual check pending.**
