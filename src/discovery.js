@@ -39,8 +39,13 @@ export function createDiscovery(ctx, options = {}) {
   const titleCache = new Map()
   const ARCHIVE_TTL_MS = 2000
   const CORPUS_TTL_MS = 5000
-  const DESCRIBE_TTL_MS = 2000
+  const DESCRIBE_TTL_MS = 5000
   const TITLE_TTL_MS = 30000
+  const NATIVE_TTL_MS = 5000
+  /** @type {Map<string, {at: number, entries: object[]}>} */
+  const nativeCache = new Map()
+  /** @type {Map<string, Promise<object[]>>} */
+  const nativeInFlight = new Map()
 
   /**
    * The workspace registry owns the durable archive set. Cache it briefly: the
@@ -289,51 +294,58 @@ export function createDiscovery(ctx, options = {}) {
   async function describeMany(sessionIds) {
     const unique = [...new Set(sessionIds)]
     if (unique.length === 0) return {}
-    const liveById = new Map(unique.map((sessionId) => [sessionId, liveSession(sessionId)]))
-    /** @type {Map<string, object>} */
-    const headers = new Map()
-    /** @type {Map<string, boolean>} */
-    const liveHints = new Map()
+    const now = Date.now()
+    /** @type {Record<string, SessionSummary>} */
+    const result = {}
+    const missing = []
     for (const sessionId of unique) {
-      const live = liveById.get(sessionId)
-      if (live !== undefined) headers.set(sessionId, live.header)
+      const cached = describeCache.get(sessionId)
+      if (cached !== undefined && now - cached.at < DESCRIBE_TTL_MS) {
+        result[sessionId] = cached.value
+        continue
+      }
+      const live = liveSession(sessionId)
+      if (live !== undefined) {
+        result[sessionId] = summaryOf(live.header, live, false, undefined, true)
+        describeCache.set(sessionId, { at: now, value: result[sessionId] })
+      } else {
+        missing.push(sessionId)
+      }
+    }
+    if (missing.length === 0) return result
+
+    // Reuse the same 5 s corpus that /sessions already fills. This avoids a
+    // full filterSessions() scan for every /state request.
+    const corpus = corpusCache.data !== null && now - corpusCache.at < CORPUS_TTL_MS
+      ? corpusCache.data
+      : await list()
+    const byId = new Map(corpus.sessions.map((session) => [session.sessionId, session]))
+    const unresolved = []
+    for (const sessionId of missing) {
+      const summary = byId.get(sessionId)
+      if (summary === undefined) {
+        unresolved.push(sessionId)
+      } else {
+        result[sessionId] = summary
+        describeCache.set(sessionId, { at: now, value: summary })
+      }
     }
     const query = sessionQuery()
-    if (query?.filterSessions) {
+    if (unresolved.length > 0 && query?.filterSessions) {
       try {
-        const records = await query.filterSessions([{ kind: 'id', values: unique }])
+        const records = await query.filterSessions([{ kind: 'id', values: unresolved }])
         for (const record of records) {
-          headers.set(record.header.id, record.header)
-          liveHints.set(record.header.id, record.live === true)
+          const summary = summaryOf(record.header, liveSession(record.header.id), record.persisted === true, undefined, record.live === true)
+          result[record.header.id] = summary
+          describeCache.set(record.header.id, { at: now, value: summary })
         }
       } catch (error) {
         log?.warn?.('dsh-combinagents: persisted headers unavailable', error)
       }
     }
-    /** @type {Record<string, SessionSummary>} */
-    const result = {}
-    const missing = []
-    for (const sessionId of unique) {
-      const live = liveById.get(sessionId)
-      const header = headers.get(sessionId) ?? live?.header
-      if (header !== undefined) {
-        // Node labels are durable in the composition; observations only need
-        // live/archived/cwd/policy, so no title fold is read here.
-        result[sessionId] = summaryOf(
-          header,
-          live,
-          live === undefined,
-          undefined,
-          live !== undefined || liveHints.get(sessionId) === true,
-        )
-      } else {
-        missing.push(sessionId)
-      }
-    }
-    // A few persisted nodes without a metadata record: keep the response
-    // useful without turning a large state read into one log scan per node.
-    if (missing.length > 0 && missing.length <= 20) {
-      const fallback = await Promise.all(missing.map(async (sessionId) => [sessionId, await describe(sessionId)]))
+    const stillMissing = unresolved.filter((sessionId) => result[sessionId] === undefined)
+    if (stillMissing.length > 0 && stillMissing.length <= 20) {
+      const fallback = await Promise.all(stillMissing.map(async (sessionId) => [sessionId, await describe(sessionId)]))
       for (const [sessionId, summary] of fallback) {
         if (summary !== null) result[sessionId] = summary
       }
@@ -367,6 +379,44 @@ export function createDiscovery(ctx, options = {}) {
   }
 
   /**
+   * One listDescendants() walk per root per short TTL. /summary, /external, and
+   * sync-native all read the same native catalogs; in-flight requests share a
+   * single walk instead of stampeding it.
+   * @param {string} rootSessionId - native tree root.
+   * @returns {Promise<object[]>} descendant rows.
+   */
+  async function nativeEntries(rootSessionId) {
+    const now = Date.now()
+    const cached = nativeCache.get(rootSessionId)
+    if (cached !== undefined && now - cached.at < NATIVE_TTL_MS) return cached.entries
+    const pending = nativeInFlight.get(rootSessionId)
+    if (pending !== undefined) return pending
+    const service = ctx.get?.('subagents')
+    if (service?.listDescendants === undefined) return []
+    const promise = service.listDescendants(rootSessionId)
+      .then((entries) => {
+        nativeCache.set(rootSessionId, { at: Date.now(), entries })
+        return entries
+      })
+      .finally(() => {
+        nativeInFlight.delete(rootSessionId)
+      })
+    nativeInFlight.set(rootSessionId, promise)
+    return promise
+  }
+
+  /**
+   * Drop one root's native catalog cache after an observed mutation.
+   * @param {string} rootSessionId - native tree root.
+   */
+  function invalidateNative(rootSessionId) {
+    if (typeof rootSessionId === 'string' && rootSessionId.length > 0) {
+      nativeCache.delete(rootSessionId)
+      nativeInFlight.delete(rootSessionId)
+    }
+  }
+
+  /**
    * List external/one-shot leaves reachable from a root session's native
    * catalogs. One-shot children that still have a local Session are left to the
    * session picker instead of being treated as external placeholders.
@@ -382,7 +432,7 @@ export function createDiscovery(ctx, options = {}) {
       return { available: false, leaves: [], diagnostics: [], count: 0 }
     }
     try {
-      const entries = await service.listDescendants(rootSessionId)
+      const entries = await nativeEntries(rootSessionId)
       const leaves = []
       const diagnostics = []
       let count = 0
@@ -420,7 +470,7 @@ export function createDiscovery(ctx, options = {}) {
     const service = ctx.get?.('subagents')
     if (service?.listDescendants === undefined) return { available: false, count: 0 }
     try {
-      const entries = await service.listDescendants(rootSessionId)
+      const entries = await nativeEntries(rootSessionId)
       return { available: true, count: entries.filter((entry) => entry.kind === 'child').length }
     } catch (error) {
       log?.warn?.('dsh-combinagents: native descendant count unavailable', error)
@@ -440,7 +490,7 @@ export function createDiscovery(ctx, options = {}) {
     const service = ctx.get?.('subagents')
     if (service?.listDescendants === undefined) return { available: false, children: [] }
     try {
-      const entries = await service.listDescendants(rootSessionId)
+      const entries = await nativeEntries(rootSessionId)
       return { available: true, children: entries.filter((entry) => entry.kind === 'child') }
     } catch (error) {
       log?.warn?.('dsh-combinagents: native tree unavailable', error)
@@ -448,5 +498,5 @@ export function createDiscovery(ctx, options = {}) {
     }
   }
 
-  return { list, titles, describe, describeMany, isKnownSession, listNative, countNative, listTree }
+  return { list, titles, describe, describeMany, isKnownSession, listNative, countNative, listTree, invalidateNative }
 }

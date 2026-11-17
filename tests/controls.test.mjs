@@ -440,8 +440,16 @@ test('composed task tool lists, creates, and updates the plugin board', async ()
   assert.equal(updated.tasks[0].status, 'in_progress')
   assert.deepEqual(harnessed.taskCalls, [
     { kind: 'list' },
-    { kind: 'create', rootSessionId: 's-a', subject: 'Review', description: 'Read the diff', ownerNodeId: 'n-a' },
-    { kind: 'update', rootSessionId: 's-a', taskId: 't2', expectedRevision: 1, action: 'start' },
+    {
+      kind: 'create',
+      rootSessionId: 's-a',
+      subject: 'Review',
+      description: 'Read the diff',
+      ownerNodeId: 'n-a',
+      createdBy: 'agent:s-a',
+      actor: 's-a',
+    },
+    { kind: 'update', rootSessionId: 's-a', taskId: 't2', expectedRevision: 1, action: 'start', actor: 's-a' },
   ])
 })
 

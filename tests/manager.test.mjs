@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { createComposition } from '../src/graph.js'
 import { createManager } from '../src/manager.js'
 
 function summary(sessionId, title, source = 'top-level') {
@@ -60,24 +61,33 @@ function fakeStore(initial = new Map()) {
 }
 
 function delayedStore() {
-  const data = new Map()
+  const base = fakeStore()
   const wait = () => new Promise((resolve) => setTimeout(resolve, 5))
   return {
-    mode: 'memory',
+    ...base,
     async get(key) {
       await wait()
-      return data.get(key)
+      return base.get(key)
     },
     async put(key, value) {
       await wait()
-      data.set(key, value)
+      return base.put(key, value)
     },
     async delete(key) {
       await wait()
-      data.delete(key)
+      return base.delete(key)
     },
     async list() {
-      return [...data.entries()]
+      await wait()
+      return base.list()
+    },
+    async getPolicy(key) {
+      await wait()
+      return base.getPolicy(key)
+    },
+    async putPolicy(key, value) {
+      await wait()
+      return base.putPolicy(key, value)
     },
   }
 }
@@ -247,6 +257,28 @@ test('serializes concurrent mutations for one root session', async () => {
   assert.deepEqual(record.composition.nodes.map((node) => node.sessionId).sort(), ['s-a', 's-b', 's-c'])
 })
 
+test('moveAcross serializes with an ordinary write to the target root', async () => {
+  const ids = ['t-root', 's-root', 'b', 'x']
+  const manager = createManager({ store: delayedStore(), discovery: fakeDiscovery(ids) })
+  await manager.create('t-root')
+  await manager.create('s-root')
+  const tRoot = (await manager.state('t-root')).composition.nodes[0]
+  const sRoot = (await manager.state('s-root')).composition.nodes[0]
+  await manager.addNode('s-root', { sessionId: 'b', parentId: sRoot.id })
+
+  await Promise.all([
+    manager.addNode('t-root', { sessionId: 'b', parentId: tRoot.id }),
+    manager.addNode('t-root', { sessionId: 'x', parentId: tRoot.id }),
+  ])
+
+  const target = (await manager.state('t-root')).composition
+  const source = (await manager.state('s-root')).composition
+  assert.deepEqual(target.nodes.map((node) => node.sessionId).sort(), ['b', 't-root', 'x'])
+  assert.deepEqual(source.nodes.map((node) => node.sessionId), ['s-root'])
+  assert.equal((await manager.resolveSession('b'))?.rootSessionId, 't-root')
+  assert.equal((await manager.resolveSession('x'))?.rootSessionId, 't-root')
+})
+
 test('state returns null for an unknown root and rejects an invalid id', async () => {
   const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery() })
   assert.equal(await manager.state('s-missing'), null)
@@ -298,6 +330,31 @@ test('renames a composition title without touching its nodes', async () => {
   assert.equal(state.composition.nodes.length, 1)
   await rejectsWithCode(manager.setTitle('s-a', { title: '   ' }), 'INVALID_FIELD')
   await rejectsWithCode(manager.setTitle('s-missing', { title: 'Review team' }), 'COMPOSITION_NOT_FOUND')
+})
+
+test('installComposition refuses a session owned by another composition', async () => {
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(['root-r', 'root-c2', 'child-x']) })
+  await manager.create('root-c2')
+  const c2 = (await manager.state('root-c2')).composition
+  await manager.addNode('root-c2', { sessionId: 'child-x', parentId: c2.nodes[0].id })
+
+  const node = (sessionId) => ({
+    sessionId,
+    label: sessionId,
+    kind: 'session',
+    source: 'top-level',
+    provider: null,
+    nativeParentSessionId: null,
+    cwd: `/work/${sessionId}`,
+    permissionPreset: null,
+  })
+  const composition = createComposition({
+    rootSessionId: 'root-r',
+    nodes: [node('root-r'), node('child-x')],
+    edges: [],
+  })
+  await rejectsWithCode(manager.installComposition('root-r', composition), 'SESSION_ALREADY_COMPOSED')
+  assert.equal((await manager.resolveSession('child-x'))?.rootSessionId, 'root-c2')
 })
 
 test('resolves one shared composition from a member session', async () => {
@@ -522,4 +579,119 @@ test('creates and transitions plugin-owned tasks with a revision guard', async (
   assert.deepEqual(tasks, [])
   await rejectsWithCode(manager.createTask('s-a', { subject: '   ' }), 'INVALID_FIELD')
   await rejectsWithCode(manager.createTask('s-a', { subject: 'Bad owner', ownerNodeId: 'missing' }), 'UNKNOWN_NODE')
+})
+
+test('sync-native refuses a child already owned by another composition', async () => {
+  const warnings = []
+  const tree = [
+    { kind: 'child', id: 'child-x', parentId: 'root-r', depth: 1, mode: 'continuable', label: 'Child X', activity: 'inactive' },
+  ]
+  const manager = createManager({
+    store: fakeStore(),
+    discovery: fakeDiscovery(['root-r', 'root-c2', 'child-x'], tree),
+    logger: { warn(...args) { warnings.push(args) } },
+  })
+  await manager.create('root-c2')
+  const c2 = (await manager.state('root-c2')).composition
+  await manager.addNode('root-c2', { sessionId: 'child-x', parentId: c2.nodes[0].id })
+
+  await manager.create('root-r')
+  const r = (await manager.state('root-r')).composition
+  assert.equal(r.nodes.length, 1)
+  assert.equal(r.nodes.some((node) => node.sessionId === 'child-x'), false)
+  assert.equal((await manager.resolveSession('child-x'))?.rootSessionId, 'root-c2')
+  assert.ok(warnings.some((entry) => entry[0].includes('sync-native skipped')))
+})
+
+test('auto-attach refuses a child already owned by another composition', async () => {
+  const warnings = []
+  const manager = createManager({
+    store: fakeStore(),
+    discovery: fakeDiscovery(['root-r', 'root-c2', 'child-x']),
+    logger: { warn(...args) { warnings.push(args) } },
+  })
+  await manager.create('root-r')
+  await manager.create('root-c2')
+  const c2 = (await manager.state('root-c2')).composition
+  await manager.addNode('root-c2', { sessionId: 'child-x', parentId: c2.nodes[0].id })
+
+  const attached = await manager.autoAttach('root-r', { childId: 'child-x', provider: 'local', local: true })
+  assert.equal(attached, null)
+  const r = (await manager.state('root-r')).composition
+  assert.equal(r.nodes.length, 1)
+  assert.equal((await manager.resolveSession('child-x'))?.rootSessionId, 'root-c2')
+  assert.ok(warnings.some((entry) => entry[0].includes('refusing to mirror')))
+})
+
+test('a failed source write rolls the target record back', async () => {
+  const store = fakeStore()
+  const manager = createManager({ store, discovery: fakeDiscovery(['t-root', 's-root', 'b']) })
+  await manager.create('t-root')
+  await manager.create('s-root')
+  const tRoot = (await manager.state('t-root')).composition.nodes[0]
+  const sRoot = (await manager.state('s-root')).composition.nodes[0]
+  await manager.addNode('s-root', { sessionId: 'b', parentId: sRoot.id })
+
+  const put = store.put.bind(store)
+  let failSource = true
+  store.put = async (key, value) => {
+    if (failSource && key === 's-root') {
+      failSource = false
+      throw new Error('source write failed')
+    }
+    return put(key, value)
+  }
+
+  await assert.rejects(
+    () => manager.addNode('t-root', { sessionId: 'b', parentId: tRoot.id }),
+    /source write failed/,
+  )
+  const target = (await manager.state('t-root')).composition
+  const source = (await manager.state('s-root')).composition
+  assert.deepEqual(target.nodes.map((node) => node.sessionId), ['t-root'])
+  assert.deepEqual(source.nodes.map((node) => node.sessionId).sort(), ['b', 's-root'])
+  assert.equal((await manager.resolveSession('b'))?.rootSessionId, 's-root')
+})
+
+test('records task provenance and limits updates to the owner or an ancestor', async () => {
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(['s-a', 's-b', 's-c']) })
+  await manager.create('s-a')
+  const root = (await manager.state('s-a')).composition.nodes[0]
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: root.id })
+  await manager.addNode('s-a', { sessionId: 's-c', parentId: root.id })
+  const composition = (await manager.state('s-a')).composition
+  const b = composition.nodes.find((node) => node.sessionId === 's-b')
+
+  let tasks = await manager.createTask('s-a', {
+    subject: 'Child task',
+    ownerNodeId: b.id,
+    createdBy: 'agent:s-b',
+    actor: 's-b',
+  })
+  assert.equal(tasks[0].createdBy, 'agent:s-b')
+  const task = tasks[0]
+
+  await rejectsWithCode(
+    manager.updateTask('s-a', { taskId: task.id, expectedRevision: 1, action: 'start', actor: 's-c' }),
+    'TASK_FORBIDDEN',
+  )
+  tasks = await manager.updateTask('s-a', { taskId: task.id, expectedRevision: 1, action: 'start', actor: 's-a' })
+  assert.equal(tasks[0].status, 'in_progress')
+  tasks = await manager.updateTask('s-a', { taskId: task.id, expectedRevision: 2, action: 'complete', actor: 's-b' })
+  assert.equal(tasks[0].status, 'completed')
+
+  const userTask = (await manager.createTask('s-a', { subject: 'Unowned task' }))
+    .find((entry) => entry.subject === 'Unowned task')
+  assert.equal(userTask.createdBy, 'user')
+  await rejectsWithCode(
+    manager.updateTask('s-a', { taskId: userTask.id, expectedRevision: 1, action: 'delete', actor: 's-a' }),
+    'TASK_FORBIDDEN',
+  )
+  const remaining = await manager.updateTask('s-a', {
+    taskId: userTask.id,
+    expectedRevision: 1,
+    action: 'delete',
+    actor: 'user',
+  })
+  assert.equal(remaining.some((entry) => entry.id === userTask.id), false)
 })

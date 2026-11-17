@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { createCloneManager } from '../src/clone-manager.js'
+import { createCloneManager, MAX_LIVE_CLONE_ROOTS } from '../src/clone-manager.js'
 import { createComposition } from '../src/graph.js'
 import { createManager } from '../src/manager.js'
 
@@ -328,5 +328,30 @@ test('cleans up the new root and records when child creation fails', async () =>
   assert.equal((await store.listClones()).length, 0)
   assert.equal((await store.listTasks(created[0])).length, 0)
   assert.equal(await store.get(created[0]), undefined)
+  cloneManager.dispose()
+})
+
+
+test('caps retained clone roots and releases one explicitly', async () => {
+  const { store, cloneManager, live } = createHarness()
+  installSource(store, createComposition({
+    id: 'source',
+    title: 'Solo',
+    rootSessionId: 's-a',
+    nodes: [node('n-a', 's-a', 'Root')],
+    edges: [],
+  }))
+
+  const roots = []
+  for (let index = 0; index < MAX_LIVE_CLONE_ROOTS + 1; index += 1) {
+    roots.push((await cloneManager.cloneTree('s-a')).clone.newRootSessionId)
+  }
+  assert.equal(cloneManager.liveCount, MAX_LIVE_CLONE_ROOTS)
+  assert.equal(live.has(roots[0]), false)
+  assert.equal(live.has(roots.at(-1)), true)
+
+  assert.equal(await cloneManager.releaseRoot(roots.at(-1)), true)
+  assert.equal(live.has(roots.at(-1)), false)
+  assert.equal(await cloneManager.releaseRoot(roots.at(-1)), false)
   cloneManager.dispose()
 })

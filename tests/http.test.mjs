@@ -5,6 +5,7 @@ import { createApi, isLoopback, MAX_BODY_BYTES, TOKEN_HEADER } from '../src/http
 import { createManager } from '../src/manager.js'
 
 const TOKEN = 'test-token'
+const LOCAL_PORT = 60601
 
 function summary(sessionId, title) {
   return {
@@ -116,12 +117,15 @@ function makeHarness({ running = new Set(), cloneManager = undefined } = {}) {
 }
 
 async function call(api, request = {}) {
+  const headers = { host: `127.0.0.1:${LOCAL_PORT}`, ...(request.headers ?? {}) }
   const response = await api.handle({
     method: request.method ?? 'GET',
     url: request.url ?? '/dsh-combinagents/bootstrap',
-    headers: request.headers ?? {},
+    headers,
     body: request.body ?? '',
     remoteAddress: request.remoteAddress ?? '127.0.0.1',
+    localPort: request.localPort ?? LOCAL_PORT,
+    secure: request.secure === true,
   })
   return { status: response.status, headers: response.headers, data: JSON.parse(response.body) }
 }
@@ -153,6 +157,23 @@ test('bootstrap returns the token and rejects non-loopback peers', async () => {
   const remote = await call(api, { remoteAddress: '10.0.0.7' })
   assert.equal(remote.status, 403)
   assert.equal(remote.data.error.code, 'FORBIDDEN')
+
+  const rebound = await call(api, { headers: { host: 'evil.example:60601' } })
+  assert.equal(rebound.status, 403)
+  assert.match(rebound.data.error.message, /Host/)
+  const wrongPort = await call(api, { headers: { host: '127.0.0.1:60602' } })
+  assert.equal(wrongPort.status, 403)
+  const crossSite = await call(api, { headers: { origin: 'https://evil.example' } })
+  assert.equal(crossSite.status, 403)
+  assert.match(crossSite.data.error.message, /Origin/)
+  const nullOrigin = await call(api, { headers: { origin: 'null' } })
+  assert.equal(nullOrigin.status, 403)
+  const foreignOrigin = await call(api, { headers: { origin: 'http://10.0.0.7:60601' } })
+  assert.equal(foreignOrigin.status, 403)
+  const sameOrigin = await call(api, { headers: { origin: `http://127.0.0.1:${LOCAL_PORT}` } })
+  assert.equal(sameOrigin.status, 200)
+  const localhost = await call(api, { headers: { host: `localhost:${LOCAL_PORT}` } })
+  assert.equal(localhost.status, 200)
 })
 
 test('requires the token outside bootstrap', async () => {
@@ -164,6 +185,11 @@ test('requires the token outside bootstrap', async () => {
     headers: { [TOKEN_HEADER]: 'wrong' },
   })
   assert.equal(wrong.status, 401)
+  const crossSite = await call(api, {
+    url: '/dsh-combinagents/state?rootSessionId=s-a',
+    headers: { [TOKEN_HEADER]: TOKEN, origin: 'https://evil.example' },
+  })
+  assert.equal(crossSite.status, 403)
 })
 
 test('creates a composition and returns observed nodes', async () => {

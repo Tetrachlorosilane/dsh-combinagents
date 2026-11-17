@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (95 total);
+  client-registration, host-wiring, controls, and bundle-shape tests (104 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`) and
@@ -93,7 +93,11 @@ task board. The temporary `/clone-spike` route was removed. The findings are in
 The cross-tree delivery capability described
 as the Bridge is implemented as the composition control tools (per-edge grants,
 approval gate, audit), not as a separate layer. Do not describe native
-re-parenting as implemented.
+re-parenting as implemented. The 2026-11-18 audit hardened the bridge with
+exact loopback `Host`/same-origin `Origin` checks (including `/bootstrap`),
+cross-composition membership guards in `sync-native`/`auto-attach`, locked and
+compensated `moveAcross`, task `createdBy`/actor enforcement, corpus/native
+caches, and a bounded release policy for retained clone roots.
 
 ## 2. Product contract
 
@@ -204,7 +208,11 @@ Remaining work: compare composed tool order and the prefix
 fingerprint against a live native request; enforce the desktop model-selection
 allowlist; stop `standard`/`ptc` sessions from shadowing the composed names; keep
 large-session tab latency under observation. Clone/bud live verification and
-the temporary `/clone-spike` removal are complete (2026-11-18). Decisions
+the temporary `/clone-spike` removal are complete (2026-11-18). The 2026-11-18
+audit fixed P0 SEC-1 (Host/Origin), SEC-2 (one-composition membership), SEC-4
+(locked/compensated move), plus P1 SEC-3 (task provenance), PERF-1/2 (native and
+corpus caches), and PERF-4 (bounded clone roots). Remaining audit items:
+SEC-5/6/7/8/9/10/11/12, PERF-3/5/6/7/8/9/10/11, and R-1..R-8. Decisions
 (2026-11-18): a connection the user adds manually defaults to bidirectional
 messaging (`allowMessage: true`, `allowInterrupt: false`); direct reparenting
 migrates an existing grant, or defaults the replacement edge to messaging when

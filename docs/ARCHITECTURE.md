@@ -277,7 +277,9 @@ Rules:
 
 - `application/json`, `cache-control: no-store`;
 - 128 KiB body limit;
-- loopback peers only;
+- loopback peers only, with an exact loopback `Host` (`127.0.0.1:<port>`,
+  `localhost:<port>`, or `[::1]:<port>`) and, when present, a same-origin
+  loopback `Origin`; `/bootstrap` is authenticated by the same checks;
 - per-Host random token in `x-dsh-combinagents-token`;
 - no CORS headers;
 - validate every session id against the discovered corpus before attaching;
@@ -293,8 +295,14 @@ Rules:
   subtree under the requested parent (or detaches it to a root); attaching a
   session from another composition moves that subtree, and selecting the source
   root moves that tree;
-- cross-composition moves serialize through a merge lock; the source record is
-  deleted when empty, otherwise a remaining source root re-keys it;
+- `sync-native` and `auto-attach` skip a session already owned by another
+  composition and log the refusal; `installComposition` rejects such a session
+  with `SESSION_ALREADY_COMPOSED`, and membership is never silently overwritten;
+- cross-composition moves serialize through the merge lock plus both per-root
+  locks in lexical order; the target is saved first, a source failure rolls it
+  back, and membership is reindexed only after both records settle;
+- tasks record `createdBy` and audit actor; only the owner or one of its
+  composition ancestors may change a task (`TASK_FORBIDDEN` otherwise);
 
 A future routing phase should add its routes only after the authority design is
 settled; do not hide routing behind the phase-1 API.
@@ -617,7 +625,7 @@ viewer.
 11. A DSH-side smoke test verifies the tab opens from the header button and the
     guide.
 
-Verified on 2026-11-17: criteria 1, 3-11 through the 95 unit tests and the real
+Verified on 2026-11-17: criteria 1, 3-11 through the 104 unit tests and the real
 GUI (dark/light/420 px). Criterion 2 was demonstrated by adding a
 mahjong-workspace session to a `dsh-combinagents` composition and by the rich
 composition with 15 native subagent nodes; the cross-workspace node was removed

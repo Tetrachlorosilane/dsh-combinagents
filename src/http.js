@@ -79,6 +79,70 @@ export function isLoopback(address) {
   return normalized === '127.0.0.1' || normalized === '::1'
 }
 
+const TRUSTED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+
+/**
+ * Parse a Host/Origin authority without accepting userinfo, paths, or queries.
+ * @param {string} value - authority text.
+ * @returns {{protocol: string, hostname: string, port: string}|null}
+ */
+function authorityOf(value) {
+  if (typeof value !== 'string' || value.length === 0) return null
+  let url
+  try {
+    url = new URL(`http://${value}`)
+  } catch {
+    return null
+  }
+  if (url.username.length > 0 || url.password.length > 0) return null
+  if (url.pathname !== '/' || url.search.length > 0 || url.hash.length > 0) return null
+  return { protocol: url.protocol, hostname: url.hostname.toLowerCase(), port: url.port }
+}
+
+/**
+ * Reject DNS-rebinding hosts: only the three loopback spellings at this exact
+ * listener port are accepted. The port comes from the server socket, never from
+ * the untrusted Host header.
+ * @param {string|undefined} host - Host header.
+ * @param {number|undefined} localPort - listening port.
+ * @returns {boolean}
+ */
+export function isTrustedHost(host, localPort) {
+  if (!Number.isSafeInteger(localPort) || localPort < 1 || localPort > 65535) return false
+  const authority = authorityOf(host)
+  if (authority === null) return false
+  if (!TRUSTED_HOSTS.has(authority.hostname)) return false
+  const port = authority.port === '' ? '80' : authority.port
+  return Number(port) === localPort
+}
+
+/**
+ * When an Origin is present it must be the same http(s) loopback origin. A
+ * same-origin GET commonly omits Origin, so Host validation is the primary
+ * rebinding defense.
+ * @param {string|undefined} origin - Origin header.
+ * @param {number|undefined} localPort - listening port.
+ * @param {boolean} secure - whether the listener terminated TLS.
+ * @returns {boolean}
+ */
+export function isTrustedOrigin(origin, localPort, secure = false) {
+  if (origin === undefined) return true
+  if (origin === 'null') return false
+  if (!Number.isSafeInteger(localPort) || localPort < 1 || localPort > 65535) return false
+  let url
+  try {
+    url = new URL(origin)
+  } catch {
+    return false
+  }
+  if (url.username.length > 0 || url.password.length > 0) return false
+  if (url.pathname !== '/' || url.search.length > 0 || url.hash.length > 0) return false
+  if (url.protocol !== (secure ? 'https:' : 'http:')) return false
+  if (!TRUSTED_HOSTS.has(url.hostname.toLowerCase())) return false
+  const port = url.port === '' ? (url.protocol === 'https:' ? '443' : '80') : url.port
+  return Number(port) === localPort
+}
+
 /**
  * @param {Record<string, unknown>} headers - request headers.
  * @param {string} name - case-insensitive name.
@@ -126,7 +190,7 @@ function errorOf(error) {
     return { status: error.status, code: error.code, message: error.message }
   }
   if (error instanceof CompositionError) {
-    const status = error.code === 'ROOT_PROTECTED'
+    const status = error.code === 'ROOT_PROTECTED' || error.code === 'TASK_FORBIDDEN'
       ? 403
       : error.code === 'CLONE_UNAVAILABLE'
         ? 503
@@ -164,9 +228,15 @@ export function createApi({
    */
   async function handle(request) {
     try {
-      const { method = 'GET', url = '/', headers = {}, body = '', remoteAddress } = request
+      const { method = 'GET', url = '/', headers = {}, body = '', remoteAddress, localPort, secure = false } = request
       if (!isLoopback(remoteAddress)) {
         return json(403, { error: { code: 'FORBIDDEN', message: 'this bridge only accepts loopback peers' } })
+      }
+      if (!isTrustedHost(headerValue(headers, 'host'), localPort)) {
+        return json(403, { error: { code: 'FORBIDDEN', message: 'untrusted Host header' } })
+      }
+      if (!isTrustedOrigin(headerValue(headers, 'origin'), localPort, secure)) {
+        return json(403, { error: { code: 'FORBIDDEN', message: 'untrusted Origin header' } })
       }
       if (typeof url !== 'string') throw new HttpError(400, 'INVALID_URL', 'url is required')
       const parsed = new URL(url, 'http://localhost')
@@ -362,6 +432,8 @@ export function createApi({
         ownerNodeId: body.ownerNodeId,
         blockedBy: body.blockedBy,
         writeScopes: body.writeScopes,
+        createdBy: 'user',
+        actor: 'user',
       })
       return json(200, { tasks })
     }
@@ -370,6 +442,7 @@ export function createApi({
         taskId: body.taskId,
         expectedRevision: body.expectedRevision,
         action: body.action,
+        actor: 'user',
       })
       return json(200, { tasks })
     }
@@ -398,6 +471,7 @@ export function createApi({
     }
     if (route === '/delete-composition') {
       await manager.deleteComposition(body.rootSessionId)
+      await cloneManager?.releaseRoot?.(body.rootSessionId)
       return json(200, { ok: true })
     }
     return json(405, { error: { code: 'METHOD_NOT_ALLOWED', message: 'use GET' } })
@@ -423,6 +497,8 @@ export function createNodeHandler(api, options = {}) {
         headers: req.headers,
         body,
         remoteAddress: req.socket?.remoteAddress,
+        localPort: req.socket?.localPort,
+        secure: req.socket?.encrypted === true,
       })
       res.statusCode = response.status
       for (const [name, value] of Object.entries(response.headers)) res.setHeader(name, value)

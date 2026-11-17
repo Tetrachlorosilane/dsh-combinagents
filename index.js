@@ -33,7 +33,7 @@ export const inject = ['sessions', 'storageDomain']
 export function apply(ctx, config = {}) {
   const store = createStore(ctx)
   const discovery = createDiscovery(ctx)
-  const manager = createManager({ store, discovery, agents: () => ctx.get('agents') })
+  const manager = createManager({ store, discovery, agents: () => ctx.get('agents'), logger: ctx.logger })
   const cloneManager = createCloneManager({ ctx, store, discovery, manager })
   const controls = createControls({
     ctx,

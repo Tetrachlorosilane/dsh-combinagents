@@ -239,3 +239,59 @@ test('describeMany uses metadata live flags without folding titles', async () =>
   assert.equal(result['s-b'].live, false)
   assert.equal(result['s-b'].archived, true)
 })
+
+test('caches native catalog walks and invalidates them explicitly', async () => {
+  let walks = 0
+  const ctx = {
+    get(name) {
+      if (name === 'subagents') {
+        return {
+          async listDescendants() {
+            walks += 1
+            return [{ kind: 'child', id: 's-b', parentId: 's-a', depth: 1, mode: 'continuable', label: 'Worker', activity: 'inactive' }]
+          },
+        }
+      }
+      return undefined
+    },
+    logger: { warn() {} },
+  }
+  const discovery = createDiscovery(ctx)
+  assert.equal((await discovery.countNative('s-a')).count, 1)
+  assert.equal((await discovery.countNative('s-a')).count, 1)
+  assert.equal(walks, 1)
+  discovery.invalidateNative('s-a')
+  assert.equal((await discovery.countNative('s-a')).count, 1)
+  assert.equal(walks, 2)
+})
+
+test('describeMany reuses the corpus cache instead of filterSessions', async () => {
+  let filters = 0
+  const persisted = { id: 's-b', cwd: '/work/b' }
+  const ctx = {
+    get(name) {
+      if (name === 'sessions') return { get: () => undefined, list: () => [] }
+      if (name === 'sessionQuery') {
+        return {
+          async listSessions() {
+            return [{ header: persisted, live: false, persisted: true }]
+          },
+          async filterSessions() {
+            filters += 1
+            return [{ header: persisted, live: false, persisted: true }]
+          },
+        }
+      }
+      return undefined
+    },
+    logger: { warn() {} },
+  }
+  const discovery = createDiscovery(ctx)
+  await discovery.list()
+  const result = await discovery.describeMany(['s-b'])
+  assert.equal(result['s-b'].sessionId, 's-b')
+  assert.equal(filters, 0)
+  const cached = await discovery.describeMany(['s-b'])
+  assert.equal(cached['s-b'].sessionId, 's-b')
+  assert.equal(filters, 0)
+})

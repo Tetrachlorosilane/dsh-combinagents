@@ -16,6 +16,9 @@ import { planClone } from './clone.js'
 /** Provider name owned by this adapter. */
 export const CLONE_PROVIDER = 'combinagents-clone'
 
+/** Idle clone roots retained live in one Host process before the oldest is released. */
+export const MAX_LIVE_CLONE_ROOTS = 8
+
 const CLONE_NOTICE = (sourceId) => [
   'This session is a clone created by dsh-combinagents.',
   `Source session: ${sourceId}.`,
@@ -281,6 +284,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
       if (agent === undefined) {
         throw new CompositionError('CLONE_FAILED', `clone child ${JSON.stringify(id)} did not publish a live agent`)
       }
+      pendingSources.delete(id)
       return { id, activation, agent, header: agent.session.header, sourceHeader: source.header, snapshotAt }
     } catch (error) {
       pendingSources.delete(id)
@@ -311,6 +315,17 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
       root = await createRoot(rootSourceNode, snapshotAt)
       await attachWorkspace(rootSourceNode.sourceSessionId, root.sourceHeader, root.id)
       rootHandles.set(root.id, root.handle)
+      while (rootHandles.size > MAX_LIVE_CLONE_ROOTS) {
+        const oldest = rootHandles.entries().next().value
+        if (oldest === undefined) break
+        const [oldestId, oldestHandle] = oldest
+        rootHandles.delete(oldestId)
+        try {
+          await oldestHandle.dispose?.()
+        } catch (error) {
+          ctx.logger?.warn?.('dsh-combinagents: releasing an idle clone root failed', error)
+        }
+      }
       cloneNodeBySource.set(rootSourceNode.sourceNodeId, {
         id: randomUUID(),
         sessionId: root.id,
@@ -563,9 +578,29 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     return execute(plan, composition, 'bud')
   }
 
+  /**
+   * Release one retained clone root after its composition is deleted. The
+   * session stays persisted and can still be resumed later.
+   * @param {string} rootSessionId - clone root session.
+   * @returns {Promise<boolean>} whether a retained handle was released.
+   */
+  async function releaseRoot(rootSessionId) {
+    if (typeof rootSessionId !== 'string' || rootSessionId.length === 0) return false
+    const handle = rootHandles.get(rootSessionId)
+    if (handle === undefined) return false
+    rootHandles.delete(rootSessionId)
+    try {
+      await handle.dispose?.()
+    } catch (error) {
+      ctx.logger?.warn?.('dsh-combinagents: releasing a clone root failed', error)
+    }
+    return true
+  }
+
   return {
     cloneTree,
     bud,
+    releaseRoot,
     dispose() {
       for (const [id, handle] of rootHandles) {
         rootHandles.delete(id)

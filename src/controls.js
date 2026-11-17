@@ -835,6 +835,7 @@ export function createControls({
             description: { type: 'string' },
             status: { type: 'string' },
             ownerNodeId: { type: 'string' },
+            createdBy: { type: 'string' },
             revision: { type: 'integer' },
           }, ['id', 'subject', 'status', 'revision']),
         },
@@ -857,6 +858,8 @@ export function createControls({
             subject: args.subject,
             description: args.description,
             ownerNodeId: caller.callerNode.id,
+            createdBy: `agent:${caller.callerNode.sessionId}`,
+            actor: caller.callerNode.sessionId,
           }),
         }
       }
@@ -868,6 +871,7 @@ export function createControls({
           taskId: args.taskId,
           expectedRevision: args.expected_revision,
           action,
+          actor: caller.callerNode.sessionId,
         }),
       }
     },

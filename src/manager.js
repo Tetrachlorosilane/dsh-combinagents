@@ -75,7 +75,14 @@ function nodeFromSummary(summary) {
  *   now?: () => number}} deps - store, discovery, an optional live-agent accessor,
  *   and an optional clock for tests.
  */
-export function createManager({ store, discovery, agents = () => undefined, now = () => Date.now() }) {
+export function createManager({
+  store,
+  discovery,
+  agents = () => undefined,
+  now = () => Date.now(),
+  logger = undefined,
+}) {
+  const warn = typeof logger?.warn === 'function' ? logger.warn.bind(logger) : () => {}
   /** @type {Map<string, Promise<void>>} */
   const tails = new Map()
   let mergeTail = Promise.resolve()
@@ -106,13 +113,31 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     const map = new Map()
     for (const [rootSessionId, record] of await store.list()) {
       for (const node of record?.composition?.nodes ?? []) {
-        if (typeof node.sessionId === 'string' && node.sessionId.length > 0) {
-          map.set(node.sessionId, rootSessionId)
+        if (typeof node.sessionId !== 'string' || node.sessionId.length === 0) continue
+        const existing = map.get(node.sessionId)
+        if (existing !== undefined && existing !== rootSessionId) {
+          warn('dsh-combinagents: a session belongs to two compositions', {
+            sessionId: node.sessionId,
+            kept: existing,
+            ignored: rootSessionId,
+          })
+          continue
         }
+        map.set(node.sessionId, rootSessionId)
       }
     }
     membership = map
     return map
+  }
+
+  /**
+   * Direct composition membership without walking the native ancestor chain.
+   * @param {string} sessionId - member session.
+   * @returns {Promise<string|null>} owning root, or null.
+   */
+  async function directOwner(sessionId) {
+    const map = await ensureMembership()
+    return map.get(sessionId) ?? null
   }
 
   /**
@@ -122,9 +147,17 @@ export function createManager({ store, discovery, agents = () => undefined, now 
   function indexComposition(rootSessionId, composition) {
     if (membership === null) return
     for (const node of composition.nodes) {
-      if (typeof node.sessionId === 'string' && node.sessionId.length > 0) {
-        membership.set(node.sessionId, rootSessionId)
+      if (typeof node.sessionId !== 'string' || node.sessionId.length === 0) continue
+      const existing = membership.get(node.sessionId)
+      if (existing !== undefined && existing !== rootSessionId) {
+        warn('dsh-combinagents: refused to overwrite composition membership', {
+          sessionId: node.sessionId,
+          kept: existing,
+          ignored: rootSessionId,
+        })
+        continue
       }
+      membership.set(node.sessionId, rootSessionId)
     }
   }
 
@@ -235,6 +268,22 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     const result = previous.then(task, task)
     mergeTail = result.then(() => undefined, () => undefined)
     return result
+  }
+
+  /**
+   * Acquire per-root locks in lexical order. Cross-composition moves always run
+   * under the merge lock, so they cannot deadlock each other; a normal mutation
+   * holds only one root lock and can never wait for a second.
+   * @param {readonly string[]} rootSessionIds - roots touched by the task.
+   * @param {() => Promise<unknown>} task - work while all locks are held.
+   * @returns {Promise<unknown>}
+   */
+  function withRootLocks(rootSessionIds, task) {
+    const ordered = [...new Set(rootSessionIds)].sort()
+    const run = (index) => index === ordered.length
+      ? task()
+      : withLock(ordered[index], () => run(index + 1))
+    return run(0)
   }
 
   /**
@@ -540,6 +589,25 @@ export function createManager({ store, discovery, agents = () => undefined, now 
   }
 
   /**
+   * A task may be changed by the user, its owner, or one of the owner's
+   * composition ancestors. Unowned tasks are user-only. Agents outside the
+   * owner line must not complete or delete another member's work.
+   * @param {object} composition - current graph.
+   * @param {object} task - stored task.
+   * @param {string} actor - `user` or a session id.
+   * @returns {boolean}
+   */
+  function taskActorAllowed(composition, task, actor) {
+    if (actor === 'user') return true
+    if (typeof actor !== 'string' || actor.length === 0) return false
+    if (task.ownerNodeId === null || task.ownerNodeId === undefined) return false
+    const node = composition.nodes.find((candidate) => candidate.sessionId === actor)
+    if (node === undefined) return false
+    if (node.id === task.ownerNodeId) return true
+    return isAncestor(composition, task.ownerNodeId, node.id)
+  }
+
+  /**
    * Create one plugin-owned task. This never writes a DSH Team task.
    * @param {string} rootSessionId - composition owner.
    * @param {{subject: string, description?: string, ownerNodeId?: string|null,
@@ -562,6 +630,8 @@ export function createManager({ store, discovery, agents = () => undefined, now 
           throw new CompositionError('UNKNOWN_NODE', `owner node ${JSON.stringify(ownerNodeId)} is not a local session node`)
         }
       }
+      const createdBy = textOf(input.createdBy, 128) ?? 'user'
+      const actor = textOf(input.actor, 128) ?? 'user'
       const task = {
         id: randomUUID(),
         rootSessionId,
@@ -574,10 +644,10 @@ export function createManager({ store, discovery, agents = () => undefined, now 
         revision: 1,
         createdAt: now(),
         updatedAt: now(),
-        createdBy: 'user',
+        createdBy,
       }
       await store.putTask(task.id, task)
-      await recordAudit(rootSessionId, { kind: 'task', toNodeId: ownerNodeId ?? '', outcome: 'created', detail: { taskId: task.id } })
+      await recordAudit(rootSessionId, { kind: 'task', toNodeId: ownerNodeId ?? '', outcome: 'created', detail: { taskId: task.id, actor } })
       return getTasks(rootSessionId)
     })
   }
@@ -600,22 +670,27 @@ export function createManager({ store, discovery, agents = () => undefined, now 
       throw new CompositionError('INVALID_FIELD', 'action must be start, complete, reopen, or delete')
     }
     return withLock(rootSessionId, async () => {
+      const record = await requireRecord(rootSessionId)
       const task = await store.getTask(input.taskId)
       if (task === undefined || task.rootSessionId !== rootSessionId) {
         throw new CompositionError('TASK_NOT_FOUND', `task ${JSON.stringify(input.taskId)} does not exist`)
+      }
+      const actor = textOf(input.actor, 128) ?? 'user'
+      if (!taskActorAllowed(record.composition, task, actor)) {
+        throw new CompositionError('TASK_FORBIDDEN', 'only the owner or an ancestor may change this task')
       }
       if (task.revision !== input.expectedRevision) {
         throw new CompositionError('TASK_CONFLICT', 'the task changed; refresh before retrying')
       }
       if (action === 'delete') {
         await store.deleteTask(task.id)
-        await recordAudit(rootSessionId, { kind: 'task', outcome: 'deleted', detail: { taskId: task.id } })
+        await recordAudit(rootSessionId, { kind: 'task', outcome: 'deleted', detail: { taskId: task.id, actor } })
         return getTasks(rootSessionId)
       }
       const status = action === 'start' ? 'in_progress' : action === 'complete' ? 'completed' : 'pending'
       const next = { ...task, status, revision: task.revision + 1, updatedAt: now() }
       await store.putTask(task.id, next)
-      await recordAudit(rootSessionId, { kind: 'task', outcome: action, detail: { taskId: task.id } })
+      await recordAudit(rootSessionId, { kind: 'task', outcome: action, detail: { taskId: task.id, actor } })
       return getTasks(rootSessionId)
     })
   }
@@ -681,20 +756,47 @@ export function createManager({ store, discovery, agents = () => undefined, now 
   }
 
   /**
-   * Move one subtree from another composition into the target composition.
-   * A selected source root moves only that tree; if it was the composition root,
-   * the remaining forest is re-keyed to another local root.
+   * Add one node while the caller already holds the target root lock.
+   * @param {string} rootSessionId - composition owner.
+   * @param {{sessionId: string, parentId?: string|null, label?: string}} input - node.
+   * @returns {Promise<object>} saved record.
+   */
+  async function addNodeExclusive(rootSessionId, input) {
+    const record = await requireRecord(rootSessionId)
+    const parentId = typeof input.parentId === 'string' && input.parentId.length > 0 ? input.parentId : null
+    const existing = record.composition.nodes.find((node) => node.sessionId === input.sessionId)
+    if (existing !== undefined) {
+      assertIdle(record.composition, [existing.id], 'move a node')
+      if (parentId !== null) assertIdle(record.composition, [parentId], 'move a node under a parent')
+      const previous = record.composition
+      const composition = setGraphParent(previous, existing.id, parentId)
+      const saved = await save(rootSessionId, composition)
+      indexComposition(rootSessionId, composition)
+      await migrateParentGrants(rootSessionId, previous, composition, existing.id)
+      return saved
+    }
+    assertIdle(record.composition, parentId === null ? [] : [parentId], 'add a node')
+    return attachDiscovered(record, rootSessionId, input, parentId)
+  }
+
+  /**
+   * Move one subtree while the merge lock and both root locks are held.
+   * Target is saved first; a source failure restores the target, and membership
+   * is updated only after both records settle.
    * @param {string} targetRoot - target composition owner.
-   * @param {object} input - add request.
+   * @param {{sessionId: string, parentId?: string|null, label?: string}} input - node.
    * @param {string} sourceRoot - current composition owner.
    * @returns {Promise<object>} saved target record.
    */
-  async function moveAcross(targetRoot, input, sourceRoot) {
+  async function moveAcrossExclusive(targetRoot, input, sourceRoot) {
     const current = await resolveSession(input.sessionId)
     if (current === null || current.rootSessionId === targetRoot) {
-      return addNode(targetRoot, input)
+      return addNodeExclusive(targetRoot, input)
     }
-    const sourceRecord = await requireRecord(current.rootSessionId)
+    if (current.rootSessionId !== sourceRoot) {
+      throw new CompositionError('AGENT_BUSY', 'the composition changed while moving the node; retry')
+    }
+    const sourceRecord = await requireRecord(sourceRoot)
     const targetRecord = await requireRecord(targetRoot)
     const parentId = typeof input.parentId === 'string' && input.parentId.length > 0 ? input.parentId : null
     assertIdle(targetRecord.composition, parentId === null ? [] : [parentId], 'move a node into')
@@ -708,7 +810,7 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     assertIdle(sourceRecord.composition, [sourceNode.id], 'move a node')
     const detached = detachSubtree(sourceRecord.composition, sourceNode.id)
     const remaining = detached.remaining
-    let nextSourceRoot = current.rootSessionId
+    let nextSourceRoot = sourceRoot
     if (remaining !== null && remaining.rootSessionId === null) {
       const nextRoot = rootsOf(remaining).find((node) => typeof node.sessionId === 'string')
       if (nextRoot === undefined) {
@@ -719,19 +821,36 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     }
     const targetComposition = attachSubtree(targetRecord.composition, detached.subtree, parentId)
     const saved = await save(targetRoot, targetComposition)
+    try {
+      if (remaining === null) {
+        await store.delete(sourceRoot)
+      } else if (nextSourceRoot !== sourceRoot) {
+        if (nextSourceRoot === targetRoot) {
+          await save(nextSourceRoot, remaining)
+        } else {
+          await withLock(nextSourceRoot, () => save(nextSourceRoot, remaining))
+        }
+        await store.delete(sourceRoot)
+      } else {
+        await save(sourceRoot, remaining)
+      }
+    } catch (error) {
+      try {
+        await store.put(targetRoot, targetRecord)
+      } catch (rollbackError) {
+        warn('dsh-combinagents: move target rollback failed', rollbackError)
+      }
+      throw error
+    }
+    unindexComposition(sourceRoot, sourceRecord.composition)
+    if (remaining !== null) indexComposition(nextSourceRoot, remaining)
     indexComposition(targetRoot, targetComposition)
-    if (parentId !== null) await grantManualConnection(targetRoot, targetComposition, sourceNode.id)
-    if (remaining === null) {
-      await store.delete(current.rootSessionId)
-      unindexComposition(current.rootSessionId, sourceRecord.composition)
-    } else if (nextSourceRoot !== current.rootSessionId) {
-      await save(nextSourceRoot, remaining)
-      await store.delete(current.rootSessionId)
-      indexComposition(nextSourceRoot, remaining)
-      unindexComposition(current.rootSessionId, sourceRecord.composition)
-    } else {
-      await save(current.rootSessionId, remaining)
-      indexComposition(current.rootSessionId, remaining)
+    if (parentId !== null) {
+      try {
+        await grantManualConnection(targetRoot, targetComposition, sourceNode.id)
+      } catch (error) {
+        warn('dsh-combinagents: manual connection grant failed after move', error)
+      }
     }
     return saved
   }
@@ -750,25 +869,12 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     }
     const owner = await resolveSession(input.sessionId)
     if (owner !== null && owner.rootSessionId !== rootSessionId) {
-      return withMergeLock(() => moveAcross(rootSessionId, input, owner.rootSessionId))
+      return withMergeLock(() => withRootLocks(
+        [rootSessionId, owner.rootSessionId],
+        () => moveAcrossExclusive(rootSessionId, input, owner.rootSessionId),
+      ))
     }
-    return withLock(rootSessionId, async () => {
-      const record = await requireRecord(rootSessionId)
-      const parentId = typeof input.parentId === 'string' && input.parentId.length > 0 ? input.parentId : null
-      const existing = record.composition.nodes.find((node) => node.sessionId === input.sessionId)
-      if (existing !== undefined) {
-        assertIdle(record.composition, [existing.id], 'move a node')
-        if (parentId !== null) assertIdle(record.composition, [parentId], 'move a node under a parent')
-        const previous = record.composition
-        const composition = setGraphParent(previous, existing.id, parentId)
-        const saved = await save(rootSessionId, composition)
-        indexComposition(rootSessionId, composition)
-        await migrateParentGrants(rootSessionId, previous, composition, existing.id)
-        return saved
-      }
-      assertIdle(record.composition, parentId === null ? [] : [parentId], 'add a node')
-      return attachDiscovered(record, rootSessionId, input, parentId)
-    })
+    return withLock(rootSessionId, () => addNodeExclusive(rootSessionId, input))
   }
 
   /**
@@ -922,6 +1028,15 @@ export function createManager({ store, discovery, agents = () => undefined, now 
       const record = await requireRecord(owner.rootSessionId)
       const parent = record.composition.nodes.find((node) => node.sessionId === parentSessionId)
       if (parent === undefined) return null
+      const childOwner = await directOwner(info.childId)
+      if (childOwner !== null && childOwner !== owner.rootSessionId) {
+        warn('dsh-combinagents: refusing to mirror a child owned by another composition', {
+          childId: info.childId,
+          owner: childOwner,
+          requestedBy: owner.rootSessionId,
+        })
+        return null
+      }
       const existing = record.composition.nodes.find((node) => node.sessionId === info.childId)
       if (existing !== undefined) {
         if (typeof info.label === 'string' && info.label.length > 0 && existing.label !== info.label) {
@@ -977,6 +1092,7 @@ export function createManager({ store, discovery, agents = () => undefined, now 
       const composition = addGraphNode(record.composition, node, { parentId: parent.id })
       const saved = await save(owner.rootSessionId, composition)
       indexComposition(owner.rootSessionId, composition)
+      discovery.invalidateNative?.(owner.rootSessionId)
       return saved
     })
   }
@@ -1003,6 +1119,17 @@ export function createManager({ store, discovery, agents = () => undefined, now 
       let changed = false
       for (const entry of tree.children) {
         if (composition.nodes.some((node) => node.sessionId === entry.id)) continue
+        const childOwner = await directOwner(entry.id)
+        if (childOwner !== null) {
+          if (childOwner !== root) {
+            warn('dsh-combinagents: sync-native skipped a session owned by another composition', {
+              childId: entry.id,
+              owner: childOwner,
+              requestedBy: root,
+            })
+          }
+          continue
+        }
         const parentNode = composition.nodes.find((node) => node.sessionId === entry.parentId)
         if (parentNode === undefined) continue
         let nodeInput
@@ -1034,6 +1161,7 @@ export function createManager({ store, discovery, agents = () => undefined, now 
       if (!changed) return record
       const saved = await save(root, composition)
       indexComposition(root, composition)
+      discovery.invalidateNative?.(root)
       return saved
     })
   }
@@ -1050,6 +1178,16 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     }
     assertComposition(composition)
     return withLock(rootSessionId, async () => {
+      for (const node of composition.nodes) {
+        if (typeof node.sessionId !== 'string' || node.sessionId.length === 0) continue
+        const owner = await directOwner(node.sessionId)
+        if (owner !== null && owner !== rootSessionId) {
+          throw new CompositionError(
+            'SESSION_ALREADY_COMPOSED',
+            `session ${JSON.stringify(node.sessionId)} already belongs to composition ${JSON.stringify(owner)}`,
+          )
+        }
+      }
       const record = await save(rootSessionId, composition)
       indexComposition(rootSessionId, composition)
       return record
