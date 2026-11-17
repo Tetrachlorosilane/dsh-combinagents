@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, and a guide entry
   (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (80 total);
+  client-registration, host-wiring, controls, and bundle-shape tests (81 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`). Live
@@ -55,9 +55,10 @@ edge, `wait_agent`, child reply, `send_message` follow-up with native resume,
 second `wait_agent`, and `interrupt_agent` + termination notice. The
 plugin-owned `composition_task` tool lists, creates, and updates board tasks
 (never DSH Team). Live desktop check: a composed child delivered three messages
-to the native-root session with correct composition-label attribution; audit
-rows recorded each delivery. The native root cannot reply until it runs a
-composed preset. Composed mode is configured in the desktop profile but not yet validated after a
+to the native-root session with correct composition-label attribution, and a
+native-preset root used the unshadowed `composition_send_message` alias to
+instruct the child, which replied `ROOT_ACK` through the composition. Audit rows
+recorded each delivery. Composed mode is configured in the desktop profile but not yet validated after a
 Host restart; sessions using `standard`/`ptc` still mount the native tools and
 shadow the composed names. Tool ordering and the prefix fingerprint are covered
 by tests, not yet compared against a live native request. The GUI visual check is still
@@ -142,7 +143,7 @@ src/store.js              DSH storage-domain adapter + memory fallback
 src/discovery.js          Live/persisted session discovery and observations
 src/manager.js            Serialized mutations, grants, path authorization
 src/http.js               Loopback, token-authenticated JSON bridge
-src/controls.js           Composition tools (overlay 3, composed 7)
+src/controls.js           Composition tools (overlay 3, composed 10)
 tests/graph.test.mjs      Graph tests (18)
 tests/store.test.mjs      Domain adapter, fallback, record schema
 tests/manager.test.mjs    Creation, serialization, root protection

@@ -22,7 +22,10 @@ supports create, start, complete, reopen, and delete with a revision guard; it i
 not DSH Team and never writes native Team state. The `mode: 'composed'` config option registers
 `list_agents`, `send_message`, `interrupt_agent`, `subagent`, `subagent_fork`,
 `wait_agent`, and `composition_task` under native names/descriptions/parameter
-schemas for the control/delegation tools and a plugin-owned task tool.
+schemas for the control/delegation tools and a plugin-owned task tool. Composed
+mode also exposes unshadowed `composition_list_agents`,
+`composition_send_message`, and `composition_interrupt_agent` aliases so a
+native-preset root can still direct composition children.
 `subagent`/`subagent_fork` start a native activation under the caller, mirror
 the child into the composition, and auto-grant the delegation edge;
 `send_message` prefers the native relay for native descendants (including cold

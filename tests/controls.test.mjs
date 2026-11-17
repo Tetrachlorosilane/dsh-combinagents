@@ -198,6 +198,15 @@ test('composition_send_message uses the native relay source and delivers to an i
   assert.equal(message.content[1].text, 'hello')
 })
 
+test('composition_send_message alias works when native names are shadowed', async () => {
+  const harnessed = harness({ mode: 'composed' })
+  const result = await harnessed.tool('composition_send_message').execute({ agent: 'Worker', message: 'alias hello' }, {
+    agent: { id: 's-a' }, signal: new AbortController().signal,
+  })
+  assert.equal(typeof result.messageId, 'string')
+  assert.equal(harnessed.delivered[0].content[1].text, 'alias hello')
+})
+
 test('relay prefix uses the composition label instead of a repeated native root name', async () => {
   const harnessed = harness({ callerLabel: 'Repeat OK', nativeName: 'lead' })
   await harnessed.tool('composition_send_message').execute({ agent: 'Worker', message: 'hello' }, {
@@ -270,9 +279,11 @@ test('composed mode exposes native tool names, descriptions, and parameter schem
   assert.deepEqual(controls.definitions.map((definition) => definition.name), [
     'wait_agent', 'list_agents', 'send_message', 'interrupt_agent',
     'subagent', 'subagent_fork', 'composition_task',
+    'composition_list_agents', 'composition_send_message', 'composition_interrupt_agent',
   ])
   assert.deepEqual([...byName.keys()].sort(), [
-    'composition_task', 'interrupt_agent', 'list_agents', 'send_message', 'subagent', 'subagent_fork', 'wait_agent',
+    'composition_interrupt_agent', 'composition_list_agents', 'composition_send_message', 'composition_task',
+    'interrupt_agent', 'list_agents', 'send_message', 'subagent', 'subagent_fork', 'wait_agent',
   ])
   for (const contract of [
     NATIVE_TOOL_CONTRACTS.list,
@@ -315,6 +326,7 @@ test('composed tool order follows the native control/delegation order', () => {
   assert.deepEqual(controls.definitions.map((definition) => definition.name), [
     'wait_agent', 'list_agents', 'send_message', 'interrupt_agent',
     'subagent', 'subagent_fork', 'composition_task',
+    'composition_list_agents', 'composition_send_message', 'composition_interrupt_agent',
   ])
   const canonical = controls.definitions.map((definition) => ({
     name: definition.name,
@@ -322,7 +334,7 @@ test('composed tool order follows the native control/delegation order', () => {
     parameters: definition.parameters,
   }))
   const fingerprint = createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
-  assert.equal(fingerprint, 'af83912ba9f7d54e3e002de3e8a8c59958de7958b033bcd43810d7ef5b98956b')
+  assert.equal(fingerprint, '4b1e5611c163fe55a205c8b05f788b65f6bfdd1d1078874fecb8282817fb8ee1')
 })
 
 test('composed subagent validates and forwards explicit model selection', async () => {

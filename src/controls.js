@@ -873,8 +873,24 @@ export function createControls({
     },
   }
 
+  const compatList = {
+    ...listAgents,
+    name: 'composition_list_agents',
+    description: 'List the agents in the user-owned composition tree. Use this when the native list_agents is scoped to a different tree.',
+  }
+  const compatSend = {
+    ...sendMessage,
+    name: 'composition_send_message',
+    description: 'Send a message to an agent in the user-owned composition tree. Use this when the native send_message is scoped to a different tree.',
+  }
+  const compatInterrupt = {
+    ...interruptAgent,
+    name: 'composition_interrupt_agent',
+    description: 'Interrupt a descendant in the user-owned composition tree. Use this when the native interrupt_agent is scoped to a different tree.',
+  }
+
   const definitions = composed
-    ? [waitTool, listAgents, sendMessage, interruptAgent, subagentTool, forkTool, taskTool]
+    ? [waitTool, listAgents, sendMessage, interruptAgent, subagentTool, forkTool, taskTool, compatList, compatSend, compatInterrupt]
     : [listAgents, sendMessage, interruptAgent]
 
   /**
@@ -932,7 +948,13 @@ export function createControls({
           return `Start independent delegations with ${names} together in one assistant message and continue useful work while they run. When only waiting for their results remains, end your turn instead of sleeping or polling; the next result starts a new turn. Collect the subagent results required to complete the task before giving the user a final answer.\n\nBash, formatters, code generators, and scripts can overwrite concurrent edits without conflict detection; coordinate their changes explicitly. The agent integrating the work must review the final diff and run relevant tests.`
         },
       })
+      const compatOff = prompt.section({
+        name: 'combinagents:compatibility',
+        order: prompt.getSectionOrder?.('TOOL_SUBAGENT'),
+        text: () => 'Composition controls: when the native list_agents/send_message surface does not show your user-owned composition nodes, use `composition_list_agents({})`, `composition_send_message({ agent, message })`, and `composition_interrupt_agent({ agent })`. These tools operate on the user-owned composition tree, not the native subagent tree.',
+      })
       return () => {
+        if (typeof compatOff === 'function') compatOff()
         if (typeof sectionOff === 'function') sectionOff()
         if (typeof contextOff === 'function') contextOff()
       }
