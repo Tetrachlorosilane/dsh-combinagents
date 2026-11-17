@@ -174,9 +174,12 @@ The product routes `/clone-tree` and `/bud` replaced the debug route.
   the tab header shows `Agent composition (clone)`, `16 个节点`, and the clone
   badge details.
 
-Still open: the canonical request-prefix fingerprint, and permission
-preservation for a source whose child sessions carry explicit permission events
-(no such source was available for the live run).
+Permission preservation was checked with an explicit child policy: cloned
+children in the 16-node tree carry `sandbox/mode: workspace-write` and
+`approval/policy: never` with `source: delegation` in their copied prefix,
+matching their source children; a bud of the same source child
+(`session-b4b55f34...`) reported `permissionPreset: custom` and
+`approvalPolicy: never`. Still open: the canonical request-prefix fingerprint.
 
 ## 7. Risks / open items
 
