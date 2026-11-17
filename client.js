@@ -27,6 +27,15 @@ window.__ModuleLoader__.load({
         'guide.description': 'Arrange who reports to whom in a user-owned overlay',
         'header.tooltip': 'Open agent composition',
         'editTitle': 'Edit title',
+        'cloneTree': 'Clone whole tree',
+        'cloneTreeConfirm': 'Clone the whole tree into new sessions? The source tree is not changed.',
+        'cloneDone': 'Clone created: {session}',
+        'bud': 'Bud as new root',
+        'budConfirm': 'Clone this node and its subtree as a new independent root? The original stays in place.',
+        'budDone': 'Bud created: {session}',
+        'cloneBadge': 'clone',
+        'cloneOf': 'Cloned from',
+        'snapshotAt': 'Snapshot at',
         'notice': 'Composition edges are advisory. Native messaging, interruption, and Team authority still follow DSH\u2019s original subagent tree.',
         'loading': 'Loading composition\u2026',
         'empty': 'No composition yet for this session.',
@@ -102,6 +111,15 @@ window.__ModuleLoader__.load({
         'guide.description': '在用户自有的叠加层中安排谁向谁汇报',
         'header.tooltip': '打开代理组合',
         'editTitle': '编辑标题',
+        'cloneTree': '克隆整棵树',
+        'cloneTreeConfirm': '把整棵树克隆成新的 Session 树？源树不会被修改。',
+        'cloneDone': '克隆已创建：{session}',
+        'bud': '出芽为根',
+        'budConfirm': '把这个节点及其子树克隆为新的独立根？原节点保留在原树。',
+        'budDone': '出芽已创建：{session}',
+        'cloneBadge': '克隆',
+        'cloneOf': '克隆来源',
+        'snapshotAt': '快照时间',
         'notice': '组合边只是约定。原生消息、中断与 Team 权限仍按 DSH 原有的子代理树执行。',
         'loading': '正在加载组合\u2026',
         'empty': '这个会话还没有组合。',
@@ -500,7 +518,7 @@ window.__ModuleLoader__.load({
     function NodeDetails(props) {
       const {
         node, composition, observation, t, allNodes, busy, onRename, onReparent, onOpen,
-        openAvailable, edge, grant, onGrant,
+        openAvailable, edge, grant, onGrant, onBud,
       } = props
       const [draft, setDraft] = React.useState(node.label)
       React.useEffect(() => { setDraft(node.label) }, [node.label])
@@ -527,6 +545,15 @@ window.__ModuleLoader__.load({
         rows.push(h(DetailRow, { key: 'sandbox', label: t('sandbox'), value: observation?.sandboxMode ?? t('none'), t }))
         rows.push(h(DetailRow, { key: 'preset', label: t('preset'), value: observation?.permissionPreset ?? t('none'), t }))
         rows.push(h(DetailRow, { key: 'agentPreset', label: t('agentPreset'), value: observation?.agentPreset ?? t('none'), t }))
+        if (node.cloneOf) {
+          rows.push(h(DetailRow, { key: 'cloneOf', label: t('cloneOf'), value: node.cloneOf, t }))
+          rows.push(h(DetailRow, {
+            key: 'snapshotAt',
+            label: t('snapshotAt'),
+            value: node.cloneSnapshotAt ? new Date(node.cloneSnapshotAt).toLocaleString() : t('none'),
+            t,
+          }))
+        }
       }
       if (!isExternal && edge !== null && edge !== undefined) {
         rows.push(h('div', { key: 'grants', style: styles.detailRow }, [
@@ -589,6 +616,15 @@ window.__ModuleLoader__.load({
             .map((candidate) => h('option', { key: candidate.id, value: candidate.id }, candidate.label)),
         ]),
       ]))
+      if (!isExternal) {
+        rows.push(h('button', {
+          key: 'bud',
+          type: 'button',
+          style: styles.button,
+          disabled: busy,
+          onClick: () => onBud(node.id),
+        }, t('bud')))
+      }
       if (!isExternal && openAvailable) {
         rows.push(h('button', {
           key: 'open',
@@ -604,7 +640,7 @@ window.__ModuleLoader__.load({
       const {
         node, depth, tree, composition, observations, t, pendingRemove, setPendingRemove, busy,
         onRemove, expanded, onToggle, allNodes, onRename, onReparent, onOpen, openAvailable,
-        grants, onGrant,
+        grants, onGrant, onBud,
       } = props
       const observation = node.sessionId === null ? null : observations[node.sessionId] ?? null
       const incomingEdge = composition.edges.find((edge) => edge.childId === node.id) ?? null
@@ -630,6 +666,7 @@ window.__ModuleLoader__.load({
             : null,
           h('span', { key: 'label', style: styles.label }, node.label),
           h('span', { key: 'source', style: styles.badge }, t(`source.${node.source}`)),
+          node.cloneOf ? h('span', { key: 'clone', style: styles.badge }, t('cloneBadge')) : null,
           observation === null
             ? null
             : h('span', { key: 'live', style: styles.badge },
@@ -661,6 +698,7 @@ window.__ModuleLoader__.load({
           edge: incomingEdge,
           grant: incomingEdge === null ? null : grants[incomingEdge.id] ?? null,
           onGrant,
+          onBud,
         }))
       }
       if (pendingRemove !== null && pendingRemove.id === node.id) {
@@ -713,6 +751,7 @@ window.__ModuleLoader__.load({
             openAvailable,
             grants,
             onGrant,
+            onBud,
           }))
         }
       }
@@ -1037,6 +1076,23 @@ window.__ModuleLoader__.load({
         null,
       )
 
+      const runClone = (path, body, doneKey) => {
+        if (!window.confirm(t(path === '/clone-tree' ? 'cloneTreeConfirm' : 'budConfirm'))) return
+        setBusy(true)
+        setNotice(null)
+        callApi(path, { method: 'POST', body })
+          .then((data) => {
+            const newRoot = data?.clone?.newRootSessionId
+            setNotice(format(t, doneKey, { session: typeof newRoot === 'string' ? newRoot : t('none') }))
+            if (typeof newRoot === 'string' && typeof openSession === 'function') openSession(newRoot)
+          })
+          .catch((error) => setNotice(error.code === 'AGENT_BUSY' ? t('agentBusy') : error.message))
+          .finally(() => setBusy(false))
+      }
+
+      const cloneTree = () => runClone('/clone-tree', { rootSessionId: activeRoot }, 'cloneDone')
+      const budNode = (nodeId) => runClone('/bud', { rootSessionId: activeRoot, nodeId }, 'budDone')
+
       const reparentNode = (nodeId, parentId) => mutate(
         () => callApi('/set-parent', {
           method: 'POST',
@@ -1174,6 +1230,15 @@ window.__ModuleLoader__.load({
           composition === null
             ? null
             : h('button', {
+                key: 'clone',
+                type: 'button',
+                style: styles.button,
+                disabled: busy,
+                onClick: cloneTree,
+              }, t('cloneTree')),
+          composition === null
+            ? null
+            : h('button', {
                 key: 'sync',
                 type: 'button',
                 style: styles.linkButton,
@@ -1212,6 +1277,7 @@ window.__ModuleLoader__.load({
                 openAvailable: typeof openSession === 'function',
                 grants: state.grants,
                 onGrant: grantEdge,
+                onBud: budNode,
               }))),
               picker.open
                 ? h(SessionPicker, {

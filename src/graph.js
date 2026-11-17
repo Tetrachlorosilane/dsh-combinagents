@@ -53,6 +53,9 @@ export class CompositionError extends Error {
  * @property {string|null} nativeParentSessionId - DSH's immutable parent, retained for display.
  * @property {string|null} cwd - workspace snapshot at attach time, for display only.
  * @property {string|null} permissionPreset - preset name snapshot, for display only.
+ * @property {string|null} cloneOf - source session/node id for a cloned node.
+ * @property {number|null} cloneSnapshotAt - clone snapshot time, or null.
+ * @property {string|null} sourceCompositionId - composition the clone came from.
  * @property {number} addedAt - Unix epoch milliseconds.
  */
 
@@ -115,6 +118,14 @@ function timestamp(value, field, fallback) {
   return value
 }
 
+function optionalTimestamp(value, field) {
+  if (value === null || value === undefined) return null
+  if (!Number.isSafeInteger(value) || value < 0) {
+    fail('INVALID_FIELD', `${field} must be null or a non-negative safe integer`)
+  }
+  return value
+}
+
 function oneOf(value, allowed, field) {
   if (!allowed.includes(value)) {
     fail('INVALID_FIELD', `${field} must be one of ${allowed.join(', ')}`)
@@ -147,6 +158,12 @@ function normalizeNode(input, now) {
     permissionPreset: text(input.permissionPreset ?? null, 'node.permissionPreset', {
       nullable: true,
       max: 120,
+    }),
+    cloneOf: text(input.cloneOf ?? null, 'node.cloneOf', { nullable: true, max: 128 }),
+    cloneSnapshotAt: optionalTimestamp(input.cloneSnapshotAt, 'node.cloneSnapshotAt'),
+    sourceCompositionId: text(input.sourceCompositionId ?? null, 'node.sourceCompositionId', {
+      nullable: true,
+      max: 128,
     }),
     addedAt: timestamp(input.addedAt, 'node.addedAt', now),
   }
@@ -256,6 +273,18 @@ export function validateComposition(composition) {
     }
     if (!Number.isSafeInteger(node.addedAt) || node.addedAt < 0) {
       add('INVALID_NODE', 'node.addedAt must be a non-negative safe integer', { nodeId: node.id })
+    }
+    if (node.cloneOf !== null && node.cloneOf !== undefined
+      && (typeof node.cloneOf !== 'string' || node.cloneOf.trim().length === 0)) {
+      add('INVALID_NODE', 'node.cloneOf must be null or a non-empty string', { nodeId: node.id })
+    }
+    if (node.cloneSnapshotAt !== null && node.cloneSnapshotAt !== undefined
+      && (!Number.isSafeInteger(node.cloneSnapshotAt) || node.cloneSnapshotAt < 0)) {
+      add('INVALID_NODE', 'node.cloneSnapshotAt must be null or a non-negative safe integer', { nodeId: node.id })
+    }
+    if (node.sourceCompositionId !== null && node.sourceCompositionId !== undefined
+      && (typeof node.sourceCompositionId !== 'string' || node.sourceCompositionId.trim().length === 0)) {
+      add('INVALID_NODE', 'node.sourceCompositionId must be null or a non-empty string', { nodeId: node.id })
     }
   }
 

@@ -29,6 +29,9 @@ export const AUDIT_TABLE = 'audit'
 /** Table holding plugin-owned composition tasks (never DSH Team tasks). */
 export const TASK_TABLE = 'tasks'
 
+/** Table holding clone/bud provenance records. */
+export const CLONE_TABLE = 'clones'
+
 /**
  * Validate one durable composition record.
  * @param {unknown} raw - stored value.
@@ -110,6 +113,31 @@ export const auditRecordSchema = {
   },
 }
 
+/** Runtime-compatible schema for one clone/bud provenance record. */
+export const cloneRecordSchema = {
+  parse(raw) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new TypeError('clone record must be an object')
+    }
+    if (typeof raw.id !== 'string' || typeof raw.sourceCompositionId !== 'string'
+      || typeof raw.sourceRootSessionId !== 'string' || typeof raw.newRootSessionId !== 'string'
+      || (raw.kind !== 'clone' && raw.kind !== 'bud')
+      || (raw.status !== 'completed' && raw.status !== 'failed')
+      || !Number.isSafeInteger(raw.snapshotAt) || raw.snapshotAt < 0
+      || !Array.isArray(raw.nodeMapping)) {
+      throw new TypeError('clone record is malformed')
+    }
+    return raw
+  },
+  safeParse(raw) {
+    try {
+      return { success: true, data: cloneRecordSchema.parse(raw) }
+    } catch (error) {
+      return { success: false, error }
+    }
+  },
+}
+
 /** Runtime-compatible schema for one plugin-owned task. */
 export const taskRecordSchema = {
   parse(raw) {
@@ -145,6 +173,7 @@ export const COMPOSITION_DOMAIN_SPEC = {
     [POLICY_TABLE]: { valueSchema: policyRecordSchema },
     [AUDIT_TABLE]: { valueSchema: auditRecordSchema },
     [TASK_TABLE]: { valueSchema: taskRecordSchema },
+    [CLONE_TABLE]: { valueSchema: cloneRecordSchema },
   },
 }
 
@@ -283,6 +312,31 @@ export function createStore(ctx, options = {}) {
       const entries = table !== null ? [...table.entries()] : [...memory.get(TASK_TABLE).entries()]
       if (typeof rootSessionId !== 'string') return entries
       return entries.filter(([, record]) => record.rootSessionId === rootSessionId)
+    },
+    async getClone(cloneId) {
+      const table = await tableOf(CLONE_TABLE)
+      if (table !== null) return table.get(cloneId)
+      return memory.get(CLONE_TABLE).get(cloneId)
+    },
+    async putClone(cloneId, record) {
+      const table = await tableOf(CLONE_TABLE)
+      if (table !== null) {
+        await table.put(cloneId, record)
+        return
+      }
+      memory.get(CLONE_TABLE).set(cloneId, record)
+    },
+    async deleteClone(cloneId) {
+      const table = await tableOf(CLONE_TABLE)
+      if (table !== null) {
+        await table.delete(cloneId)
+        return
+      }
+      memory.get(CLONE_TABLE).delete(cloneId)
+    },
+    async listClones() {
+      const table = await tableOf(CLONE_TABLE)
+      return table !== null ? [...table.entries()] : [...memory.get(CLONE_TABLE).entries()]
     },
     async close() {
       await ready.catch(() => {})

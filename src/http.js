@@ -41,6 +41,8 @@ const ROUTES = new Set([
   '/set-grant',
   '/delete-composition',
   '/clone-spike',
+  '/clone-tree',
+  '/bud',
 ])
 
 class HttpError extends Error {
@@ -127,11 +129,15 @@ function errorOf(error) {
   if (error instanceof CompositionError) {
     const status = error.code === 'ROOT_PROTECTED'
       ? 403
-      : error.code === 'AGENT_BUSY' || error.code === 'SESSION_ALREADY_COMPOSED' || error.code === 'TASK_CONFLICT'
-        ? 409
-        : error.code === 'COMPOSITION_NOT_FOUND' || error.code === 'SESSION_NOT_DISCOVERED' || error.code === 'UNKNOWN_NODE' || error.code === 'UNKNOWN_EDGE' || error.code === 'TASK_NOT_FOUND'
-          ? 404
-          : 400
+      : error.code === 'CLONE_UNAVAILABLE'
+        ? 503
+        : error.code === 'CLONE_FAILED'
+          ? 500
+          : error.code === 'AGENT_BUSY' || error.code === 'SESSION_ALREADY_COMPOSED' || error.code === 'TASK_CONFLICT'
+            ? 409
+            : error.code === 'COMPOSITION_NOT_FOUND' || error.code === 'SESSION_NOT_DISCOVERED' || error.code === 'UNKNOWN_NODE' || error.code === 'UNKNOWN_EDGE' || error.code === 'TASK_NOT_FOUND'
+              ? 404
+              : 400
     return { status, code: error.code, message: error.message }
   }
   return { status: 500, code: 'INTERNAL', message: 'internal error' }
@@ -146,6 +152,7 @@ export function createApi({
   manager,
   discovery,
   cloneSpike = undefined,
+  cloneManager = undefined,
   token,
   version = '0.1.0',
   platform = process.platform,
@@ -374,6 +381,22 @@ export function createApi({
         mode: body.mode,
       })
       return json(200, { composition: record.composition, updatedAt: record.updatedAt })
+    }
+    if (route === '/clone-tree') {
+      if (cloneManager === undefined) {
+        return json(503, {
+          error: { code: 'CLONE_UNAVAILABLE', message: 'the clone adapter is not wired in this Host' },
+        })
+      }
+      return json(200, await cloneManager.cloneTree(body.rootSessionId))
+    }
+    if (route === '/bud') {
+      if (cloneManager === undefined) {
+        return json(503, {
+          error: { code: 'CLONE_UNAVAILABLE', message: 'the clone adapter is not wired in this Host' },
+        })
+      }
+      return json(200, await cloneManager.bud(body.rootSessionId, body.nodeId))
     }
     if (route === '/clone-spike') {
       if (cloneSpike === undefined) {

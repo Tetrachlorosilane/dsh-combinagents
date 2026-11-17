@@ -19,7 +19,7 @@ function summary(sessionId, title) {
   }
 }
 
-function makeHarness({ running = new Set() } = {}) {
+function makeHarness({ running = new Set(), cloneManager = undefined } = {}) {
   const data = new Map()
   const policies = new Map()
   const tasks = new Map()
@@ -111,7 +111,7 @@ function makeHarness({ running = new Set() } = {}) {
     discovery,
     agents: () => ({ get: (id) => ({ status: running.has(id) ? 'running' : 'idle' }) }),
   })
-  const api = createApi({ manager, discovery, token: TOKEN, version: '0.1.0', platform: 'test' })
+  const api = createApi({ manager, discovery, cloneManager, token: TOKEN, version: '0.1.0', platform: 'test' })
   return { api, manager, running }
 }
 
@@ -246,6 +246,28 @@ test('renames a composition title through the bridge', async () => {
   })))
   assert.equal(invalid.status, 400)
   assert.equal(invalid.data.error.code, 'INVALID_FIELD')
+})
+
+test('wires clone-tree and bud routes to the clone adapter', async () => {
+  const calls = []
+  const cloneManager = {
+    async cloneTree(rootSessionId) {
+      calls.push(['clone', rootSessionId])
+      return { clone: { newRootSessionId: 'session-clone' }, composition: { rootSessionId: 'session-clone' }, tasks: [] }
+    },
+    async bud(rootSessionId, nodeId) {
+      calls.push(['bud', rootSessionId, nodeId])
+      return { clone: { newRootSessionId: 'session-bud' }, composition: { rootSessionId: 'session-bud' }, tasks: [] }
+    },
+  }
+  const { api } = makeHarness({ cloneManager })
+  const clone = await call(api, authorized('POST', '/dsh-combinagents/clone-tree', JSON.stringify({ rootSessionId: 's-a' })))
+  assert.equal(clone.status, 200)
+  assert.equal(clone.data.clone.newRootSessionId, 'session-clone')
+  const bud = await call(api, authorized('POST', '/dsh-combinagents/bud', JSON.stringify({ rootSessionId: 's-a', nodeId: 'n-b' })))
+  assert.equal(bud.status, 200)
+  assert.equal(bud.data.clone.newRootSessionId, 'session-bud')
+  assert.deepEqual(calls, [['clone', 's-a'], ['bud', 's-a', 'n-b']])
 })
 
 test('reports the temporary clone spike as unavailable without wiring', async () => {

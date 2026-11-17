@@ -1,0 +1,518 @@
+/**
+ * Whole-tree clone and bud adapter.
+ *
+ * A clone is a new DSH session tree: a seeded root created through
+ * `ctx.agents.create`, and seeded native children created through
+ * `ctx.subagents.startActivation` with a plugin-owned provider. Children are
+ * kept live while their own descendants are built, then disposed in post-order
+ * so they remain persisted, cataloged, and cold-resumable without running.
+ */
+
+import { randomUUID } from 'node:crypto'
+
+import { CompositionError, createComposition } from './graph.js'
+import { planClone } from './clone.js'
+
+/** Provider name owned by this adapter. */
+export const CLONE_PROVIDER = 'combinagents-clone'
+
+const CLONE_NOTICE = (sourceId) => [
+  'This session is a clone created by dsh-combinagents.',
+  `Source session: ${sourceId}.`,
+  'The original session remains active and is not replaced.',
+  'Continue from the inherited history; do not assume the source\'s in-flight work is still running.',
+].join('\n')
+
+/**
+ * @param {readonly object[]} events - source session events.
+ * @returns {object[]} raw completed-turn prefix, without marker/closers.
+ */
+function completedPrefix(events) {
+  const lastTurnEnd = events.findLast((event) => event.type === 'turn/end')
+  if (lastTurnEnd === undefined) return []
+  let boundary = lastTurnEnd.seq
+  for (const next of events.slice(boundary + 1)) {
+    if (next.type === 'turn/start' || next.type === 'agent/inbox/spliced'
+      || (next.type === 'user/message' && next.surfaceOp === 'append')) break
+    boundary = next.seq
+  }
+  return events.slice(0, boundary + 1)
+}
+
+/**
+ * @param {object} query - sessionQuery service.
+ * @param {string} sessionId - source session.
+ * @returns {Promise<{header: object, seed: object[]}>}
+ */
+async function observe(query, sessionId) {
+  if (query?.observeSession === undefined) {
+    throw new CompositionError('CLONE_UNAVAILABLE', 'clone requires the sessionQuery service')
+  }
+  const observation = await query.observeSession(sessionId)
+  try {
+    return { header: observation.header, seed: completedPrefix(observation.events) }
+  } finally {
+    observation[Symbol.dispose]?.()
+  }
+}
+
+/**
+ * @param {object} plan - pure clone plan.
+ * @returns {string[]} source node ids in parent-before-child order.
+ */
+function preorder(plan) {
+  const children = new Map()
+  for (const edge of plan.edges) {
+    const list = children.get(edge.parentSourceNodeId) ?? []
+    list.push(edge.childSourceNodeId)
+    children.set(edge.parentSourceNodeId, list)
+  }
+  const result = []
+  const queue = [plan.rootSourceNodeId]
+  while (queue.length > 0) {
+    const id = queue.shift()
+    result.push(id)
+    for (const child of children.get(id) ?? []) queue.push(child)
+  }
+  return result
+}
+
+/**
+ * Create the clone/bud adapter.
+ * @param {{ctx: object, store: object, discovery: object, manager: object,
+ *   now?: () => number}} deps - Host services and composition manager.
+ */
+export function createCloneManager({ ctx, store, discovery, manager, now = () => Date.now() }) {
+  const pendingSources = new Map()
+  const rootHandles = new Map()
+  let providerDispose
+
+  const agents = () => ctx.get?.('agents')
+  const subagents = () => ctx.get?.('subagents')
+  const sessions = () => ctx.get?.('sessions')
+  const query = () => ctx.get?.('sessionQuery')
+  const presets = () => ctx.get?.('agentPresets')
+  const permissions = () => ctx.get?.('permissionPresets')
+
+  function ensureProvider() {
+    if (providerDispose !== undefined) return
+    const service = subagents()
+    if (service?.registerProvider === undefined || service?.startActivation === undefined) {
+      throw new CompositionError('CLONE_UNAVAILABLE', 'clone requires the subagents service')
+    }
+    providerDispose = service.registerProvider({
+      name: CLONE_PROVIDER,
+      capabilities: { agentOptions: false, agentPreset: true, outputSchema: false, depthLimit: true },
+      inheritsParentContext: false,
+      async prepareContinuable(request) {
+        const sourceId = pendingSources.get(request.sessionId)
+        if (typeof sourceId !== 'string') {
+          throw new CompositionError('CLONE_FAILED', `no clone source reserved for ${request.sessionId}`)
+        }
+        const source = await observe(query(), sourceId)
+        return source.seed.length > 0 ? { seed: source.seed } : {}
+      },
+    })
+  }
+
+  /**
+   * @param {string} sessionId - live or persisted session.
+   * @returns {Promise<string|null>}
+   */
+  async function permissionOf(sessionId) {
+    const live = sessions()?.get?.(sessionId)
+    if (live !== undefined) {
+      try {
+        return permissions()?.current?.(live) ?? null
+      } catch {
+        return null
+      }
+    }
+    return (await discovery?.describe?.(sessionId))?.permissionPreset ?? null
+  }
+
+  /**
+   * @param {string} sourceRootSessionId - composition owner or member.
+   * @returns {Promise<{rootSessionId: string, record: object}>}
+   */
+  async function sourceOf(sourceRootSessionId) {
+    const resolved = await manager.resolveSession(sourceRootSessionId)
+    if (resolved === null) {
+      throw new CompositionError('COMPOSITION_NOT_FOUND', `no composition contains ${JSON.stringify(sourceRootSessionId)}`)
+    }
+    return { rootSessionId: resolved.rootSessionId, record: resolved.record }
+  }
+
+  /**
+   * Create one seeded root agent.
+   * @param {object} sourceNode - plan node for the clone root.
+   * @param {number} snapshotAt - clone time.
+   * @returns {Promise<{id: string, handle: object, header: object}>}
+   */
+  async function createRoot(sourceNode, snapshotAt) {
+    const registry = agents()
+    if (registry?.create === undefined) {
+      throw new CompositionError('CLONE_UNAVAILABLE', 'clone requires the agents service')
+    }
+    if (sourceNode.kind !== 'session' || sourceNode.sourceSessionId === null) {
+      throw new CompositionError('CLONE_SOURCE_NOT_SESSION', 'a clone root must be a local session node')
+    }
+    const source = await observe(query(), sourceNode.sourceSessionId)
+    const id = `session-${randomUUID()}`
+    const presetService = presets()
+    let agentPreset
+    let setup
+    if (presetService?.resolve !== undefined && presetService?.mount !== undefined) {
+      const resolved = await presetService.resolve(source.header.agentPreset)
+      if (typeof source.header.agentPreset === 'string' && source.header.agentPreset.length > 0) {
+        agentPreset = resolved.id
+      }
+      setup = async (agentCtx) => { await presetService.mount(agentCtx, resolved.id) }
+    }
+    const handle = await registry.create({
+      sessionId: id,
+      seed: source.seed,
+      inheritedEventCount: source.seed.length,
+      meta: {
+        ...(typeof source.header.cwd === 'string' ? { cwd: source.header.cwd } : {}),
+        isSeeded: true,
+        ...(agentPreset === undefined ? {} : { agentPreset }),
+      },
+      ...(setup === undefined ? {} : { setup }),
+    })
+    return { id, handle, header: handle.agent.session.header, sourceHeader: source.header, snapshotAt }
+  }
+
+  /**
+   * Create one seeded native child under a live clone parent.
+   * @param {object} sourceNode - plan node for the source child.
+   * @param {object} parentAgent - live clone parent agent.
+   * @param {number} snapshotAt - clone time.
+   * @returns {Promise<{id: string, activation: object, agent: object, header: object}>}
+   */
+  async function createChild(sourceNode, parentAgent, snapshotAt) {
+    if (sourceNode.kind !== 'session' || sourceNode.sourceSessionId === null) {
+      throw new CompositionError('CLONE_SOURCE_NOT_SESSION', 'a local clone child requires a session')
+    }
+    const service = subagents()
+    if (service?.startActivation === undefined) {
+      throw new CompositionError('CLONE_UNAVAILABLE', 'clone requires the subagents service')
+    }
+    const source = await observe(query(), sourceNode.sourceSessionId)
+    const id = `session-${randomUUID()}`
+    pendingSources.set(id, sourceNode.sourceSessionId)
+    try {
+      const activation = await service.startActivation({
+        provider: CLONE_PROVIDER,
+        label: sourceNode.label,
+        childId: id,
+        prompt: [{ type: 'text', text: CLONE_NOTICE(sourceNode.sourceSessionId) }],
+        parent: parentAgent,
+        ...(typeof source.header.cwd === 'string' ? { cwd: source.header.cwd } : {}),
+        ...(typeof source.header.agentPreset === 'string' && source.header.agentPreset.length > 0
+          ? { agentPreset: source.header.agentPreset }
+          : {}),
+        maxDepth: 32,
+        signal: AbortSignal.timeout(30000),
+        delivery: 'parent',
+      })
+      const agent = agents()?.get?.(id)
+      if (agent === undefined) {
+        throw new CompositionError('CLONE_FAILED', `clone child ${JSON.stringify(id)} did not publish a live agent`)
+      }
+      return { id, activation, agent, header: agent.session.header, sourceHeader: source.header, snapshotAt }
+    } catch (error) {
+      pendingSources.delete(id)
+      throw error
+    }
+  }
+
+  /**
+   * Build one clone/bud tree from a plan.
+   * @param {object} plan - pure plan.
+   * @param {object} sourceComposition - source graph.
+   * @param {string} kind - clone or bud.
+   * @returns {Promise<object>} clone record and installed composition.
+   */
+  async function execute(plan, sourceComposition, kind) {
+    ensureProvider()
+    const snapshotAt = plan.snapshotAt
+    const rootSourceNode = plan.nodes.find((node) => node.sourceNodeId === plan.rootSourceNodeId)
+    if (rootSourceNode === undefined) {
+      throw new CompositionError('UNKNOWN_NODE', 'the clone plan has no root node')
+    }
+    const createdActivations = []
+    let root
+    const cloneNodeBySource = new Map()
+    const liveAgentBySource = new Map()
+    const nodes = []
+    const edges = []
+    try {
+      root = await createRoot(rootSourceNode, snapshotAt)
+      rootHandles.set(root.id, root.handle)
+      cloneNodeBySource.set(rootSourceNode.sourceNodeId, {
+        id: randomUUID(),
+        sessionId: root.id,
+      })
+      liveAgentBySource.set(rootSourceNode.sourceNodeId, root.handle.agent)
+      const rootCloneNode = cloneNodeBySource.get(rootSourceNode.sourceNodeId)
+      nodes.push({
+        id: rootCloneNode.id,
+        sessionId: root.id,
+        label: rootSourceNode.label,
+        kind: 'session',
+        source: rootSourceNode.source,
+        provider: rootSourceNode.provider,
+        nativeParentSessionId: null,
+        cwd: rootSourceNode.cwd ?? root.sourceHeader.cwd ?? null,
+        permissionPreset: rootSourceNode.permissionPreset,
+        cloneOf: rootSourceNode.cloneOf,
+        cloneSnapshotAt: snapshotAt,
+        sourceCompositionId: sourceComposition.id,
+        addedAt: snapshotAt,
+      })
+
+      const order = preorder(plan)
+      for (const sourceNodeId of order) {
+        if (sourceNodeId === plan.rootSourceNodeId) continue
+        const sourceNode = plan.nodes.find((node) => node.sourceNodeId === sourceNodeId)
+        if (sourceNode === undefined) continue
+        const parentEdge = plan.edges.find((edge) => edge.childSourceNodeId === sourceNodeId)
+        if (parentEdge === undefined) continue
+        const parentClone = cloneNodeBySource.get(parentEdge.parentSourceNodeId)
+        if (parentClone === undefined) continue
+        const parentAgent = liveAgentBySource.get(parentEdge.parentSourceNodeId)
+        const nodeId = randomUUID()
+        if (sourceNode.kind === 'external') {
+          cloneNodeBySource.set(sourceNodeId, { id: nodeId, sessionId: null })
+          nodes.push({
+            id: nodeId,
+            sessionId: null,
+            label: sourceNode.label,
+            kind: 'external',
+            source: 'external',
+            provider: sourceNode.provider,
+            nativeParentSessionId: parentClone.sessionId ?? null,
+            cwd: null,
+            permissionPreset: null,
+            cloneOf: sourceNode.cloneOf,
+            cloneSnapshotAt: snapshotAt,
+            sourceCompositionId: sourceComposition.id,
+            addedAt: snapshotAt,
+          })
+          continue
+        }
+        if (parentAgent === undefined) {
+          throw new CompositionError('CLONE_FAILED', `clone parent ${JSON.stringify(parentEdge.parentSourceNodeId)} is not live`)
+        }
+        const child = await createChild(sourceNode, parentAgent, snapshotAt)
+        createdActivations.push(child.activation)
+        cloneNodeBySource.set(sourceNodeId, { id: nodeId, sessionId: child.id })
+        liveAgentBySource.set(sourceNodeId, child.agent)
+        nodes.push({
+          id: nodeId,
+          sessionId: child.id,
+          label: sourceNode.label,
+          kind: 'session',
+          source: sourceNode.source,
+          provider: sourceNode.provider,
+          nativeParentSessionId: parentClone.sessionId ?? null,
+          cwd: sourceNode.cwd ?? child.sourceHeader.cwd ?? null,
+          permissionPreset: sourceNode.permissionPreset,
+          cloneOf: sourceNode.cloneOf,
+          cloneSnapshotAt: snapshotAt,
+          sourceCompositionId: sourceComposition.id,
+          addedAt: snapshotAt,
+        })
+      }
+
+      for (const edge of plan.edges) {
+        const parent = cloneNodeBySource.get(edge.parentSourceNodeId)
+        const child = cloneNodeBySource.get(edge.childSourceNodeId)
+        if (parent === undefined || child === undefined) continue
+        edges.push({
+          id: randomUUID(),
+          parentId: parent.id,
+          childId: child.id,
+          role: 'reports-to',
+        })
+      }
+
+      const composition = createComposition({
+        id: randomUUID(),
+        title: `${sourceComposition.title} (clone)`,
+        rootSessionId: root.id,
+        nodes,
+        edges,
+      })
+
+      // Children are cataloged and persisted; dispose post-order so the tree is
+      // idle while remaining cold-resumable.
+      for (const activation of [...createdActivations].reverse()) {
+        try {
+          await activation.dispose()
+        } catch (error) {
+          ctx.logger?.warn?.('dsh-combinagents: clone child dispose failed', error)
+        }
+      }
+
+      const installed = await manager.installComposition(root.id, composition)
+      const cloneId = randomUUID()
+      const clone = {
+        id: cloneId,
+        kind,
+        status: 'completed',
+        sourceCompositionId: sourceComposition.id,
+        sourceRootSessionId: sourceComposition.rootSessionId,
+        newRootSessionId: root.id,
+        snapshotAt,
+        nodeMapping: plan.nodes.map((node) => {
+          const cloned = cloneNodeBySource.get(node.sourceNodeId)
+          return {
+            sourceNodeId: node.sourceNodeId,
+            sourceSessionId: node.sourceSessionId,
+            newSessionId: cloned?.sessionId ?? null,
+            label: node.label,
+            cloneOf: node.cloneOf,
+          }
+        }),
+        cacheProfile: {
+          cwd: root.sourceHeader.cwd ?? null,
+          agentPreset: root.sourceHeader.agentPreset ?? null,
+          permissionPreset: await permissionOf(root.id),
+        },
+        createdAt: snapshotAt,
+      }
+      await store.putClone(cloneId, clone)
+
+      const taskIdBySource = new Map()
+      const tasks = []
+      for (const task of plan.tasks) {
+        const taskId = randomUUID()
+        taskIdBySource.set(task.sourceTaskId, taskId)
+        tasks.push({
+          id: taskId,
+          rootSessionId: root.id,
+          subject: task.subject,
+          description: task.description,
+          status: task.status,
+          ownerNodeId: task.ownerSourceNodeId === null
+            ? null
+            : (cloneNodeBySource.get(task.ownerSourceNodeId)?.id ?? null),
+          blockedBy: [],
+          writeScopes: [...task.writeScopes],
+          revision: 1,
+          createdAt: snapshotAt,
+          updatedAt: snapshotAt,
+          createdBy: 'clone',
+        })
+      }
+      for (let index = 0; index < tasks.length; index += 1) {
+        const sourceTask = plan.tasks[index]
+        tasks[index].blockedBy = sourceTask.blockedBy
+          .map((sourceTaskId) => taskIdBySource.get(sourceTaskId))
+          .filter((taskId) => typeof taskId === 'string')
+        await store.putTask(tasks[index].id, tasks[index])
+      }
+
+      return {
+        clone,
+        composition: installed.composition,
+        tasks: await manager.getTasks(root.id),
+      }
+    } catch (error) {
+      for (const activation of [...createdActivations].reverse()) {
+        try {
+          await activation.dispose()
+        } catch {}
+      }
+      if (root !== undefined) {
+        rootHandles.delete(root.id)
+        try {
+          await root.handle.dispose()
+        } catch {}
+        try {
+          await store.delete(root.id)
+        } catch {}
+        try {
+          for (const [taskId, task] of await store.listTasks(root.id)) {
+            if (task.rootSessionId === root.id) await store.deleteTask(taskId)
+          }
+        } catch {}
+        try {
+          for (const [cloneId, clone] of await store.listClones()) {
+            if (clone.newRootSessionId === root.id) await store.deleteClone(cloneId)
+          }
+        } catch {}
+      }
+      for (const [childId, sourceId] of pendingSources) {
+        if (plan.nodes.some((node) => node.sourceSessionId === sourceId)) pendingSources.delete(childId)
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Clone the whole root tree of one composition.
+   * @param {string} sourceSessionId - composition owner or member.
+   * @returns {Promise<object>}
+   */
+  async function cloneTree(sourceSessionId) {
+    if (typeof sourceSessionId !== 'string' || sourceSessionId.length === 0) {
+      throw new CompositionError('INVALID_FIELD', 'rootSessionId must be a non-empty string')
+    }
+    const source = await sourceOf(sourceSessionId)
+    const composition = source.record.composition
+    const tasks = await manager.getTasks(source.rootSessionId)
+    const plan = planClone({
+      composition,
+      tasks,
+      snapshotAt: now(),
+      kind: 'clone',
+    })
+    return execute(plan, composition, 'clone')
+  }
+
+  /**
+   * Bud one composition node and its subtree as a new independent root.
+   * @param {string} sourceSessionId - composition owner or member.
+   * @param {string} nodeId - source node to bud.
+   * @returns {Promise<object>}
+   */
+  async function bud(sourceSessionId, nodeId) {
+    if (typeof nodeId !== 'string' || nodeId.length === 0) {
+      throw new CompositionError('INVALID_FIELD', 'nodeId must be a non-empty string')
+    }
+    const source = await sourceOf(sourceSessionId)
+    const composition = source.record.composition
+    const tasks = await manager.getTasks(source.rootSessionId)
+    const plan = planClone({
+      composition,
+      rootNodeId: nodeId,
+      tasks,
+      snapshotAt: now(),
+      kind: 'bud',
+    })
+    return execute(plan, composition, 'bud')
+  }
+
+  return {
+    cloneTree,
+    bud,
+    dispose() {
+      for (const [id, handle] of rootHandles) {
+        rootHandles.delete(id)
+        void handle.dispose?.().catch?.(() => {})
+      }
+      pendingSources.clear()
+      if (providerDispose !== undefined) {
+        providerDispose()
+        providerDispose = undefined
+      }
+    },
+    /** @returns {number} live clone roots retained by this adapter. */
+    get liveCount() {
+      return rootHandles.size
+    },
+  }
+}
