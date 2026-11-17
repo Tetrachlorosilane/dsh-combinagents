@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto'
 import {
   CompositionError,
   addNode as addGraphNode,
+  assertComposition,
   ancestorsOf,
   attachSubtree,
   createComposition,
@@ -1002,6 +1003,24 @@ export function createManager({ store, discovery, agents = () => undefined, now 
   }
 
   /**
+   * Install a fully built composition (used by the clone/bud adapter).
+   * @param {string} rootSessionId - new composition owner.
+   * @param {object} composition - validated composition graph.
+   * @returns {Promise<{composition: object, updatedAt: number}>}
+   */
+  async function installComposition(rootSessionId, composition) {
+    if (typeof rootSessionId !== 'string' || rootSessionId.length === 0) {
+      throw new CompositionError('INVALID_FIELD', 'rootSessionId must be a non-empty string')
+    }
+    assertComposition(composition)
+    return withLock(rootSessionId, async () => {
+      const record = await save(rootSessionId, composition)
+      indexComposition(rootSessionId, composition)
+      return record
+    })
+  }
+
+  /**
    * Read one composition record.
    * @param {string} rootSessionId - composition owner.
    * @returns {Promise<{composition: object, updatedAt: number}|null>}
@@ -1036,6 +1055,7 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     setParent,
     renameNode,
     setTitle,
+    installComposition,
     resolveSession,
     autoAttach,
     syncNativeTree,
