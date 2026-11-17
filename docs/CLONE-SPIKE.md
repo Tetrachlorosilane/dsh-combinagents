@@ -1,9 +1,10 @@
 # Clone / Bud spike — DSH API findings
 
-**Status:** source-level spike complete against DSH `0.2.2-rc.3` (local source
-checkout). A temporary `POST /clone-spike` route is wired for the live Host
-spike; it is not part of the product API and must be removed after validation.
-The Host must be restarted once to load the route.
+**Status:** source-level and live two-node Host spike complete against DSH
+`0.2.2-rc.3`. Root clone, seeded child, native catalog entry, and the
+persisted-idle child strategy all passed. The whole-tree adapter is next. A
+temporary `POST /clone-spike` route remains wired for further probes; it is not
+part of the product API and must be removed when the adapter lands.
 
 ## 1. Confirmed product decisions
 
@@ -127,7 +128,36 @@ POST /dsh-combinagents/clone-spike
 - The route is deliberately outside the product API and must be removed after
   the spike. The Host needs one restart to load it.
 
-## 5. Live Host spike checklist
+## 5. Live Host results (2026-11-17)
+
+Source pair: `session-0a6fe925...` (root) and `8f4b1535...` (native child).
+
+- clone root: seeded, `cwd` preserved, permission `workspace-write`, source unchanged;
+- clone child: `parentSession` points at the clone root, `origin: subagent`,
+  `delegationDepth: 1`, `isSeeded: true`, `cwd` preserved;
+- catalog: the clone root log contains the inherited source catalog plus the new
+  `subagent/catalog`; the `subagentCatalog` projection reports one child;
+- `delivery: "parent"` was required in this Host for the child path;
+- `mode: "dispose"` leaves the child `live: false`, `persisted: true`, and
+  discoverable; the root remains live;
+- `mode: "live"` keeps the child live; the cleanup action disposes it and the
+  clone root;
+- installed Host note: `subagents.listChildren` returned `[]` even though the
+  observation projection had one catalog entry; use `listDescendants` or read
+  the projection directly in the adapter.
+
+**Chosen idle strategy:** create the root idle; for each source child keep the
+activation live while creating its descendants, then dispose activations in
+post-order. The child sessions remain persisted/native catalog members and can
+be cold-resumed later. The root stays live.
+
+**Caveats:** the source child had no explicit `agentPreset`, so the clone child
+inherited the clone root's `composed` preset; an explicit source preset is
+forwarded and preserved. Source permissions were not observable on the
+persisted source child, so exact permission preservation still needs a source
+with explicit permission events.
+
+## 6. Live Host spike checklist
 
 These require a debug route/tool and a Host restart; none is implemented yet.
 
@@ -145,7 +175,7 @@ These require a debug route/tool and a Host restart; none is implemented yet.
 7. Bud a child + subtree; verify the original node and tree remain untouched
    and both trees can delegate independently.
 
-## 6. Risks / open items
+## 7. Risks / open items
 
 - **Idle child semantics** are the main unknown; a clone should not silently
   run one model turn per child.

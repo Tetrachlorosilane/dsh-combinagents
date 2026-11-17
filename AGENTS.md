@@ -71,9 +71,11 @@ coexists with the shipped
 show cwd/sandbox/preset/native parent, rename/reparent and per-edge grants work,
 external placeholders render collapsed, the task board transitions, sync-native
 is callable, and composition create/delete leaves DSH sessions untouched.
-Clone and bud execution is not implemented; the pure planner in
+Clone and bud execution is not implemented yet; the pure planner in
 `src/clone.js` covers whole-root tree selection, clone markers, and task-copy
-owner mapping. The DSH API spike is in [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md).
+owner mapping. A live two-node Host spike (root + seeded child, native catalog,
+persisted-idle child, source unchanged) passed; the whole-tree adapter remains.
+The findings are in [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md).
 The cross-tree delivery capability described
 as the Bridge is implemented as the composition control tools (per-edge grants,
 approval gate, audit), not as a separate layer. Do not describe native
