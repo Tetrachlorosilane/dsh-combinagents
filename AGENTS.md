@@ -54,7 +54,10 @@ headless profile verified the real chain: tool list, `subagent` → child node +
 edge, `wait_agent`, child reply, `send_message` follow-up with native resume,
 second `wait_agent`, and `interrupt_agent` + termination notice. The
 plugin-owned `composition_task` tool lists, creates, and updates board tasks
-(never DSH Team). Composed mode is configured in the desktop profile but not yet validated after a
+(never DSH Team). Live desktop check: a composed child delivered three messages
+to the native-root session with correct composition-label attribution; audit
+rows recorded each delivery. The native root cannot reply until it runs a
+composed preset. Composed mode is configured in the desktop profile but not yet validated after a
 Host restart; sessions using `standard`/`ptc` still mount the native tools and
 shadow the composed names. Tool ordering and the prefix fingerprint are covered
 by tests, not yet compared against a live native request. The GUI visual check is still
