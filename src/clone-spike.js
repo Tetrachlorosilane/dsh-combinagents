@@ -197,9 +197,9 @@ export function createCloneSpike({ ctx, discovery }) {
             : {}),
           maxDepth: 8,
           signal: AbortSignal.timeout(30000),
-          delivery: 'caller',
+          delivery: 'parent',
         })
-        diagnostics.cloneChildActivation = { childId: childActivation.childId, messageId: childActivation.messageId }
+        diagnostics.cloneChildActivation = { childId: childActivation.childId, messageId: childActivation.messageId, delivery: 'parent' }
         diagnostics.phase = 'child-created'
         const childLive = sessions()?.get?.(cloneChildId)
         diagnostics.cloneChildHeader = childLive?.header ?? null
