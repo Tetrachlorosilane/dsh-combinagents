@@ -2,9 +2,11 @@
 
 **Status:** source-level and live two-node Host spike complete against DSH
 `0.2.2-rc.3`. Root clone, seeded child, native catalog entry, and the
-persisted-idle child strategy all passed. The whole-tree adapter is next. A
-temporary `POST /clone-spike` route remains wired for further probes; it is not
-part of the product API and must be removed when the adapter lands.
+persisted-idle child strategy all passed. The formal whole-tree adapter is
+implemented in `src/clone-manager.js` with the `/clone-tree` and `/bud` routes;
+live GUI re-verification is pending. A temporary `POST /clone-spike` route
+remains wired for diagnostics; it is not part of the product API and must be
+removed once the formal adapter is verified.
 
 ## 1. Confirmed product decisions
 

@@ -15,9 +15,11 @@
 > （list / send / interrupt），逐边授权、审计行与原生 relay source 已落盘；会话状态区分
 > live / saved / 真正 archived（`workspaceRegistry.archivedSessionIds`），选择器先返回
 > 元数据、标题按 `/titles` 延迟批量折叠，不再为打开选择器扫描全部会话日志。Host 重启后
-> `mode: 'composed'` 已实际加载（当前 desktop 会话即 composed preset，工具面含原生同名
+> `mode: 'composed'` 的旧 preset 已在当前 desktop 会话加载；镜像 `standard` 的新
+> preset 已写入 profile，需下次 Host 重启后对新建 composed 会话生效，工具面含原生同名
 > 工具与未遮蔽的 `composition_*` 别名）；跨树消息（产品中的 Bridge 能力）已以组合控制
-> 工具 + 逐边授权 + approval + 审计实现，不是独立一层；克隆/出芽仍未实现。
+> 工具 + 逐边授权 + approval + 审计实现，不是独立一层；克隆/出芽已实现
+> （`src/clone.js` + `src/clone-manager.js`），GUI 复验待做。
 
 ## 0. 给接手代理的摘要
 
@@ -642,6 +644,11 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
   标记并自动授权该边；`send_message` 对原生后代优先走原生 relay（含冷恢复），
   `wait_agent` 复制原生 inbox 等待语义；clean headless profile 已实测
   subagent → child → wait → send → wait → interrupt 全链路；
+- 2026-11-17 事件：composed preset 曾因手工子集漏掉 `compaction` 组，导致 `/compact`
+  缺失（desktop bundle 在 host 层禁用了该组）。现改为复制 `standard` 插件列表，仅去掉
+  `tool-subagent-control`、`tool-subagent`、`tool-subagent-fork`，保留 planning、
+  compaction + tool-result-pruner、workflow、skills、schedule、goals、office 与
+  plugin-manager；详见 [`COMPOSED-PROFILE.md`](COMPOSED-PROFILE.md)。
 - 已完成：GUI 目视验收（滚动检索、计数入口、详情/改父/重命名、外部占位渲染、任务板、
   创建/删除组合、sync-native、原生 `subagent-catalog` 共存）、浅色/深色与 420px
   窄宽度检查、Host 重启后重载验证；计数 chip 在编辑后即时刷新（窗口事件），窄屏行内
@@ -656,16 +663,17 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 
 - 已实现纯计划层：`src/clone.js`（整棵根树、clone 标记、任务 owner 重映射），
   细节与 DSH API 核对见 [`CLONE-SPIKE.md`](CLONE-SPIKE.md)；
-- 待实现 Host adapter：seed 新根、创建 cataloged 子节点、保留
-  permission/cwd/preset、子节点 idle 行为、失败清理；
-- 新树创建（全部新 Session id）；
-- 缓存前缀检查；
-- 克隆标记（`cloneOf` / `snapshotAt` / `sourceCompositionId`）；
-- 复制插件自有任务板并重映射 owner；
-- cwd/preset/权限沿用源值，UI 不提供覆盖；
-- 出芽原节点保留、不自动归档，形成两棵并行独立树；
-- 失败清理；
-- 验收：整棵根树可克隆成新树，原树不变，前缀指纹符合预期，任务 owner 已重映射。
+- 已实现 Host adapter：seed 新根、创建 cataloged 子节点、保留
+  permission/cwd/preset、挂入源 workspace、子节点 post-order idle、失败清理；
+- 已实现：整棵根树克隆成新树（全部新 Session id）；
+- 待验证：缓存前缀检查；
+- 已实现：克隆标记（`cloneOf` / `snapshotAt` / `sourceCompositionId`）；
+- 已实现：复制插件自有任务板并重映射 owner；
+- 已实现：cwd/preset/权限沿用源值，UI 不提供覆盖；
+- 已实现：出芽原节点保留、不自动归档，形成两棵并行独立树；
+- 已实现：失败清理；
+- 待复验：GUI 克隆徽标/详情、16 节点整树克隆与 workspace 可见性；
+- 验收：整棵根树可克隆成新树，原树不变，任务 owner 已重映射；前缀指纹检查与 GUI 复验待做。
 
 ### Phase 3 — Bridge（已实现，以组合控制工具形式）
 
