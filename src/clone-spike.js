@@ -201,6 +201,13 @@ export function createCloneSpike({ ctx, discovery }) {
         })
         diagnostics.cloneChildActivation = { childId: childActivation.childId, messageId: childActivation.messageId }
         diagnostics.phase = 'child-created'
+        const childLive = sessions()?.get?.(cloneChildId)
+        diagnostics.cloneChildHeader = childLive?.header ?? null
+        const rootEvents = typeof rootSession.snapshotEvents === 'function' ? rootSession.snapshotEvents() : []
+        diagnostics.rootEventCount = rootEvents.length
+        diagnostics.rootCatalogEvents = rootEvents.filter((event) => event.type === 'subagent/catalog').length
+        diagnostics.rootEventTail = rootEvents.slice(-16).map((event) => event.type)
+        await new Promise((resolve) => setTimeout(resolve, 150))
         diagnostics.catalogsWithChild = await subagents()?.listChildren?.(rootSession.header.id) ?? []
         diagnostics.cloneChildLiveBeforeDispose = sessions()?.get?.(cloneChildId) !== undefined
         diagnostics.cloneChildPermission = await permissionOf(cloneChildId)
@@ -208,6 +215,7 @@ export function createCloneSpike({ ctx, discovery }) {
           await childActivation.dispose()
           diagnostics.phase = 'child-disposed'
           diagnostics.childDisposed = true
+          await new Promise((resolve) => setTimeout(resolve, 150))
           diagnostics.catalogsAfterDispose = await subagents()?.listChildren?.(rootSession.header.id) ?? []
           diagnostics.cloneChildLiveAfterDispose = sessions()?.get?.(cloneChildId) !== undefined
           diagnostics.cloneChildObservation = await discovery?.describe?.(cloneChildId) ?? null
