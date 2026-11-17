@@ -189,15 +189,13 @@ export function createCloneSpike({ ctx, discovery }) {
           provider: SPIKE_PROVIDER,
           label: `clone:${childSessionId}`,
           childId: cloneChildId,
-          request: {
-            prompt: [{ type: 'text', text: CLONE_NOTICE(childSessionId) }],
-            parent: rootHandle.agent,
-            ...(typeof sourceChild.header.cwd === 'string' ? { cwd: sourceChild.header.cwd } : {}),
-            ...(typeof sourceChild.header.agentPreset === 'string' && sourceChild.header.agentPreset.length > 0
-              ? { agentPreset: sourceChild.header.agentPreset }
-              : {}),
-            maxDepth: 8,
-          },
+          prompt: [{ type: 'text', text: CLONE_NOTICE(childSessionId) }],
+          parent: rootHandle.agent,
+          ...(typeof sourceChild.header.cwd === 'string' ? { cwd: sourceChild.header.cwd } : {}),
+          ...(typeof sourceChild.header.agentPreset === 'string' && sourceChild.header.agentPreset.length > 0
+            ? { agentPreset: sourceChild.header.agentPreset }
+            : {}),
+          maxDepth: 8,
           signal: AbortSignal.timeout(30000),
           delivery: 'caller',
         })
