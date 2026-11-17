@@ -1010,18 +1010,23 @@ window.__ModuleLoader__.load({
       const openPicker = async () => {
         setPicker((previous) => ({ ...previous, open: true }))
         try {
-          const [sessionData, externalData] = await Promise.all([
-            callApi('/sessions'),
-            callApi(`/external?rootSessionId=${encodeURIComponent(activeRoot)}`),
-          ])
+          const sessionData = await callApi('/sessions')
+          setPicker((previous) => ({ ...previous, sessions: sessionData.sessions ?? [] }))
+        } catch (error) {
+          setNotice(error.message)
+          return
+        }
+        // Native catalog discovery can walk a large tree; never block the
+        // session picker on it. External leaves fill in asynchronously.
+        try {
+          const externalData = await callApi(`/external?rootSessionId=${encodeURIComponent(activeRoot)}`)
           setPicker((previous) => ({
             ...previous,
-            sessions: sessionData.sessions ?? [],
             external: externalData.leaves ?? [],
             externalAvailable: externalData.available === true,
           }))
         } catch (error) {
-          setNotice(error.message)
+          setPicker((previous) => ({ ...previous, external: [], externalAvailable: false }))
         }
       }
 
