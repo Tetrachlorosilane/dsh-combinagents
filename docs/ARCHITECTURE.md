@@ -154,7 +154,7 @@ Implemented DSH storage domain:
 domain: combinagents
 version: 1
 layout: per-record
-tables: compositions, policies, audit, tasks
+tables: compositions, policies, audit, audit_archive, tasks, clones
 ```
 
 Record id: `rootSessionId`. Record payload: the composition (including its
@@ -247,7 +247,7 @@ GET  /bootstrap                    { token, version, platform, supported }
 GET  /sessions?query=...           discoverable sessions + metadata
 GET  /titles?ids=...               lazy title batch for the picker
 GET  /external?rootSessionId=...   external/one-shot native leaves
-GET  /summary?sessionId=...        resolved root and composition size (no native walk)
+GET  /summary?sessionId=...        resolved root + composition size + cached native count
 GET  /state?rootSessionId=...      composition + observed nodes
 GET  /state?sessionId=...          same, resolved from a member session
 GET  /grants?rootSessionId=...     per-edge message/interrupt grants
@@ -586,8 +586,9 @@ Walking skeleton:
 - interrupt is a separate per-edge grant and only ancestor-to-descendant;
 - no implicit archive or Team authority.
 
-Remaining: document the archived/cold-resume boundary and consider an audit
-viewer.
+Audit rows rotate from `audit` into `audit_archive` so retention evidence is
+not silently deleted; an audit viewer remains future work. Remaining: document
+the archived/cold-resume boundary and consider an audit viewer.
 
 ### Phase 4 — hardening and enrichment
 
@@ -625,7 +626,7 @@ viewer.
 11. A DSH-side smoke test verifies the tab opens from the header button and the
     guide.
 
-Verified on 2026-11-17: criteria 1, 3-11 through the 117 unit tests and the real
+Verified on 2026-11-18: criteria 1, 3-11 through the 128 unit tests and the real
 GUI (dark/light/420 px). Criterion 2 was demonstrated by adding a
 mahjong-workspace session to a `dsh-combinagents` composition and by the rich
 composition with 15 native subagent nodes; the cross-workspace node was removed

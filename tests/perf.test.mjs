@@ -68,7 +68,42 @@ test('summary is served from the composition without walking native catalogs', a
   assert.equal(response.status, 200)
   const data = JSON.parse(response.body)
   assert.equal(data.compositionNodes, 16)
-  assert.equal(data.subagents, 16)
+  assert.equal(data.subagents, null)
+  assert.equal(data.nativeSubagents, null)
+  assert.equal(data.available, false)
+})
+
+test('summary reports a cached native count without walking native catalogs', async () => {
+  const composition = {
+    version: 1,
+    id: 'c-1',
+    title: 'Team',
+    rootSessionId: 's-0',
+    nodes: [node(0)],
+    edges: [],
+    createdAt: 1,
+    updatedAt: 1,
+  }
+  const manager = {
+    storageMode: 'memory',
+    async resolveSession() {
+      return { rootSessionId: 's-0', record: { composition, updatedAt: 1 } }
+    },
+  }
+  const discovery = {
+    peekNativeCount: () => 15,
+    async countNative() {
+      throw new Error('summary must not walk native catalogs')
+    },
+  }
+  const api = createApi({ manager, discovery, token: TOKEN })
+  const response = await request(api, { url: '/dsh-combinagents/summary?sessionId=s-7' })
+  assert.equal(response.status, 200)
+  const data = JSON.parse(response.body)
+  assert.equal(data.compositionNodes, 1)
+  assert.equal(data.subagents, 15)
+  assert.equal(data.nativeSubagents, 15)
+  assert.equal(data.available, true)
 })
 
 test('state reads the composition record once for grants and tasks', async () => {

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import { test } from 'node:test'
 
 import { CompositionError } from '../src/graph.js'
-import { createApi, isLoopback, MAX_BODY_BYTES, TOKEN_HEADER } from '../src/http.js'
+import { createApi, createNodeHandler, isLoopback, MAX_BODY_BYTES, TOKEN_HEADER } from '../src/http.js'
 import { createManager } from '../src/manager.js'
 
 const TOKEN = 'test-token'
@@ -420,7 +421,8 @@ test('resolves state and summary from a member session', async () => {
   assert.equal(summary.status, 200)
   assert.equal(summary.data.rootSessionId, 's-a')
   assert.equal(summary.data.compositionNodes, 2)
-  assert.equal(summary.data.subagents, 2)
+  assert.equal(summary.data.subagents, null)
+  assert.equal(summary.data.nativeSubagents, null)
 })
 
 test('returns 409 while an affected branch is running', async () => {
@@ -557,4 +559,59 @@ test('creates and transitions plugin-owned tasks with revision conflicts', async
     action: 'delete',
   })))
   assert.deepEqual(deleted.data.tasks, [])
+})
+
+test('the Node handler keeps the request signal live for clone routes', async () => {
+  const calls = []
+  const api = createApi({
+    manager: {},
+    discovery: {},
+    token: TOKEN,
+    cloneManager: {
+      async cloneTree(id, options) {
+        calls.push({ id, aborted: options?.signal?.aborted === true })
+        return { ok: true }
+      },
+    },
+  })
+  const server = http.createServer(createNodeHandler(api))
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/dsh-combinagents/clone-tree`, {
+      method: 'POST',
+      headers: {
+        host: `127.0.0.1:${port}`,
+        'content-type': 'application/json',
+        [TOKEN_HEADER]: TOKEN,
+      },
+      body: JSON.stringify({ rootSessionId: 's-a' }),
+    })
+    assert.equal(response.status, 200)
+    assert.deepEqual(calls, [{ id: 's-a', aborted: false }])
+  } finally {
+    server.closeAllConnections?.()
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
+test('the Node handler rejects an oversized declared body before authentication', async () => {
+  const api = createApi({ manager: {}, discovery: {}, token: TOKEN })
+  const server = http.createServer(createNodeHandler(api))
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/dsh-combinagents/create`, {
+      method: 'POST',
+      headers: {
+        host: `127.0.0.1:${port}`,
+        'content-type': 'application/json',
+      },
+      body: 'a'.repeat(140_000),
+    })
+    assert.equal(response.status, 413)
+  } finally {
+    server.closeAllConnections?.()
+    await new Promise((resolve) => server.close(resolve))
+  }
 })

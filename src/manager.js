@@ -213,7 +213,7 @@ export function createManager({
       }
       // A native descendant that has not been mirrored yet still belongs to
       // the composition of its native ancestor: walk the durable parent chain.
-      const summary = await discovery.describe(current)
+      const summary = await (discovery.describeHeader?.(current) ?? discovery.describe(current))
       const parent = summary?.nativeParentSessionId
       if (typeof parent !== 'string' || parent.length === 0) return null
       current = parent

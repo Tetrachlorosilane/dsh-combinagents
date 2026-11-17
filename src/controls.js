@@ -196,6 +196,15 @@ export function createControls({
   const tools = () => ctx.get?.('tools')
   const systemPrompt = () => ctx.get?.('systemPrompt')
   const llm = () => ctx.get?.('llm')
+  /** Input ids already reported by a wait in the same model tool call. */
+  const reportedInput = new WeakMap()
+  /** Aborts outstanding waits when the plugin unloads. */
+  const waitLifetime = new AbortController()
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => () => {
+      waitLifetime.abort(new CompositionError('WAIT_UNAVAILABLE', 'wait_agent ended because its plugin was unloaded'))
+    }, 'dsh-combinagents: wait lifetime')
+  }
 
   /**
    * @param {string} sessionId - target session.
@@ -254,6 +263,99 @@ export function createControls({
       throw new CompositionError('AMBIGUOUS_TARGET', `multiple composition nodes are labeled ${JSON.stringify(reference)}; use its node id or session id`)
     }
     throw new CompositionError('UNKNOWN_TARGET', `${TARGET_NOT_FOUND}: ${JSON.stringify(reference)}`)
+  }
+
+  /**
+   * Resolve the parent's current LLM route. DSH's delegation contract uses the
+   * request-header route when present, falling back to the live Agent options.
+   * @param {object} agent - live caller.
+   * @returns {{provider: string|undefined, model: string|undefined}}
+   */
+  function parentRoute(agent) {
+    let config
+    try {
+      config = agent?.session?.requestHeader?.()?.config
+    } catch {
+      config = undefined
+    }
+    const options = agent?.options ?? {}
+    const provider = typeof config?.provider === 'string'
+      ? config.provider
+      : typeof options.provider === 'string' ? options.provider : undefined
+    const model = typeof config?.model === 'string'
+      ? config.model
+      : typeof options.model === 'string' ? options.model : undefined
+    return { provider, model }
+  }
+
+  /**
+   * Read the last durable `subagent/model-selection-policy` event from the
+   * caller's session. The native delegation tool uses a projection for this
+   * state; the plugin has no projection dependency, so it reads the same
+   * append-only event instead. `undefined` means no policy is recorded (or the
+   * event API is unavailable), in which case explicit selection is restricted
+   * to the parent route; `null` means a recorded policy is malformed.
+   * @param {object} session - live caller Session.
+   * @returns {Array<{provider: string, model: string}>|null|undefined}
+   */
+  function recordedModelRoutes(session) {
+    let events
+    try {
+      events = session?.snapshotEvents?.()
+    } catch {
+      return undefined
+    }
+    if (!Array.isArray(events)) return undefined
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index]
+      if (event?.type !== 'subagent/model-selection-policy') continue
+      const allowed = event.data?.allowedModels
+      if (allowed === null || allowed === undefined) return undefined
+      if (!Array.isArray(allowed)) return null
+      const routes = []
+      for (const route of allowed) {
+        if (route === null || typeof route !== 'object'
+          || typeof route.provider !== 'string' || route.provider.length === 0
+          || typeof route.model !== 'string' || route.model.length === 0) {
+          return null
+        }
+        routes.push({ provider: route.provider, model: route.model })
+      }
+      return routes
+    }
+    return undefined
+  }
+
+  /**
+   * Enforce DSH's child model-selection authorization before resolving a route.
+   * With a recorded policy only its exact routes are allowed; without one,
+   * explicit selection is limited to the parent's current route.
+   * @param {object} agent - live caller.
+   * @param {string} provider - requested provider.
+   * @param {string} model - requested model.
+   */
+  function assertModelSelection(agent, provider, model) {
+    const routes = recordedModelRoutes(agent?.session)
+    if (routes === null) {
+      throw new CompositionError(
+        'MODEL_SELECTION_FORBIDDEN',
+        'the recorded child model-selection policy is malformed',
+      )
+    }
+    if (routes !== undefined) {
+      if (routes.some((route) => route.provider === provider && route.model === model)) return
+      throw new CompositionError(
+        'MODEL_SELECTION_FORBIDDEN',
+        `child LLM route ${JSON.stringify(`${provider}/${model}`)} is not allowed for this Session`,
+      )
+    }
+    const parent = parentRoute(agent)
+    if (parent.provider === provider && parent.model === model) return
+    throw new CompositionError(
+      'MODEL_SELECTION_FORBIDDEN',
+      `child LLM route ${JSON.stringify(`${provider}/${model}`)} is not allowed; `
+        + 'without a recorded model-selection policy, explicit selection is limited to the parent route',
+    )
   }
 
   /**
@@ -333,6 +435,11 @@ export function createControls({
       if (args.provider === undefined || args.model === undefined) {
         throw new CompositionError('INVALID_MODEL_SELECTION', 'child LLM provider and model must be supplied together')
       }
+      if (typeof args.provider !== 'string' || args.provider.length === 0
+        || typeof args.model !== 'string' || args.model.length === 0) {
+        throw new CompositionError('INVALID_MODEL_SELECTION', 'child LLM provider and model must be non-empty strings')
+      }
+      assertModelSelection(agent, args.provider, args.model)
       const llmService = llm()
       if (typeof llmService?.resolveCallConfig !== 'function') {
         throw new CompositionError('LLM_UNAVAILABLE', 'cannot validate the selected child LLM route without the llm service')
@@ -396,7 +503,8 @@ export function createControls({
    * @param {AbortSignal} signal - call cancellation.
    * @returns {Promise<{timedOut: boolean}>}
    */
-  function waitForInput(agent, timeoutMs, signal) {
+  function waitForInput(agent, timeoutMs, signal, rootCallId = undefined, lifetime = undefined) {
+    lifetime?.throwIfAborted()
     return new Promise((resolve, reject) => {
       let live
       try {
@@ -408,6 +516,8 @@ export function createControls({
         reject(new CompositionError('WAIT_UNAVAILABLE', 'wait_agent requires the exact live calling agent'))
         return
       }
+      const previous = rootCallId === undefined ? undefined : reportedInput.get(agent)
+      const seen = previous !== undefined && previous.rootCallId === rootCallId ? previous.ids : undefined
       let settled = false
       /** @type {ReturnType<typeof setTimeout>|undefined} */
       let timer
@@ -418,6 +528,7 @@ export function createControls({
         offInbox?.()
         offDisposed?.()
         signal.removeEventListener('abort', onAbort)
+        lifetime?.removeEventListener('abort', onUnload)
       }
       const finish = (settle) => {
         if (settled) return
@@ -426,9 +537,23 @@ export function createControls({
         settle()
       }
       const onAbort = () => finish(() => reject(signal.reason ?? new CompositionError('WAIT_UNAVAILABLE', 'wait_agent aborted')))
+      const onUnload = () => finish(() => reject(lifetime?.reason ?? new CompositionError('WAIT_UNAVAILABLE', 'wait_agent unloaded')))
+      const onInput = () => {
+        const pending = agent.inbox?.nextStep
+        if (!Array.isArray(pending) || pending.length === 0) return
+        // Pending input is not delivered to the model until this tool call
+        // finishes. Without this de-duplication a run_code loop would spin on
+        // the same message; native wait_agent records the ids per root call.
+        if (pending.some((message) => seen?.has(message?.id) !== true)) {
+          if (rootCallId !== undefined) {
+            reportedInput.set(agent, { rootCallId, ids: new Set(pending.map((message) => message?.id)) })
+          }
+          finish(() => resolve({ timedOut: false }))
+        }
+      }
       timer = setTimeout(() => finish(() => resolve({ timedOut: true })), timeoutMs)
       offInbox = ctx.on?.('agent/inbox/inserted', ({ agent: recipient }) => {
-        if (recipient === agent) finish(() => resolve({ timedOut: false }))
+        if (recipient === agent) onInput()
       })
       offDisposed = ctx.on?.('agent/disposed', ({ agent: disposed }) => {
         if (disposed === agent) finish(() => reject(new CompositionError('WAIT_UNAVAILABLE', 'the calling agent was disposed')))
@@ -436,12 +561,10 @@ export function createControls({
       if (signal.aborted) onAbort()
       else {
         signal.addEventListener('abort', onAbort, { once: true })
+        lifetime?.addEventListener('abort', onUnload, { once: true })
         // Subscribe before reading pending input so an arrival cannot fall
         // between the check and the listener.
-        const pending = agent.inbox?.nextStep
-        if (!settled && Array.isArray(pending) && pending.length > 0) {
-          finish(() => resolve({ timedOut: false }))
-        }
+        onInput()
       }
     })
   }
@@ -542,17 +665,19 @@ export function createControls({
             sessionId: { type: 'string' },
             kind: { type: 'string' },
             source: { type: 'string' },
+            status: { type: 'string' },
             live: { type: 'boolean' },
             archived: { type: 'boolean' },
             nativeParentSessionId: { type: 'string' },
-          }, ['nodeId', 'label', 'kind', 'source', 'live', 'archived']),
+          }, ['nodeId', 'label', 'kind', 'source', 'status', 'live', 'archived']),
         },
       }, ['agents']),
       render: (_args, value) => [{
         type: 'text',
-        text: value.agents.map((entry) => `${entry.label} (${entry.sessionId ?? 'external'})`).join('\n') || 'no agents',
+        text: value.agents.map((entry) => `${entry.label} [${entry.status}] (${entry.sessionId ?? 'external'})`).join('\n') || 'no agents',
       }],
     },
+    isConcurrencySafe: () => true,
     async execute(_args, exec) {
       const caller = await callerContext(exec.agent)
       if (caller === null) throw new CompositionError('NOT_IN_COMPOSITION', NOT_IN_COMPOSITION)
@@ -561,16 +686,20 @@ export function createControls({
         .filter((sessionId) => typeof sessionId === 'string')
       const observations = await discovery.describeMany(sessionIds)
       return {
-        agents: caller.record.composition.nodes.map((node) => ({
-          nodeId: node.id,
-          label: node.label,
-          kind: node.kind,
-          source: node.source,
-          live: node.sessionId === null ? false : observations[node.sessionId]?.live === true,
-          archived: node.sessionId === null ? false : observations[node.sessionId]?.archived === true,
-          ...node.sessionId === null ? {} : { sessionId: node.sessionId },
-          ...node.nativeParentSessionId === null ? {} : { nativeParentSessionId: node.nativeParentSessionId },
-        })),
+        agents: caller.record.composition.nodes.map((node) => {
+          const agent = node.sessionId === null ? undefined : liveAgent(node.sessionId)
+          return {
+            nodeId: node.id,
+            label: node.label,
+            kind: node.kind,
+            source: node.source,
+            status: agent?.status === 'running' ? 'running' : 'inactive',
+            live: node.sessionId === null ? false : observations[node.sessionId]?.live === true,
+            archived: node.sessionId === null ? false : observations[node.sessionId]?.archived === true,
+            ...node.sessionId === null ? {} : { sessionId: node.sessionId },
+            ...node.nativeParentSessionId === null ? {} : { nativeParentSessionId: node.nativeParentSessionId },
+          }
+        }),
       }
     },
   }
@@ -748,6 +877,7 @@ export function createControls({
       }, ['kind', 'name']),
       render: (_args, value) => [{ type: 'text', text: `started subagent ${value.name}` }],
     },
+    isConcurrencySafe: () => true,
     async execute(args, exec) {
       if (exec.agent === undefined) throw new CompositionError('NO_CALLER', 'subagent requires a calling agent')
       return startDelegation(exec.agent, args, subagentProvider, exec.signal)
@@ -765,6 +895,7 @@ export function createControls({
       }, ['kind', 'name']),
       render: (_args, value) => [{ type: 'text', text: `started subagent ${value.name}` }],
     },
+    isConcurrencySafe: () => true,
     async execute(args, exec) {
       if (exec.agent === undefined) throw new CompositionError('NO_CALLER', 'subagent_fork requires a calling agent')
       return startDelegation(exec.agent, args, forkProvider, exec.signal)
@@ -787,7 +918,7 @@ export function createControls({
       if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 10_000 || timeoutMs > 3_600_000) {
         throw new CompositionError('WAIT_INVALID_TIMEOUT', 'timeout_ms must be an integer from 10000 through 3600000')
       }
-      return waitForInput(exec.agent, timeoutMs, exec.signal)
+      return waitForInput(exec.agent, timeoutMs, exec.signal, exec.rootCallId, waitLifetime.signal)
     },
   }
 

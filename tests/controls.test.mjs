@@ -23,10 +23,16 @@ function harness(options = {}) {
   const promptContexts = []
   const promptSections = []
   const toolsService = { get: () => undefined }
+  const parentOptions = options.parentOptions ?? { provider: 'deepseek', model: 'deepseek-chat' }
   const callerAgent = {
     id: 's-a',
     status: 'running',
+    options: { ...parentOptions },
     inbox: { nextStep: [] },
+    session: {
+      requestHeader: () => ({ config: { ...parentOptions } }),
+      snapshotEvents: () => options.modelSelectionEvents ?? [],
+    },
     followup: (message) => delivered.push(message),
     steer: (message) => steered.push(message),
   }
@@ -369,6 +375,47 @@ test('composed subagent validates and forwards explicit model selection', async 
   })
 })
 
+test('composed subagent rejects an explicit non-parent route without a recorded policy', async () => {
+  const harnessed = harness({ mode: 'composed', llm: true })
+  await assert.rejects(
+    harnessed.tool('subagent').execute({
+      description: 'Scoped analysis',
+      prompt: 'Read the file and report.',
+      provider: 'other',
+      model: 'other-chat',
+    }, {
+      agent: harnessed.callerAgent,
+      signal: new AbortController().signal,
+    }),
+    (error) => error instanceof CompositionError && error.code === 'MODEL_SELECTION_FORBIDDEN',
+  )
+  assert.equal(harnessed.started.length, 0)
+  assert.equal(harnessed.resolvedModels.length, 0)
+})
+
+test('composed subagent honors a recorded model-selection policy', async () => {
+  const harnessed = harness({
+    mode: 'composed',
+    llm: true,
+    modelSelectionEvents: [{
+      type: 'subagent/model-selection-policy',
+      data: { allowedModels: [{ provider: 'other', model: 'other-chat' }] },
+    }],
+  })
+  const result = await harnessed.tool('subagent').execute({
+    description: 'Scoped analysis',
+    prompt: 'Read the file and report.',
+    provider: 'other',
+    model: 'other-chat',
+  }, {
+    agent: harnessed.callerAgent,
+    signal: new AbortController().signal,
+  })
+  assert.deepEqual(result, { kind: 'activation', name: 'agent-1' })
+  assert.deepEqual(harnessed.resolvedModels, [{ provider: 'other', model: 'other-chat' }])
+  assert.deepEqual(harnessed.started[0].agentOptions, { provider: 'other', model: 'other-chat' })
+})
+
 test('composed subagent requires provider and model together', async () => {
   const harnessed = harness({ mode: 'composed', llm: true })
   await assert.rejects(
@@ -385,12 +432,20 @@ test('composed subagent requires provider and model together', async () => {
   assert.equal(harnessed.started.length, 0)
 })
 
+test('composed list_agents reports running/inactive status', async () => {
+  const harnessed = harness({ mode: 'composed' })
+  const listed = await harnessed.tool('list_agents').execute({}, { agent: harnessed.callerAgent })
+  assert.equal(listed.agents.find((entry) => entry.nodeId === 'n-a').status, 'running')
+  assert.equal(listed.agents.find((entry) => entry.nodeId === 'n-b').status, 'inactive')
+})
+
 test('composed wait_agent resolves when fresh input reaches the caller inbox', async () => {
   const harnessed = harness({ mode: 'composed' })
   const waiting = harnessed.tool('wait_agent').execute({ timeout_ms: 10_000 }, {
     agent: harnessed.callerAgent,
     signal: new AbortController().signal,
   })
+  harnessed.callerAgent.inbox.nextStep.push({ id: 'fresh-message' })
   harnessed.emit('agent/inbox/inserted', { agent: harnessed.callerAgent })
   assert.deepEqual(await waiting, { timedOut: false })
 })
@@ -402,6 +457,39 @@ test('composed wait_agent returns immediately for pending input', async () => {
     agent: harnessed.callerAgent,
     signal: new AbortController().signal,
   }), { timedOut: false })
+})
+
+test('composed wait_agent does not spin on input already reported in the same root call', async () => {
+  const harnessed = harness({ mode: 'composed' })
+  harnessed.callerAgent.inbox.nextStep.push({ id: 'pending-message' })
+  const controller = new AbortController()
+  const signal = controller.signal
+  const first = await harnessed.tool('wait_agent').execute({ timeout_ms: 10_000 }, {
+    agent: harnessed.callerAgent,
+    signal,
+    rootCallId: 'root-call-1',
+  })
+  assert.deepEqual(first, { timedOut: false })
+
+  let settled = false
+  const second = harnessed.tool('wait_agent').execute({ timeout_ms: 10_000 }, {
+    agent: harnessed.callerAgent,
+    signal,
+    rootCallId: 'root-call-1',
+  })
+  second.then(() => { settled = true }, () => { settled = true })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(settled, false)
+
+  controller.abort(new CompositionError('WAIT_UNAVAILABLE', 'test cleanup'))
+  await assert.rejects(second, (error) => error?.code === 'WAIT_UNAVAILABLE')
+})
+
+test('composed delegation/list tools declare their concurrency safety', () => {
+  const harnessed = harness({ mode: 'composed' })
+  assert.equal(harnessed.tool('subagent').isConcurrencySafe(), true)
+  assert.equal(harnessed.tool('subagent_fork').isConcurrencySafe(), true)
+  assert.equal(harnessed.tool('list_agents').isConcurrencySafe(), true)
 })
 
 test('composed subagent can leave the delegation edge ungranted by config', async () => {

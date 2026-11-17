@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (117 total);
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (128 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`) and
@@ -177,7 +177,7 @@ src/clone.js              Pure clone/bud planner: whole-root tree, markers,
 src/clone-manager.js      Whole-tree clone/bud adapter: seeded root, depth-first
                           children, idle children, task copy, failure cleanup
 src/store.js              DSH storage-domain adapter + memory fallback
-                          (compositions/policies/audit/tasks/clones)
+                          (compositions/policies/audit/audit_archive/tasks/clones)
 src/discovery.js          Live/persisted session discovery and observations
 src/manager.js            Serialized mutations, grants, path authorization
 src/http.js               Loopback, token-authenticated JSON bridge
@@ -206,16 +206,25 @@ package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
 
 Remaining work: compare composed tool order and the prefix
-fingerprint against a live native request; enforce the desktop model-selection
-allowlist; stop `standard`/`ptc` sessions from shadowing the composed names; keep
-large-session tab latency under observation. Clone/bud live verification and
-the temporary `/clone-spike` removal are complete (2026-11-18). The 2026-11-18
-audit fixed P0 SEC-1 (Host/Origin), SEC-2 (one-composition membership), SEC-4
-(locked/compensated move), plus P1 SEC-3 (task provenance), PERF-1/2/3/4/5/6/7/8/9/10/11
-(native/corpus/title caches, composition-only summary, title/clone bounds, lock
-splitting, record reuse, no implicit sync, task/clone indexes, audit pruning,
-picker cap). R-1/R-4/R-5 are also fixed. Remaining audit items: SEC-5..SEC-12,
-R-7/R-8, and optional cold-title/seed-streaming improvements. Decisions
+fingerprint against a live native request; stop `standard`/`ptc` sessions from
+shadowing the composed names; keep large-session tab latency under observation.
+Clone/bud live verification and the temporary `/clone-spike` removal are
+complete (2026-11-18). The 2026-11-18 audit fixed P0 SEC-1 (Host/Origin), SEC-2
+(one-composition membership), SEC-4 (locked/compensated move), plus P1 SEC-3
+(task provenance), PERF-1/2/3/4/5/6/7/8/9/10/11 (native/corpus/title caches,
+composition-only summary, title/clone bounds, lock splitting, record reuse, no
+implicit sync, task/clone indexes, audit pruning, picker cap). R-1/R-4/R-5 are
+also fixed. A second-round hardening on 2026-11-18 fixed the `res.on('close')`
+cancellation bug (clone/bud no longer get an already-aborted signal), task-index
+ghost rows after a root move, DSH model-selection-policy enforcement in composed
+`subagent`, `wait_agent` reported-input de-duplication and unload lifetime,
+`isConcurrencySafe` for `subagent`/`subagent_fork`/`list_agents`, running-clone
+eviction protection, truthful cached native counts in `/summary`, early
+Host/Origin and oversized-body rejection in the Node adapter, and audit
+rotation to an `audit_archive` table. Remaining audit items: SEC-5..SEC-12,
+R-7/R-8, X-10 (agent_preset/provider capability), X-12 (workspace rollback,
+storageDomain hard inject, DSH version pin) and X-14 (cold title / picker
+cap), plus optional cold-title/seed-streaming improvements. Decisions
 (2026-11-18): a connection the user adds manually defaults to bidirectional
 messaging (`allowMessage: true`, `allowInterrupt: false`); direct reparenting
 migrates an existing grant, or defaults the replacement edge to messaging when

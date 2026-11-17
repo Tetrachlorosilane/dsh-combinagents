@@ -338,19 +338,34 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     try {
       root = await createRoot(rootSourceNode, snapshotAt)
       signal?.throwIfAborted()
-      await attachWorkspace(rootSourceNode.sourceSessionId, root.sourceHeader, root.id)
-      rootHandles.set(root.id, root.handle)
-      while (rootHandles.size > MAX_LIVE_CLONE_ROOTS) {
-        const oldest = rootHandles.entries().next().value
-        if (oldest === undefined) break
-        const [oldestId, oldestHandle] = oldest
-        rootHandles.delete(oldestId)
+      // Make room before registering the new root so the cap can never evict
+      // the root that this operation is still building. A running retained root
+      // (the user may have resumed it) is never disposed; fail the new clone
+      // instead of interrupting live work.
+      while (rootHandles.size >= MAX_LIVE_CLONE_ROOTS) {
+        const candidate = [...rootHandles.entries()].find(([candidateId]) => {
+          try {
+            return agents()?.get?.(candidateId)?.status !== 'running'
+          } catch {
+            return true
+          }
+        })
+        if (candidate === undefined) {
+          throw new CompositionError(
+            'CLONE_IN_PROGRESS',
+            'cannot release a running clone root; retry after it becomes idle',
+          )
+        }
+        const [candidateId, candidateHandle] = candidate
+        rootHandles.delete(candidateId)
         try {
-          await oldestHandle.dispose?.()
+          await candidateHandle.dispose?.()
         } catch (error) {
           ctx.logger?.warn?.('dsh-combinagents: releasing an idle clone root failed', error)
         }
       }
+      rootHandles.set(root.id, root.handle)
+      await attachWorkspace(rootSourceNode.sourceSessionId, root.sourceHeader, root.id)
       cloneNodeBySource.set(rootSourceNode.sourceNodeId, {
         id: randomUUID(),
         sessionId: root.id,

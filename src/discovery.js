@@ -33,8 +33,10 @@ export function createDiscovery(ctx, options = {}) {
   let archiveCache = { at: 0, ids: new Set() }
   /** @type {{at: number, data: {sessions: object[], complete: boolean}|null}} */
   let corpusCache = { at: 0, data: null }
-  /** @type {Map<string, {at: number, value: SessionSummary}>} */
+  /** Full summaries whose title was folded from the session log. */
   const describeCache = new Map()
+  /** Metadata-only summaries (no log-backed title); never used by `describe`. */
+  const headerCache = new Map()
   /** @type {Map<string, {at: number, title: string}>} */
   const titleCache = new Map()
   /** @type {Map<string, Promise<SessionSummary|null>>} */
@@ -50,6 +52,8 @@ export function createDiscovery(ctx, options = {}) {
   const nativeCache = new Map()
   /** @type {Map<string, Promise<object[]>>} */
   const nativeInFlight = new Map()
+  /** Bumped by invalidateNative so an older in-flight walk cannot repopulate. */
+  let nativeGeneration = 0
 
   /**
    * The workspace registry owns the durable archive set. Cache it briefly: the
@@ -206,6 +210,57 @@ export function createDiscovery(ctx, options = {}) {
   }
 
   /**
+   * Describe one session from metadata only, without folding its title from the
+   * full event log. Ownership resolution needs the immutable parent header, not
+   * the rendered title; reading a large log for that lookup made `/summary` on
+   * a non-member persisted session cold for hundreds of milliseconds.
+   * @param {string} sessionId - known session id.
+   * @returns {Promise<SessionSummary|null>}
+   */
+  async function describeHeader(sessionId) {
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return null
+    const full = describeCache.get(sessionId)
+    if (full !== undefined && Date.now() - full.at < DESCRIBE_TTL_MS) return full.value
+    const cached = headerCache.get(sessionId)
+    if (cached !== undefined && Date.now() - cached.at < DESCRIBE_TTL_MS) return cached.value
+    const live = liveSession(sessionId)
+    if (live !== undefined) {
+      const summary = summaryOf(live.header, live, false, undefined, true)
+      headerCache.set(sessionId, { at: Date.now(), value: summary })
+      return summary
+    }
+    const corpus = corpusCache.data !== null && Date.now() - corpusCache.at < CORPUS_TTL_MS
+      ? corpusCache.data
+      : null
+    const fromCorpus = corpus?.sessions.find((session) => session.sessionId === sessionId)
+    if (fromCorpus !== undefined) {
+      headerCache.set(sessionId, { at: Date.now(), value: fromCorpus })
+      return fromCorpus
+    }
+    const query = sessionQuery()
+    if (query?.filterSessions) {
+      try {
+        const records = await query.filterSessions([{ kind: 'id', values: [sessionId] }])
+        const record = records[0]
+        if (record !== undefined) {
+          const summary = summaryOf(
+            record.header,
+            liveSession(record.header.id),
+            record.persisted === true,
+            undefined,
+            record.live === true,
+          )
+          headerCache.set(sessionId, { at: Date.now(), value: summary })
+          return summary
+        }
+      } catch (error) {
+        log?.warn?.('dsh-combinagents: persisted header unavailable', error)
+      }
+    }
+    return null
+  }
+
+  /**
    * Filter one cached corpus by a literal query.
    * @param {{sessions: object[], complete: boolean}} corpus - cached list.
    * @param {string|undefined} query - literal text.
@@ -328,7 +383,7 @@ export function createDiscovery(ctx, options = {}) {
     const result = {}
     const missing = []
     for (const sessionId of unique) {
-      const cached = describeCache.get(sessionId)
+      const cached = describeCache.get(sessionId) ?? headerCache.get(sessionId)
       if (cached !== undefined && now - cached.at < DESCRIBE_TTL_MS) {
         result[sessionId] = cached.value
         continue
@@ -336,7 +391,7 @@ export function createDiscovery(ctx, options = {}) {
       const live = liveSession(sessionId)
       if (live !== undefined) {
         result[sessionId] = summaryOf(live.header, live, false, undefined, true)
-        describeCache.set(sessionId, { at: now, value: result[sessionId] })
+        headerCache.set(sessionId, { at: now, value: result[sessionId] })
       } else {
         missing.push(sessionId)
       }
@@ -356,7 +411,7 @@ export function createDiscovery(ctx, options = {}) {
         unresolved.push(sessionId)
       } else {
         result[sessionId] = summary
-        describeCache.set(sessionId, { at: now, value: summary })
+        headerCache.set(sessionId, { at: now, value: summary })
       }
     }
     const query = sessionQuery()
@@ -366,7 +421,7 @@ export function createDiscovery(ctx, options = {}) {
         for (const record of records) {
           const summary = summaryOf(record.header, liveSession(record.header.id), record.persisted === true, undefined, record.live === true)
           result[record.header.id] = summary
-          describeCache.set(record.header.id, { at: now, value: summary })
+          headerCache.set(record.header.id, { at: now, value: summary })
         }
       } catch (error) {
         log?.warn?.('dsh-combinagents: persisted headers unavailable', error)
@@ -422,9 +477,12 @@ export function createDiscovery(ctx, options = {}) {
     if (pending !== undefined) return pending
     const service = ctx.get?.('subagents')
     if (service?.listDescendants === undefined) return []
+    const generation = nativeGeneration
     const promise = service.listDescendants(rootSessionId)
       .then((entries) => {
-        nativeCache.set(rootSessionId, { at: Date.now(), entries })
+        if (generation === nativeGeneration) {
+          nativeCache.set(rootSessionId, { at: Date.now(), entries })
+        }
         return entries
       })
       .finally(() => {
@@ -440,6 +498,7 @@ export function createDiscovery(ctx, options = {}) {
    */
   function invalidateNative(rootSessionId) {
     if (typeof rootSessionId === 'string' && rootSessionId.length > 0) {
+      nativeGeneration += 1
       nativeCache.delete(rootSessionId)
       nativeInFlight.delete(rootSessionId)
     }
@@ -508,6 +567,20 @@ export function createDiscovery(ctx, options = {}) {
   }
 
   /**
+   * Read a native descendant count only when a recent walk is already cached.
+   * This lets `/summary` report a truthful native count without paying the cold
+   * `listDescendants()` cost on the header path.
+   * @param {string} rootSessionId - session whose catalogs may be cached.
+   * @returns {number|null} cached child count, or null when no fresh cache exists.
+   */
+  function peekNativeCount(rootSessionId) {
+    if (typeof rootSessionId !== 'string' || rootSessionId.length === 0) return null
+    const cached = nativeCache.get(rootSessionId)
+    if (cached === undefined || Date.now() - cached.at >= NATIVE_TTL_MS) return null
+    return cached.entries.filter((entry) => entry.kind === 'child').length
+  }
+
+  /**
    * List every child row reachable from one root session's native catalogs.
    * @param {string} rootSessionId - session whose catalogs to walk.
    * @returns {Promise<{available: boolean, children: object[]}>}
@@ -527,5 +600,5 @@ export function createDiscovery(ctx, options = {}) {
     }
   }
 
-  return { list, titles, describe, describeMany, isKnownSession, listNative, countNative, listTree, invalidateNative }
+  return { list, titles, describe, describeHeader, describeMany, isKnownSession, listNative, countNative, peekNativeCount, listTree, invalidateNative }
 }

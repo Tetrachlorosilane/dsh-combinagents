@@ -356,6 +356,31 @@ test('caps retained clone roots and releases one explicitly', async () => {
   cloneManager.dispose()
 })
 
+test('does not evict a running clone root to make room', async () => {
+  const { store, cloneManager, live } = createHarness()
+  installSource(store, createComposition({
+    id: 'source',
+    title: 'Solo',
+    rootSessionId: 's-a',
+    nodes: [node('n-a', 's-a', 'Root')],
+    edges: [],
+  }))
+  const roots = []
+  for (let index = 0; index < MAX_LIVE_CLONE_ROOTS; index += 1) {
+    roots.push((await cloneManager.cloneTree('s-a')).clone.newRootSessionId)
+  }
+  for (const root of roots) live.get(root).status = 'running'
+
+  await assert.rejects(
+    () => cloneManager.cloneTree('s-a'),
+    (error) => error?.code === 'CLONE_IN_PROGRESS',
+  )
+  assert.equal(cloneManager.liveCount, MAX_LIVE_CLONE_ROOTS)
+  assert.equal(live.size, MAX_LIVE_CLONE_ROOTS)
+  for (const root of roots) assert.equal(live.has(root), true)
+  cloneManager.dispose()
+})
+
 test('rejects a second clone while one is running', async () => {
   const { store, cloneManager } = createHarness()
   installSource(store, createComposition({

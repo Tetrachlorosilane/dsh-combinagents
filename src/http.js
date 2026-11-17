@@ -190,7 +190,7 @@ function errorOf(error) {
     return { status: error.status, code: error.code, message: error.message }
   }
   if (error instanceof CompositionError) {
-    const status = error.code === 'ROOT_PROTECTED' || error.code === 'TASK_FORBIDDEN'
+    const status = error.code === 'ROOT_PROTECTED' || error.code === 'TASK_FORBIDDEN' || error.code === 'MODEL_SELECTION_FORBIDDEN'
       ? 403
       : error.code === 'CLONE_UNAVAILABLE'
         ? 503
@@ -301,15 +301,18 @@ export function createApi({
       const resolved = await manager.resolveSession(sessionId)
       const rootSessionId = resolved?.rootSessionId ?? sessionId
       const compositionNodes = resolved?.record.composition.nodes.length ?? 0
-      // The header chip only needs the overlay size. Keeping the native
-      // listDescendants walk off this route removes the 2 s cold path; callers
-      // that need native leaves still use /external or /state.
+      // The header chip needs the overlay size without paying a cold native
+      // walk. Report the native count only when a recent /external or
+      // sync-native already cached it; never claim native availability
+      // otherwise (the old compositionNodes-as-subagents value was misleading).
+      const nativeSubagents = discovery.peekNativeCount?.(rootSessionId) ?? null
       return json(200, {
         sessionId,
         rootSessionId,
         compositionNodes,
-        subagents: compositionNodes,
-        available: true,
+        subagents: nativeSubagents,
+        nativeSubagents,
+        available: nativeSubagents !== null,
       })
     }
     if (route === '/grants') {
@@ -494,11 +497,45 @@ export function createNodeHandler(api, options = {}) {
   const log = options.logger
   return async function nodeHandler(req, res) {
     const controller = new AbortController()
+    // `IncomingMessage` emits 'close' as soon as the request body is consumed,
+    // which is not a disconnect. The response's 'close' fires on finish or on a
+    // real client abort; only the latter may cancel signal-aware work.
     const onClose = () => {
       if (!res.writableEnded) controller.abort()
     }
-    req.on('close', onClose)
+    res.on('close', onClose)
     try {
+      // Reject an untrusted authority before reading the body. The API repeats
+      // these checks for direct callers, but the Node adapter must not let a
+      // forged Host force even one body buffer.
+      const localPort = req.socket?.localPort
+      const secure = req.socket?.encrypted === true
+      if (!isLoopback(req.socket?.remoteAddress)
+        || !isTrustedHost(req.headers.host, localPort)
+        || !isTrustedOrigin(req.headers.origin, localPort, secure)) {
+        res.statusCode = 403
+        res.setHeader('content-type', 'application/json; charset=utf-8')
+        res.setHeader('cache-control', 'no-store')
+        res.setHeader('connection', 'close')
+        res.end(JSON.stringify({ error: { code: 'FORBIDDEN', message: 'untrusted request authority' } }))
+        return
+      }
+      // Reject an oversized declared body before buffering it. A chunked
+      // request still hits the incremental cap in readBody.
+      const declaredLength = Number(req.headers['content-length'])
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+        res.statusCode = 413
+        res.setHeader('content-type', 'application/json; charset=utf-8')
+        res.setHeader('cache-control', 'no-store')
+        res.setHeader('connection', 'close')
+        res.end(JSON.stringify({
+          error: {
+            code: 'PAYLOAD_TOO_LARGE',
+            message: `request body exceeds ${MAX_BODY_BYTES} bytes`,
+          },
+        }))
+        return
+      }
       const body = await readBody(req)
       const response = await api.handle({
         method: req.method,
@@ -526,7 +563,7 @@ export function createNodeHandler(api, options = {}) {
         },
       }))
     } finally {
-      req.off('close', onClose)
+      res.off('close', onClose)
     }
   }
 }

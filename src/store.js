@@ -23,8 +23,14 @@ export const COMPOSITION_TABLE = 'compositions'
 /** Table holding per-composition edge grants. */
 export const POLICY_TABLE = 'policies'
 
-/** Table holding append-only capability audit rows. */
+/** Table holding the active append-only capability audit rows. */
 export const AUDIT_TABLE = 'audit'
+
+/**
+ * Table holding audit rows rotated out of the active window. Rotation must not
+ * silently delete accountability evidence; archived rows stay readable.
+ */
+export const AUDIT_ARCHIVE_TABLE = 'audit_archive'
 
 /** Table holding plugin-owned composition tasks (never DSH Team tasks). */
 export const TASK_TABLE = 'tasks'
@@ -172,6 +178,7 @@ export const COMPOSITION_DOMAIN_SPEC = {
     [COMPOSITION_TABLE]: { valueSchema: compositionRecordSchema },
     [POLICY_TABLE]: { valueSchema: policyRecordSchema },
     [AUDIT_TABLE]: { valueSchema: auditRecordSchema },
+    [AUDIT_ARCHIVE_TABLE]: { valueSchema: auditRecordSchema },
     [TASK_TABLE]: { valueSchema: taskRecordSchema },
     [CLONE_TABLE]: { valueSchema: cloneRecordSchema },
   },
@@ -274,6 +281,18 @@ export function createStore(ctx, options = {}) {
   }
 
   /**
+   * Remove one task id from every root bucket. A task can change its
+   * `rootSessionId` during a cross-composition move; leaving the old bucket in
+   * place would make the source board show a ghost row that can no longer be
+   * updated or deleted through that root.
+   * @param {string} taskId - storage key.
+   */
+  function removeTaskEverywhere(taskId) {
+    if (!taskIndex.loaded) return
+    for (const bucket of taskIndex.byRoot.values()) bucket.delete(taskId)
+  }
+
+  /**
    * @param {string} cloneId - storage key.
    * @param {object} record - clone record.
    */
@@ -325,11 +344,15 @@ export function createStore(ctx, options = {}) {
    */
   async function pruneAudit(limit = AUDIT_LIMIT) {
     const table = await tableOf(AUDIT_TABLE)
+    const archive = await tableOf(AUDIT_ARCHIVE_TABLE)
     const entries = table !== null ? [...table.entries()] : [...memory.get(AUDIT_TABLE).entries()]
     if (entries.length <= limit) return 0
     entries.sort((left, right) => Number(left[1]?.at ?? 0) - Number(right[1]?.at ?? 0))
     const remove = entries.slice(0, entries.length - limit)
-    for (const [id] of remove) {
+    for (const [id, record] of remove) {
+      // Archive before deleting: a failed archive write must not lose the row.
+      if (archive !== null) await archive.put(id, record)
+      else memory.get(AUDIT_ARCHIVE_TABLE).set(id, record)
       if (table !== null) await table.delete(id)
       else memory.get(AUDIT_TABLE).delete(id)
     }
@@ -414,6 +437,12 @@ export function createStore(ctx, options = {}) {
       if (typeof rootSessionId !== 'string') return entries
       return entries.filter(([, record]) => record.rootSessionId === rootSessionId)
     },
+    async listAuditArchive(rootSessionId) {
+      const table = await tableOf(AUDIT_ARCHIVE_TABLE)
+      const entries = table !== null ? [...table.entries()] : [...memory.get(AUDIT_ARCHIVE_TABLE).entries()]
+      if (typeof rootSessionId !== 'string') return entries
+      return entries.filter(([, record]) => record.rootSessionId === rootSessionId)
+    },
     async getTask(taskId) {
       const table = await tableOf(TASK_TABLE)
       if (table !== null) return table.get(taskId)
@@ -426,6 +455,7 @@ export function createStore(ctx, options = {}) {
       } else {
         memory.get(TASK_TABLE).set(taskId, record)
       }
+      removeTaskEverywhere(taskId)
       indexTask(taskId, record)
     },
     async deleteTask(taskId) {
@@ -436,6 +466,7 @@ export function createStore(ctx, options = {}) {
       } else {
         memory.get(TASK_TABLE).delete(taskId)
       }
+      removeTaskEverywhere(taskId)
       unindexTask(taskId, previous)
     },
     async listTasks(rootSessionId) {
@@ -445,6 +476,7 @@ export function createStore(ctx, options = {}) {
       }
       await loadTaskIndex()
       return [...(taskIndex.byRoot.get(rootSessionId)?.entries() ?? [])]
+        .filter(([, record]) => record?.rootSessionId === rootSessionId)
     },
     async getClone(cloneId) {
       const table = await tableOf(CLONE_TABLE)

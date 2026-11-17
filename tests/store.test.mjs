@@ -107,6 +107,26 @@ test('indexes tasks by root after the first list and keeps it current', async ()
   assert.deepEqual((await store.listTasks('root-b')).map(([id]) => id), ['t-b'])
 })
 
+test('moves a task between roots without leaving a source ghost', async () => {
+  const store = createStore({ get: () => undefined, logger: { info() {}, warn() {} } })
+  await store.ready
+  const now = Date.now()
+  await store.putTask('t-move', {
+    id: 't-move', rootSessionId: 'root-a', subject: 'Move', status: 'pending', revision: 1,
+    createdAt: now, updatedAt: now,
+  })
+  assert.deepEqual((await store.listTasks('root-a')).map(([id]) => id), ['t-move'])
+  await store.putTask('t-move', {
+    id: 't-move', rootSessionId: 'root-b', subject: 'Move', status: 'pending', revision: 1,
+    createdAt: now, updatedAt: now,
+  })
+  assert.deepEqual(await store.listTasks('root-a'), [])
+  assert.deepEqual((await store.listTasks('root-b')).map(([id]) => id), ['t-move'])
+  await store.deleteTask('t-move')
+  assert.deepEqual(await store.listTasks('root-a'), [])
+  assert.deepEqual(await store.listTasks('root-b'), [])
+})
+
 test('indexes clones by new root and prunes old audit rows', async () => {
   const store = createStore({ get: () => undefined, logger: { info() {}, warn() {} } })
   await store.ready
@@ -121,4 +141,5 @@ test('indexes clones by new root and prunes old audit rows', async () => {
   await store.appendAudit({ id: 'a-3', at: 3 })
   assert.equal(await store.pruneAudit(2), 1)
   assert.deepEqual((await store.listAudit()).map(([id]) => id).sort(), ['a-2', 'a-3'])
+  assert.deepEqual((await store.listAuditArchive()).map(([id]) => id), ['a-1'])
 })

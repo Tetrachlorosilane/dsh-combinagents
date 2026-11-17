@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { createComposition } from '../src/graph.js'
 import { createManager } from '../src/manager.js'
+import { createStore } from '../src/store.js'
 
 function summary(sessionId, title, source = 'top-level') {
   return {
@@ -765,4 +766,23 @@ test('skips malformed composition records when building membership', async () =>
   })
   assert.equal(await manager.resolveSession('s-a'), null)
   assert.ok(warnings.some((entry) => entry[0].includes('malformed nodes')))
+})
+
+test('moving a task between compositions removes it from the source on the real store', async () => {
+  const store = createStore({ get: () => undefined, logger: { info() {}, warn() {} } })
+  await store.ready
+  const manager = createManager({ store, discovery: fakeDiscovery(['t-root', 's-root', 'b']) })
+  await manager.create('t-root')
+  await manager.create('s-root')
+  const tRoot = (await manager.state('t-root')).composition.nodes[0]
+  const sRoot = (await manager.state('s-root')).composition.nodes[0]
+  await manager.addNode('s-root', { sessionId: 'b', parentId: sRoot.id })
+  const b = (await manager.state('s-root')).composition.nodes.find((node) => node.sessionId === 'b')
+  await manager.createTask('s-root', { subject: 'Moved work', ownerNodeId: b.id })
+  assert.equal((await manager.getTasks('s-root')).length, 1)
+
+  await manager.addNode('t-root', { sessionId: 'b', parentId: tRoot.id })
+  assert.equal((await manager.getTasks('s-root')).length, 0)
+  assert.equal((await manager.getTasks('t-root')).length, 1)
+  await store.close()
 })
