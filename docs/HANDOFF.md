@@ -664,16 +664,17 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 - 已实现纯计划层：`src/clone.js`（整棵根树、clone 标记、任务 owner 重映射），
   细节与 DSH API 核对见 [`CLONE-SPIKE.md`](CLONE-SPIKE.md)；
 - 已实现 Host adapter：seed 新根、创建 cataloged 子节点、保留
-  permission/cwd/preset、挂入源 workspace、子节点 post-order idle、失败清理；
+  permission/cwd/preset、挂入源 workspace、子节点深度优先 idle、失败清理；
 - 已实现：整棵根树克隆成新树（全部新 Session id）；
 - 待验证：缓存前缀检查；
 - 已实现：克隆标记（`cloneOf` / `snapshotAt` / `sourceCompositionId`）；
 - 已实现：复制插件自有任务板并重映射 owner；
 - 已实现：cwd/preset/权限沿用源值，UI 不提供覆盖；
 - 已实现：出芽原节点保留、不自动归档，形成两棵并行独立树；
-- 已实现：失败清理；
-- 待复验：GUI 克隆徽标/详情、16 节点整树克隆与 workspace 可见性；
-- 验收：整棵根树可克隆成新树，原树不变，任务 owner 已重映射；前缀指纹检查与 GUI 复验待做。
+- 已实现：失败清理；宽树改为深度优先构建，避免 Host 的 8 个活跃子节点上限；
+- 已验证：GUI 克隆徽标/详情、两节点克隆、16 节点整树克隆与 workspace 可见性
+  （2026-11-18）；克隆根保持 idle，子节点 cataloged/saved，任务 owner 已重映射；
+- 待验证：缓存前缀指纹。
 
 ### Phase 3 — Bridge（已实现，以组合控制工具形式）
 

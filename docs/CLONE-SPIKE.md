@@ -5,8 +5,8 @@
 persisted-idle child strategy all passed. The formal whole-tree adapter is
 implemented in `src/clone-manager.js` with the `/clone-tree` and `/bud` routes.
 The temporary `/clone-spike` route and provider were removed on 2026-11-18;
-those diagnostics are not part of the product API. Live GUI re-verification is
-still pending.
+those diagnostics are not part of the product API. The formal adapter was
+live-verified with two-node and 16-node clones on 2026-11-18.
 
 ## 1. Confirmed product decisions
 
@@ -143,28 +143,46 @@ forwarded and preserved. Source permissions were not observable on the
 persisted source child, so exact permission preservation still needs a source
 with explicit permission events.
 
-## 6. Live Host spike checklist
+## 6. Formal adapter live results (2026-11-18)
 
-These require a debug route/tool and a Host restart; none is implemented yet.
+The product routes `/clone-tree` and `/bud` replaced the debug route.
 
-1. Clone a two-node tree (root + one child) and verify the cloned root's
-   `header.cwd`, `agentPreset`, permission preset, and native child catalog.
-2. Verify the source session headers/catalogs/permissions do not change.
-3. Compare the first request prefix of the clone with the source; record the
-   route/model difference, if any.
-4. Determine the child-idle behavior of `startActivation` + immediate
-   `dispose()`; inspect whether the child remains listable, resumable, and
-   messageable.
-5. Clone the 16-node rich composition; measure time and failure cleanup.
-6. Copy a task board with owners on both root and child nodes; verify the
-   remapped owners.
-7. Bud a child + subtree; verify the original node and tree remain untouched
-   and both trees can delegate independently.
+- Two-node source `session-0a6fe925...`: clone root `session-448e8a4e...` was
+  live, retained `workspace-write`, and appeared in the source workspace; its
+  cloned child `session-9f3cac9c...` was cataloged, `live: false`,
+  `persisted: true`, and pointed at the clone root. The clone root log ended at
+  the inherited `turn/end`, with only the new `subagent/catalog` appended; no
+  new turn started.
+- The copied task `Clone task acceptance` reappeared on the clone root's board
+  as `pending`, owned by the cloned root node, and was visible in the GUI.
+- The 16-node mahjong composition cloned in about 10 seconds: root
+  `session-27534c3a...`, 15 cloned children, 15 edges, zero external nodes, and
+  15 catalog entries. All 15 children were `live: false`, `persisted: true`.
+  The source composition still had 16 nodes/15 edges and no clone markers.
+- `workspaceRegistry.attachSession` adds the clone root to the workspace matched
+  by the source's session membership or, when that membership is absent, by the
+  source cwd. The 16-node clone appeared under the `mahjong` workspace.
+- The Host enforces **8 active children per parent**. Building all children live
+  first failed on child 9 with `subagent limit reached (active child limit: 8)`.
+  The adapter now builds depth-first and disposes each child after its subtree,
+  so a wide tree peaks at one active child.
+- `delivery: "caller"` still commits the native catalog, but suppresses the
+  settlement message that `delivery: "parent"` injects into the clone root.
+  With `parent`, disposing each child woke the clone root and it started a new
+  turn; with `caller`, the root stayed idle.
+- GUI checks: root shows `克隆 / 活跃 / 根会话`; children show `克隆 / 已保存`;
+  the tab header shows `Agent composition (clone)`, `16 个节点`, and the clone
+  badge details.
+
+Still open: the canonical request-prefix fingerprint, and permission
+preservation for a source whose child sessions carry explicit permission events
+(no such source was available for the live run).
 
 ## 7. Risks / open items
 
-- **Idle child semantics** are the main unknown; a clone should not silently
-  run one model turn per child.
+- **Idle child semantics** are solved by `delivery: "caller"`; the root stays
+  idle, but a future DSH release must be re-checked because the settlement
+  behavior is internal.
 - **Route/model** is not source-preserved by the public create path; the
   request-prefix fingerprint may differ even when preset/cwd/permissions match.
 - **Permission events** must be present in the copied prefix; older sessions

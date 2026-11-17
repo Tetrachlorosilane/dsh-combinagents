@@ -54,10 +54,13 @@ transitions, sync-native is callable, and composition create/delete leaves the
 DSH sessions untouched. Clone and bud execution are implemented: the pure
 planner in `src/clone.js` covers whole-root tree selection, clone markers, and
 task-copy owner mapping,
-and `src/clone-manager.js` provides the host adapter. A live two-node spike
-passed; live GUI re-verification of clone details and workspace visibility is
-still open. [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md) records the DSH API
-findings. The cross-tree
+and `src/clone-manager.js` provides the host adapter. Live verification on
+2026-11-18 cloned both a two-node and the 16-node mahjong team: the clone root
+appears in the source workspace, every child is cataloged and saved, the clone
+root stays idle, and the copied task board remaps its owner to the cloned node.
+The clone badge/details were confirmed in the GUI. The request-prefix
+fingerprint is still open. [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md) records
+the DSH API findings. The cross-tree
 delivery capability described as the Bridge is implemented as the composition
 control tools (per-edge grants, approval gate, audit), not as a separate layer.
 

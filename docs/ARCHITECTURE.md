@@ -9,7 +9,7 @@ effect for new sessions after the next Host restart.
 
 **Scope update:** the authoritative product brief is
 [`HANDOFF.md`](HANDOFF.md). It adds **snapshot/clone** (branch a team, bud a
-subagent as a new root; implemented, with live GUI re-verification pending) and a
+subagent as a new root; implemented and live-verified on 2026-11-18) and a
 **controlled bridge** (explicitly
 authorized cross-tree messages; implemented as the composition control tools,
 not a separate layer). Clones are new Sessions, never native re-parenting.
@@ -543,8 +543,8 @@ Walking skeleton:
       task-copy owner mapping; source-level DSH API spike in
       [`CLONE-SPIKE.md`](CLONE-SPIKE.md);
 - [x] live Host adapter: seed a new root, create cataloged children, preserve
-      permission/cwd/preset, attach to the source workspace, post-order idle,
-      failure cleanup;
+      permission/cwd/preset, attach to the source workspace, depth-first idle
+      children, failure cleanup;
 - [x] live two-node Host spike against the real Host (seed, preset mounting,
       catalog rebuild, permission reconstruction, open-tail closing);
 - [x] clone the **whole root tree** into new Sessions under a new root (no
@@ -557,8 +557,12 @@ Walking skeleton:
 - [ ] compute and check a canonical request-prefix fingerprint;
 - [x] clean up partial clones;
 - [x] never mutate the source tree;
-- [ ] live GUI re-verification of the clone badge/details, a 16-node clone, and
-      workspace visibility.
+- [x] live GUI re-verification of the clone badge/details, a two-node clone, and
+      the 16-node mahjong clone; clone roots appear in the source workspace and
+      stay idle while cloned children are cataloged and saved;
+- [x] build wide trees depth-first so the Host's eight-active-child limit cannot
+      be exceeded, and use `delivery: 'caller'` so disposing a cloned child does
+      not wake the clone root.
 
 ### Phase 3 — controlled bridge (implemented as composition tools)
 
@@ -609,7 +613,7 @@ viewer.
 11. A DSH-side smoke test verifies the tab opens from the header button and the
     guide.
 
-Verified on 2026-11-17: criteria 1, 3-11 through the 94 unit tests and the real
+Verified on 2026-11-17: criteria 1, 3-11 through the 95 unit tests and the real
 GUI (dark/light/420 px). Criterion 2 was demonstrated by adding a
 mahjong-workspace session to a `dsh-combinagents` composition and by the rich
 composition with 15 native subagent nodes; the cross-workspace node was removed

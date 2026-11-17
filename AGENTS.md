@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (94 total);
+  client-registration, host-wiring, controls, and bundle-shape tests (95 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`) and
@@ -81,11 +81,14 @@ external placeholders render collapsed, the task board transitions, sync-native
 is callable, and composition create/delete leaves DSH sessions untouched.
 Clone and bud execution is implemented: `src/clone.js` is the pure planner
 (whole-root tree selection, clone markers, task-copy owner mapping) and
-`src/clone-manager.js` is the host adapter (seeded root, native children,
-post-order idle, task copy, workspace attach, failure cleanup); `/clone-tree`
-and `/bud` are the product routes. A live two-node Host spike passed and the
-formal adapter followed; live GUI re-verification of the clone badge/details,
-the 16-node clone, and workspace visibility is still open. The findings are in
+`src/clone-manager.js` is the host adapter (seeded root, depth-first native
+children, idle children, task copy, workspace attach, failure cleanup);
+`/clone-tree` and `/bud` are the product routes. Live verification on
+2026-11-18 cloned a two-node tree and the 16-node mahjong team: the clone root
+appears in the source workspace, 15 children are cataloged and saved, the clone
+root stays idle (no new turn), the source composition is unchanged, and the
+copied task owner is remapped. The GUI shows the clone badge/details and the
+task board. The temporary `/clone-spike` route was removed. The findings are in
 [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md).
 The cross-tree delivery capability described
 as the Bridge is implemented as the composition control tools (per-edge grants,
@@ -167,8 +170,8 @@ src/graph.js              Pure composition graph: validation, forest, cycle chec
                           promote/cascade removal
 src/clone.js              Pure clone/bud planner: whole-root tree, markers,
                           task-copy owner mapping
-src/clone-manager.js      Whole-tree clone/bud adapter: seeded root/children,
-                          post-order idle, task copy, failure cleanup
+src/clone-manager.js      Whole-tree clone/bud adapter: seeded root, depth-first
+                          children, idle children, task copy, failure cleanup
 src/store.js              DSH storage-domain adapter + memory fallback
                           (compositions/policies/audit/tasks/clones)
 src/discovery.js          Live/persisted session discovery and observations
@@ -197,12 +200,12 @@ docs/CLONE-SPIKE.md       DSH seed/catalog/permission findings for clone/bud
 package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
 
-Remaining work: re-verify clone/bud live (GUI badge/details, 16-node clone,
-workspace attach). The temporary `/clone-spike` route was removed on
-2026-11-18; compare composed tool order and the prefix
+Remaining work: compare composed tool order and the prefix
 fingerprint against a live native request; enforce the desktop model-selection
 allowlist; stop `standard`/`ptc` sessions from shadowing the composed names; keep
-large-session tab latency under observation. Decisions (2026-11-17): direct
+large-session tab latency under observation. Clone/bud live verification and
+the temporary `/clone-spike` removal are complete (2026-11-18). Decisions
+(2026-11-17): direct
 reparenting migrates edge grants while detaching or moving across compositions
 starts edges from deny; composition title editing is implemented; archived nodes
 keep the current "offer open conversation, the workspace decides" behavior.
@@ -288,8 +291,9 @@ registration, and the rendered GUI are verified. Completed on 2026-11-17:
 - dark and light themes and 420 px width (no horizontal overflow; action buttons
   no longer split mid-word).
 
-Still open: live clone/bud re-verification, the composed-surface parity items
-listed above, and large-session tab paint.
+Still open: the composed-surface parity items listed above, the canonical
+request-prefix fingerprint, and large-session tab paint. Clone/bud GUI checks
+passed on 2026-11-18.
 
 
 ## 7. Known pitfalls
