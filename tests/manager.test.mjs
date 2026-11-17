@@ -730,3 +730,26 @@ test('moves tasks with their subtree across compositions', async () => {
   assert.equal(targetTasks.find((task) => task.subject === 'Moved work').rootSessionId, 't-root')
   assert.equal((await manager.getTasks('s-root')).some((task) => task.subject === 'Moved work'), false)
 })
+
+test('sync-native does not hold the root lock while reading the native tree', async () => {
+  const discovery = fakeDiscovery(['s-a', 's-b'])
+  let releaseTree
+  let treeCalls = 0
+  const gate = new Promise((resolve) => { releaseTree = resolve })
+  discovery.listTree = async () => {
+    treeCalls += 1
+    if (treeCalls === 1) return { available: true, children: [] }
+    await gate
+    return { available: true, children: [] }
+  }
+  const manager = createManager({ store: fakeStore(), discovery })
+  await manager.create('s-a')
+  const syncing = manager.syncNativeTree('s-a')
+  const added = await Promise.race([
+    manager.addNode('s-a', { sessionId: 's-b' }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('add waited for native tree I/O')), 500)),
+  ])
+  assert.equal(added.composition.nodes.some((node) => node.sessionId === 's-b'), true)
+  releaseTree()
+  await syncing
+})
