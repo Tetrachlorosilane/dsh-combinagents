@@ -791,6 +791,30 @@ export function createControls({
     },
   }
 
+  /**
+   * Project a stored task onto the declared tool-output shape. `ownerNodeId`
+   * is null for an unassigned task; the schema uses an empty string to keep one
+   * stable scalar type.
+   * @param {object} task - stored task.
+   * @returns {object}
+   */
+  function taskView(task) {
+    return {
+      id: task.id,
+      rootSessionId: task.rootSessionId ?? '',
+      subject: task.subject,
+      description: task.description ?? '',
+      status: task.status,
+      ownerNodeId: task.ownerNodeId ?? '',
+      blockedBy: Array.isArray(task.blockedBy) ? [...task.blockedBy] : [],
+      writeScopes: Array.isArray(task.writeScopes) ? [...task.writeScopes] : [],
+      createdBy: task.createdBy ?? 'unknown',
+      revision: task.revision,
+      createdAt: task.createdAt ?? 0,
+      updatedAt: task.updatedAt ?? 0,
+    }
+  }
+
   const taskTool = {
     name: 'composition_task',
     description:
@@ -835,14 +859,19 @@ export function createControls({
             description: { type: 'string' },
             status: { type: 'string' },
             ownerNodeId: { type: 'string' },
+            rootSessionId: { type: 'string' },
+            blockedBy: { type: 'array', items: { type: 'string' } },
+            writeScopes: { type: 'array', items: { type: 'string' } },
             createdBy: { type: 'string' },
             revision: { type: 'integer' },
+            createdAt: { type: 'integer' },
+            updatedAt: { type: 'integer' },
           }, ['id', 'subject', 'status', 'revision']),
         },
       }, ['tasks']),
       render: (_args, value) => [{
         type: 'text',
-        text: value.tasks.map((task) => `${task.status}: ${task.subject}`).join('\n') || 'no tasks',
+        text: value.tasks.map((task) => `${task.status}: ${task.subject} [created by ${task.createdBy ?? 'unknown'}]`).join('\n') || 'no tasks',
       }],
     },
     async execute(args, exec) {
@@ -850,29 +879,29 @@ export function createControls({
       const caller = await callerContext(exec.agent)
       if (caller === null) throw new CompositionError('NOT_IN_COMPOSITION', NOT_IN_COMPOSITION)
       if (args.action === 'list') {
-        return { tasks: await manager.getTasks(caller.rootSessionId) }
+        return { tasks: (await manager.getTasks(caller.rootSessionId)).map(taskView) }
       }
       if (args.action === 'create') {
         return {
-          tasks: await manager.createTask(caller.rootSessionId, {
+          tasks: (await manager.createTask(caller.rootSessionId, {
             subject: args.subject,
             description: args.description,
             ownerNodeId: caller.callerNode.id,
             createdBy: `agent:${caller.callerNode.sessionId}`,
             actor: caller.callerNode.sessionId,
-          }),
+          })).map(taskView),
         }
       }
       const action = args.status === 'in_progress'
         ? 'start'
         : args.status === 'completed' ? 'complete' : 'reopen'
       return {
-        tasks: await manager.updateTask(caller.rootSessionId, {
+        tasks: (await manager.updateTask(caller.rootSessionId, {
           taskId: args.taskId,
           expectedRevision: args.expected_revision,
           action,
           actor: caller.callerNode.sessionId,
-        }),
+        })).map(taskView),
       }
     },
   }

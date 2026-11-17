@@ -55,7 +55,20 @@ function harness(options = {}) {
     },
     async getTasks() {
       taskCalls.push({ kind: 'list' })
-      return [{ id: 't1', subject: 'Review', status: 'pending', revision: 1 }]
+      return [{
+        id: 't1',
+        rootSessionId: 's-a',
+        subject: 'Review',
+        description: '',
+        status: 'pending',
+        ownerNodeId: 'n-b',
+        blockedBy: [],
+        writeScopes: [],
+        createdBy: 'user',
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      }]
     },
     async createTask(rootSessionId, input) {
       taskCalls.push({ kind: 'create', rootSessionId, ...input })
@@ -425,6 +438,10 @@ test('composed task tool lists, creates, and updates the plugin board', async ()
   const exec = { agent: harnessed.callerAgent, signal: new AbortController().signal }
   const listed = await harnessed.tool('composition_task').execute({ action: 'list' }, exec)
   assert.equal(listed.tasks[0].id, 't1')
+  assert.equal(listed.tasks[0].createdBy, 'user')
+  assert.equal(listed.tasks[0].ownerNodeId, 'n-b')
+  const rendered = harnessed.tool('composition_task').output.render({ action: 'list' }, listed)[0].text
+  assert.match(rendered, /created by user/)
   const created = await harnessed.tool('composition_task').execute({
     action: 'create',
     subject: 'Review',
