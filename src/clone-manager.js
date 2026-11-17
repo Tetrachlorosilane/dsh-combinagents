@@ -24,6 +24,19 @@ const CLONE_NOTICE = (sourceId) => [
 ].join('\n')
 
 /**
+ * @param {object} sourceNode - source plan node that failed.
+ * @param {unknown} error - underlying failure.
+ * @returns {CompositionError}
+ */
+function cloneFailure(sourceNode, error) {
+  const detail = error instanceof Error ? error.message : String(error)
+  return new CompositionError(
+    'CLONE_FAILED',
+    `could not clone ${JSON.stringify(sourceNode.label)} (${String(sourceNode.sourceSessionId)}): ${detail}`,
+  )
+}
+
+/**
  * @param {readonly object[]} events - source session events.
  * @returns {object[]} raw completed-turn prefix, without marker/closers.
  */
@@ -133,7 +146,10 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
 
   /**
    * Find the workspace that owns a source session (walking native ancestors for
-   * subagents, matching the ordinary fork command).
+   * subagents, matching the ordinary fork command). A source session created
+   * before the workspace registry tracked it has no membership, so fall back to
+   * the workspace whose path is its cwd; otherwise the clone root would stay in
+   * the ungrouped bucket and be invisible in the sidebar.
    * @param {string} sessionId - source session.
    * @param {object} header - source header.
    * @returns {Promise<object|undefined>}
@@ -142,13 +158,35 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     const registry = ctx.get?.('workspaceRegistry')
     const workspaces = registry?.list?.() ?? []
     const direct = workspaces.find((workspace) => workspace.sessionIds?.includes(sessionId))
-    if (direct !== undefined || header?.origin !== 'subagent') return direct
+    if (direct !== undefined) return direct
+    if (header?.origin !== 'subagent') return byPath(workspaces, header?.cwd)
     const trace = await ctx.get?.('sessionQuery')?.traceSession?.(sessionId)
     for (const ancestor of trace?.ancestors ?? []) {
       const workspace = workspaces.find((candidate) => candidate.sessionIds?.includes(ancestor.header?.id))
       if (workspace !== undefined) return workspace
     }
-    return undefined
+    return byPath(workspaces, header?.cwd)
+  }
+
+  /**
+   * Match a workspace by directory, tolerating separators and Windows casing.
+   * @param {object[]} workspaces - registry entries.
+   * @param {string|undefined} cwd - session working directory.
+   * @returns {object|undefined}
+   */
+  function byPath(workspaces, cwd) {
+    const normalized = normalizePath(cwd)
+    if (normalized === null) return undefined
+    return workspaces.find((workspace) => normalizePath(workspace.path) === normalized)
+  }
+
+  /**
+   * @param {unknown} value - path-like value.
+   * @returns {string|null} comparable form.
+   */
+  function normalizePath(value) {
+    if (typeof value !== 'string' || value.length === 0) return null
+    return value.replaceAll('\\', '/').replace(/\/+$/u, '').toLowerCase()
   }
 
   /**
@@ -190,7 +228,12 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     if (sourceNode.kind !== 'session' || sourceNode.sourceSessionId === null) {
       throw new CompositionError('CLONE_SOURCE_NOT_SESSION', 'a clone root must be a local session node')
     }
-    const source = await observe(query(), sourceNode.sourceSessionId)
+    let source
+    try {
+      source = await observe(query(), sourceNode.sourceSessionId)
+    } catch (error) {
+      throw error instanceof CompositionError ? error : cloneFailure(sourceNode, error)
+    }
     const id = `session-${randomUUID()}`
     const presetService = presets()
     let agentPreset
@@ -212,6 +255,8 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
         ...(agentPreset === undefined ? {} : { agentPreset }),
       },
       ...(setup === undefined ? {} : { setup }),
+    }).catch((error) => {
+      throw cloneFailure(sourceNode, error)
     })
     return { id, handle, header: handle.agent.session.header, sourceHeader: source.header, snapshotAt }
   }
@@ -256,7 +301,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
       return { id, activation, agent, header: agent.session.header, sourceHeader: source.header, snapshotAt }
     } catch (error) {
       pendingSources.delete(id)
-      throw error
+      throw error instanceof CompositionError ? error : cloneFailure(sourceNode, error)
     }
   }
 
@@ -340,7 +385,6 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
           throw new CompositionError('CLONE_FAILED', `clone parent ${JSON.stringify(parentEdge.parentSourceNodeId)} is not live`)
         }
         const child = await createChild(sourceNode, parentAgent, snapshotAt)
-        await attachWorkspace(sourceNode.sourceSessionId, child.sourceHeader, child.id)
         createdActivations.push(child.activation)
         cloneNodeBySource.set(sourceNodeId, { id: nodeId, sessionId: child.id })
         liveAgentBySource.set(sourceNodeId, child.agent)

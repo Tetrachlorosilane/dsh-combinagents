@@ -65,7 +65,7 @@ function sourceSummary(sessionId, parentSession = null) {
   }
 }
 
-function createHarness({ failChild = false } = {}) {
+function createHarness({ failChild = false, workspaces = [] } = {}) {
   const summaries = new Map([
     ['s-a', sourceSummary('s-a')],
     ['s-b', sourceSummary('s-b', 's-a')],
@@ -164,6 +164,7 @@ function createHarness({ failChild = false } = {}) {
     subagents,
     sessionQuery,
     sessions,
+    workspaceRegistry: { list() { return workspaces } },
   }
   const ctx = {
     logger: { info() {}, warn() {} },
@@ -229,6 +230,30 @@ test('clones the whole root tree, copies tasks, and leaves children idle', async
   assert.equal(live.size, 0)
 })
 
+test('attaches the clone root by cwd when the source has no workspace membership', async () => {
+  const attached = []
+  const workspace = {
+    id: 'w-1',
+    path: '/work/s-a',
+    title: 'work',
+    sessionIds: ['s-x'],
+    async attachSession(sessionId) { attached.push(sessionId) },
+  }
+  const { store, cloneManager } = createHarness({ workspaces: [workspace] })
+  installSource(store, createComposition({
+    id: 'source',
+    title: 'Team',
+    rootSessionId: 's-a',
+    nodes: [node('n-a', 's-a', 'Root'), node('n-b', 's-b', 'Child')],
+    edges: [{ id: 'e-1', parentId: 'n-a', childId: 'n-b', role: 'reports-to' }],
+  }))
+
+  const result = await cloneManager.cloneTree('s-a')
+  assert.ok(attached.includes(result.clone.newRootSessionId))
+  assert.equal(attached.filter((id) => id === result.clone.newRootSessionId).length, 1)
+  cloneManager.dispose()
+})
+
 test('buds a subtree as an independent root without changing the source', async () => {
   const { store, cloneManager } = createHarness()
   installSource(store, createComposition({
@@ -263,7 +288,12 @@ test('cleans up the new root and records when child creation fails', async () =>
     nodes: [node('n-a', 's-a', 'Root'), node('n-b', 's-b', 'Child')],
     edges: [{ id: 'e-1', parentId: 'n-a', childId: 'n-b', role: 'reports-to' }],
   }))
-  await assert.rejects(() => cloneManager.cloneTree('s-a'), /child creation failed/)
+  await assert.rejects(() => cloneManager.cloneTree('s-a'), (error) => {
+    assert.equal(error.code, 'CLONE_FAILED')
+    assert.match(error.message, /Child/)
+    assert.match(error.message, /child creation failed/)
+    return true
+  })
   assert.equal(live.size, 0)
   assert.equal((await store.listClones()).length, 0)
   assert.equal((await store.listTasks(created[0])).length, 0)
