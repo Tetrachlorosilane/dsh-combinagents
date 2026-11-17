@@ -93,3 +93,16 @@ test('the record schema rejects corrupt stored data', () => {
   assert.equal(COMPOSITION_DOMAIN_SPEC.layout, 'per-record')
   assert.equal(COMPOSITION_DOMAIN_SPEC.invalidRecords, 'backup-and-skip')
 })
+
+test('indexes tasks by root after the first list and keeps it current', async () => {
+  const store = createStore({ get: () => undefined, logger: { info() {}, warn() {} } })
+  await store.ready
+  await store.putTask('t-a', { id: 't-a', rootSessionId: 'root-a', subject: 'A', createdAt: 1 })
+  await store.putTask('t-b', { id: 't-b', rootSessionId: 'root-b', subject: 'B', createdAt: 2 })
+  assert.deepEqual((await store.listTasks('root-a')).map(([id]) => id), ['t-a'])
+  await store.putTask('t-c', { id: 't-c', rootSessionId: 'root-a', subject: 'C', createdAt: 3 })
+  assert.deepEqual((await store.listTasks('root-a')).map(([id]) => id).sort(), ['t-a', 't-c'])
+  await store.deleteTask('t-a')
+  assert.deepEqual((await store.listTasks('root-a')).map(([id]) => id), ['t-c'])
+  assert.deepEqual((await store.listTasks('root-b')).map(([id]) => id), ['t-b'])
+})

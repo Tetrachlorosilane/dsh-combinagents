@@ -195,6 +195,8 @@ export function createStore(ctx, options = {}) {
   /** @type {null | {tables: Map<string, object>, close: Function}} */
   let opened = null
   let mode = 'memory'
+  /** @type {{loaded: boolean, byRoot: Map<string, Map<string, object>>}} */
+  const taskIndex = { loaded: false, byRoot: new Map() }
 
   const ready = open().catch((error) => {
     // open() handles its own failures; this is a defensive net.
@@ -217,6 +219,54 @@ export function createStore(ctx, options = {}) {
     } catch (error) {
       log?.warn?.('dsh-combinagents: composition domain open failed; using memory storage', error)
     }
+  }
+
+  /**
+   * Add one task row to the in-memory per-root index when it is loaded.
+   * @param {string} taskId - storage key.
+   * @param {object} record - task record.
+   */
+  function indexTask(taskId, record) {
+    if (!taskIndex.loaded || typeof record?.rootSessionId !== 'string') return
+    let bucket = taskIndex.byRoot.get(record.rootSessionId)
+    if (bucket === undefined) {
+      bucket = new Map()
+      taskIndex.byRoot.set(record.rootSessionId, bucket)
+    }
+    bucket.set(taskId, record)
+  }
+
+  /**
+   * Remove one task row from the in-memory per-root index.
+   * @param {string} taskId - storage key.
+   * @param {object|undefined} record - task record.
+   */
+  function unindexTask(taskId, record) {
+    if (!taskIndex.loaded || typeof record?.rootSessionId !== 'string') return
+    const bucket = taskIndex.byRoot.get(record.rootSessionId)
+    if (bucket === undefined) return
+    bucket.delete(taskId)
+  }
+
+  /**
+   * Build the task index once from the durable table or memory map.
+   * @returns {Promise<void>}
+   */
+  async function loadTaskIndex() {
+    if (taskIndex.loaded) return
+    const table = await tableOf(TASK_TABLE)
+    const entries = table !== null ? [...table.entries()] : [...memory.get(TASK_TABLE).entries()]
+    taskIndex.byRoot.clear()
+    for (const [taskId, record] of entries) {
+      if (typeof record?.rootSessionId !== 'string') continue
+      let bucket = taskIndex.byRoot.get(record.rootSessionId)
+      if (bucket === undefined) {
+        bucket = new Map()
+        taskIndex.byRoot.set(record.rootSessionId, bucket)
+      }
+      bucket.set(taskId, record)
+    }
+    taskIndex.loaded = true
   }
 
   /**
@@ -303,23 +353,28 @@ export function createStore(ctx, options = {}) {
       const table = await tableOf(TASK_TABLE)
       if (table !== null) {
         await table.put(taskId, record)
-        return
+      } else {
+        memory.get(TASK_TABLE).set(taskId, record)
       }
-      memory.get(TASK_TABLE).set(taskId, record)
+      indexTask(taskId, record)
     },
     async deleteTask(taskId) {
       const table = await tableOf(TASK_TABLE)
+      const previous = table !== null ? table.get(taskId) : memory.get(TASK_TABLE).get(taskId)
       if (table !== null) {
         await table.delete(taskId)
-        return
+      } else {
+        memory.get(TASK_TABLE).delete(taskId)
       }
-      memory.get(TASK_TABLE).delete(taskId)
+      unindexTask(taskId, previous)
     },
     async listTasks(rootSessionId) {
-      const table = await tableOf(TASK_TABLE)
-      const entries = table !== null ? [...table.entries()] : [...memory.get(TASK_TABLE).entries()]
-      if (typeof rootSessionId !== 'string') return entries
-      return entries.filter(([, record]) => record.rootSessionId === rootSessionId)
+      if (typeof rootSessionId !== 'string') {
+        const table = await tableOf(TASK_TABLE)
+        return table !== null ? [...table.entries()] : [...memory.get(TASK_TABLE).entries()]
+      }
+      await loadTaskIndex()
+      return [...(taskIndex.byRoot.get(rootSessionId)?.entries() ?? [])]
     },
     async getClone(cloneId) {
       const table = await tableOf(CLONE_TABLE)
