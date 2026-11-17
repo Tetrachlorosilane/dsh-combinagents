@@ -198,8 +198,8 @@ package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
 
 Remaining work: re-verify clone/bud live (GUI badge/details, 16-node clone,
-workspace attach); remove the temporary `/clone-spike` route once the formal
-adapter is fully verified; compare composed tool order and the prefix
+workspace attach). The temporary `/clone-spike` route was removed on
+2026-11-18; compare composed tool order and the prefix
 fingerprint against a live native request; enforce the desktop model-selection
 allowlist; stop `standard`/`ptc` sessions from shadowing the composed names; keep
 large-session tab latency under observation. Decisions (2026-11-17): direct

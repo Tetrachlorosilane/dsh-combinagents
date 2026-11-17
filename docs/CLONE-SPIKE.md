@@ -3,10 +3,10 @@
 **Status:** source-level and live two-node Host spike complete against DSH
 `0.2.2-rc.3`. Root clone, seeded child, native catalog entry, and the
 persisted-idle child strategy all passed. The formal whole-tree adapter is
-implemented in `src/clone-manager.js` with the `/clone-tree` and `/bud` routes;
-live GUI re-verification is pending. A temporary `POST /clone-spike` route
-remains wired for diagnostics; it is not part of the product API and must be
-removed once the formal adapter is verified.
+implemented in `src/clone-manager.js` with the `/clone-tree` and `/bud` routes.
+The temporary `/clone-spike` route and provider were removed on 2026-11-18;
+those diagnostics are not part of the product API. Live GUI re-verification is
+still pending.
 
 ## 1. Confirmed product decisions
 
@@ -108,27 +108,11 @@ raw prefix.
    activations, remove the partial clone composition and tasks, and leave the
    source untouched.
 
-## 4. Temporary `/clone-spike` route
+## 4. Temporary `/clone-spike` route (removed)
 
-The Host exposes a temporary, token-authenticated POST route for the live spike:
-
-```
-POST /dsh-combinagents/clone-spike
-{ "rootSessionId": "...", "childSessionId": "...", "mode": "dispose" | "live", "cleanup": false }
-```
-
-- It reads the source root and child prefixes via `sessionQuery.observeSession`.
-- It creates one clone root via `ctx.agents.create` and, when `childSessionId`
-  is supplied, one seeded child via the temporary `combinagents-clone-spike`
-  provider and `startActivation`.
-- `mode: "dispose"` disposes the child activation immediately after the catalog
-  entry is established; `mode: "live"` leaves it running.
-- The response is a diagnostic object (ok/error, headers, permissions, catalog
-  counts, source-unchanged flag). It does not create a composition record.
-- To dispose a retained live attempt:
-  `{ "action": "cleanup", "cloneRootSessionId": "..." }`.
-- The route is deliberately outside the product API and must be removed after
-  the spike. The Host needs one restart to load it.
+The diagnostic route and its `combinagents-clone-spike` provider were deleted
+after the formal adapter, `/clone-tree`, and `/bud` were exercised live. The
+findings they produced are kept below; do not reintroduce the route.
 
 ## 5. Live Host results (2026-11-17)
 

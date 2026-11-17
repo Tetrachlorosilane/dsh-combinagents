@@ -40,7 +40,6 @@ const ROUTES = new Set([
   '/rename-node',
   '/set-grant',
   '/delete-composition',
-  '/clone-spike',
   '/clone-tree',
   '/bud',
 ])
@@ -151,7 +150,6 @@ function errorOf(error) {
 export function createApi({
   manager,
   discovery,
-  cloneSpike = undefined,
   cloneManager = undefined,
   token,
   version = '0.1.0',
@@ -397,33 +395,6 @@ export function createApi({
         })
       }
       return json(200, await cloneManager.bud(body.rootSessionId, body.nodeId))
-    }
-    if (route === '/clone-spike') {
-      if (cloneSpike === undefined) {
-        return json(503, {
-          error: { code: 'CLONE_SPIKE_UNAVAILABLE', message: 'the temporary clone spike is not wired in this Host' },
-        })
-      }
-      try {
-        if (body.action === 'cleanup') {
-          return json(200, await cloneSpike.cleanup(body.cloneRootSessionId))
-        }
-        return json(200, await cloneSpike.run({
-          rootSessionId: body.rootSessionId,
-          childSessionId: body.childSessionId,
-          mode: body.mode,
-          cleanup: body.cleanup === true,
-        }))
-      } catch (error) {
-        return json(200, {
-          ok: false,
-          diagnostics: {
-            error: String(error?.message ?? error),
-            code: error?.code ?? 'CLONE_SPIKE_FAILED',
-            stack: String(error?.stack ?? ''),
-          },
-        })
-      }
     }
     if (route === '/delete-composition') {
       await manager.deleteComposition(body.rootSessionId)

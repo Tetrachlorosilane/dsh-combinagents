@@ -270,15 +270,6 @@ test('wires clone-tree and bud routes to the clone adapter', async () => {
   assert.deepEqual(calls, [['clone', 's-a'], ['bud', 's-a', 'n-b']])
 })
 
-test('reports the temporary clone spike as unavailable without wiring', async () => {
-  const { api } = makeHarness()
-  const response = await call(api, authorized('POST', '/dsh-combinagents/clone-spike', JSON.stringify({
-    rootSessionId: 's-a',
-  })))
-  assert.equal(response.status, 503)
-  assert.equal(response.data.error.code, 'CLONE_SPIKE_UNAVAILABLE')
-})
-
 test('lists sessions and deletes a composition', async () => {
   const { api } = makeHarness()
   const sessions = await call(api, authorized('GET', '/dsh-combinagents/sessions?query=review'))
