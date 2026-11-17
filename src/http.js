@@ -36,6 +36,7 @@ const ROUTES = new Set([
   '/sync-native',
   '/remove-node',
   '/set-parent',
+  '/set-title',
   '/rename-node',
   '/set-grant',
   '/delete-composition',
@@ -327,6 +328,10 @@ export function createApi({
         nodeId: body.nodeId,
         parentId: body.parentId,
       })
+      return json(200, { composition: record.composition, updatedAt: record.updatedAt })
+    }
+    if (route === '/set-title') {
+      const record = await manager.setTitle(body.rootSessionId, { title: body.title })
       return json(200, { composition: record.composition, updatedAt: record.updatedAt })
     }
     if (route === '/rename-node') {

@@ -227,6 +227,27 @@ test('validates JSON, body size, route, and method', async () => {
   assert.equal(wrongMethod.status, 405)
 })
 
+test('renames a composition title through the bridge', async () => {
+  const { api } = makeHarness()
+  await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  const renamed = await call(api, authorized('POST', '/dsh-combinagents/set-title', JSON.stringify({
+    rootSessionId: 's-a',
+    title: 'Review team',
+  })))
+  assert.equal(renamed.status, 200)
+  assert.equal(renamed.data.composition.title, 'Review team')
+
+  const state = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))
+  assert.equal(state.data.composition.title, 'Review team')
+
+  const invalid = await call(api, authorized('POST', '/dsh-combinagents/set-title', JSON.stringify({
+    rootSessionId: 's-a',
+    title: '   ',
+  })))
+  assert.equal(invalid.status, 400)
+  assert.equal(invalid.data.error.code, 'INVALID_FIELD')
+})
+
 test('lists sessions and deletes a composition', async () => {
   const { api } = makeHarness()
   const sessions = await call(api, authorized('GET', '/dsh-combinagents/sessions?query=review'))
@@ -291,6 +312,32 @@ test('adds external leaves, renames nodes, and reparents them', async () => {
   assert.equal(state.status, 200)
   assert.equal(state.data.available, true)
   assert.equal(state.data.leaves[0].label, 'ACP helper')
+})
+
+test('discovers an external leaf and attaches it through the bridge', async () => {
+  const { api } = makeHarness()
+  await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  const created = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))
+  const root = created.data.composition.nodes[0]
+
+  const listed = await call(api, authorized('GET', '/dsh-combinagents/external?rootSessionId=s-a'))
+  assert.equal(listed.status, 200)
+  const leaf = listed.data.leaves[0]
+  assert.equal(leaf.mode, 'external')
+
+  const added = await call(api, authorized('POST', '/dsh-combinagents/add-external', JSON.stringify({
+    rootSessionId: 's-a',
+    label: leaf.label,
+    provider: leaf.mode,
+    nativeParentSessionId: leaf.nativeParentSessionId,
+    parentId: root.id,
+  })))
+  assert.equal(added.status, 200)
+  const external = added.data.composition.nodes.find((node) => node.kind === 'external')
+  assert.equal(external.label, 'ACP helper')
+  assert.equal(external.provider, 'external')
+  assert.equal(external.nativeParentSessionId, 's-a')
+  assert.ok(added.data.composition.edges.some((edge) => edge.parentId === root.id && edge.childId === external.id))
 })
 
 test('resolves state and summary from a member session', async () => {

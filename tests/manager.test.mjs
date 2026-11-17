@@ -288,6 +288,18 @@ test('adds external leaves and edits labels and parents', async () => {
   await rejectsWithCode(manager.addExternal('s-a', { label: '   ' }), 'INVALID_FIELD')
 })
 
+test('renames a composition title without touching its nodes', async () => {
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery() })
+  await manager.create('s-a')
+  const record = await manager.setTitle('s-a', { title: 'Review team' })
+  assert.equal(record.composition.title, 'Review team')
+  const state = await manager.state('s-a')
+  assert.equal(state.composition.title, 'Review team')
+  assert.equal(state.composition.nodes.length, 1)
+  await rejectsWithCode(manager.setTitle('s-a', { title: '   ' }), 'INVALID_FIELD')
+  await rejectsWithCode(manager.setTitle('s-missing', { title: 'Review team' }), 'COMPOSITION_NOT_FOUND')
+})
+
 test('resolves one shared composition from a member session', async () => {
   const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery() })
   await manager.create('s-a')
@@ -435,6 +447,51 @@ test('authorizes messages and interrupts only along granted edge paths', async (
   const granted = await manager.grantDelegatedEdge('s-a', 's-a', 's-b')
   assert.equal(granted[ab.id].allowMessage, true)
   assert.equal(granted[ab.id].allowInterrupt, true)
+})
+
+test('preserves edge grants when a node changes parent and clears them on detach', async () => {
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery() })
+  await manager.create('s-a')
+  const root = (await manager.state('s-a')).composition.nodes[0]
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: root.id })
+  await manager.addNode('s-a', { sessionId: 's-c', parentId: root.id })
+  let state = await manager.state('s-a')
+  const b = state.composition.nodes.find((node) => node.sessionId === 's-b')
+  const c = state.composition.nodes.find((node) => node.sessionId === 's-c')
+  const firstEdge = state.composition.edges.find((edge) => edge.childId === b.id)
+
+  await manager.setEdgeGrant('s-a', firstEdge.id, { allowMessage: true, allowInterrupt: true })
+  await manager.setParent('s-a', { nodeId: b.id, parentId: c.id })
+  state = await manager.state('s-a')
+  const secondEdge = state.composition.edges.find((edge) => edge.childId === b.id)
+  assert.notEqual(secondEdge.id, firstEdge.id)
+  let grants = await manager.getGrants('s-a')
+  assert.equal(grants[firstEdge.id], undefined)
+  assert.deepEqual(grants[secondEdge.id], { allowMessage: true, allowInterrupt: true })
+
+  await manager.setParent('s-a', { nodeId: b.id, parentId: root.id })
+  state = await manager.state('s-a')
+  const thirdEdge = state.composition.edges.find((edge) => edge.childId === b.id)
+  grants = await manager.getGrants('s-a')
+  assert.deepEqual(grants[thirdEdge.id], { allowMessage: true, allowInterrupt: true })
+
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: c.id })
+  state = await manager.state('s-a')
+  const fourthEdge = state.composition.edges.find((edge) => edge.childId === b.id)
+  grants = await manager.getGrants('s-a')
+  assert.deepEqual(grants[fourthEdge.id], { allowMessage: true, allowInterrupt: true })
+
+  await manager.setParent('s-a', { nodeId: b.id, parentId: null })
+  state = await manager.state('s-a')
+  assert.equal(state.composition.edges.some((edge) => edge.childId === b.id), false)
+  grants = await manager.getGrants('s-a')
+  assert.equal(grants[fourthEdge.id], undefined)
+
+  await manager.setParent('s-a', { nodeId: b.id, parentId: root.id })
+  state = await manager.state('s-a')
+  const reattached = state.composition.edges.find((edge) => edge.childId === b.id)
+  grants = await manager.getGrants('s-a')
+  assert.deepEqual(grants[reattached.id], { allowMessage: false, allowInterrupt: false })
 })
 
 test('creates and transitions plugin-owned tasks with a revision guard', async () => {

@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (81 total);
+  client-registration, host-wiring, controls, and bundle-shape tests (85 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`) and
@@ -175,10 +175,11 @@ package.json              ESM package, no runtime dependencies, DSH bundle shape
 
 Remaining work: clone/bud; compare composed tool order and the prefix fingerprint
 against a live native request; enforce the desktop model-selection allowlist;
-stop `standard`/`ptc` sessions from shadowing the composed names; decide whether
-reparenting should preserve edge grants; add composition title editing; resolve
-the archived-node "open conversation" policy; keep large-session tab latency
-under observation.
+stop `standard`/`ptc` sessions from shadowing the composed names; keep
+large-session tab latency under observation. Decisions (2026-11-17): direct
+reparenting migrates edge grants while detaching or moving across compositions
+starts edges from deny; composition title editing is implemented; archived nodes
+keep the current "offer open conversation, the workspace decides" behavior.
 
 ## 5. Development rules
 
@@ -221,7 +222,7 @@ under observation.
   native id, because that removes the native subagent tree's view/interaction
   path.
 - Offer "open conversation" for every local session node, including persisted
-  ones; external nodes stay disabled.
+  and archived ones; external nodes stay disabled.
 
 ## 6. Verification
 
@@ -241,9 +242,14 @@ registration, and the rendered GUI are verified. Completed on 2026-11-17:
 - the scrollable picker and one-line filter; add/remove a session node;
 - details (cwd/sandbox/permission preset/agent preset/native parent), rename,
   reparent, per-edge grant toggles;
+- direct reparenting carries the edge's grants to the replacement edge
+  (`setParent` and same-composition `addNode`), covered by manager tests;
+- composition title editing through `/set-title` and the tab header, covered by
+  manager and HTTP tests;
 - external placeholder rendering (collapsed, provider/native parent, no open
   conversation); added through `/add-external` because this profile had no
-  discovered external leaf to click;
+  discovered external leaf to click, with a fake-catalog bridge test covering
+  `/external` followed by `/add-external`;
 - promote/cascade remove dialog; composition create and delete;
 - both header entries open the tab; the count chip coexists with the native
   `subagent-catalog`; the count refreshes after tab mutations;
@@ -251,8 +257,9 @@ registration, and the rendered GUI are verified. Completed on 2026-11-17:
 - dark and light themes and 420 px width (no horizontal overflow; action buttons
   no longer split mid-word).
 
-Still open: clone/bud, composition title editing, the archived-node open policy,
-and the composed-surface parity items listed above.
+Still open: clone/bud, the composed-surface parity items listed above, and
+large-session tab paint. Live GUI verification of title editing and grant
+migration needs the next Host restart because those are Host-side changes.
 
 
 ## 7. Known pitfalls
@@ -278,16 +285,15 @@ and the composed-surface parity items listed above.
   is plugin-owned data, not a session log concern.
 - **Client bundles are cached in the page.** Refresh after `client.js` changes
   unless the client HMR watcher is running.
-- **Reparenting replaces the edge.** `setParent` removes the old `reports-to`
-  edge and creates a new one, so that edge's `allowMessage`/`allowInterrupt`
-  grants fall back to deny. Re-apply grants after moving a node until this is
-  changed deliberately.
+- **Reparenting replaces the edge.** Direct reparenting migrates the old edge's
+  `allowMessage`/`allowInterrupt` grants to the new edge. Detaching the node, or
+  moving it across compositions, deletes the old grant and starts from deny.
 - **A very large session can delay the tab paint.** For a 16-node composition
   under a huge live transcript, the tab showed its loading state for tens of
   seconds while the bridge `/state` response measured about 143 ms. Profile the
   surrounding session UI before blaming the bridge.
-- **The composition title is display-only.** `src/graph.js` has `setTitle`, but
-  no manager method, HTTP route, or UI action is wired.
+- **Archived nodes still offer "open conversation".** The workspace decides
+  whether it can resume; this is an intentional 2026-11-17 decision.
 
 ## 8. Commit hygiene
 

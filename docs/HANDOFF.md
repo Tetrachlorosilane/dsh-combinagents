@@ -292,8 +292,8 @@ Composition Layer
 - 节点：`sessionId`、label、kind（session/external）、source、provider、native parent、
   cwd 快照、permission preset 快照；
 - 边：`reports-to`，严格森林；
-- 操作：add/remove/rename/set-parent；`set-title` 仅在图模型可用，manager/HTTP/UI
-  尚未接线（标题当前只读）；
+- 操作：add/remove/rename/set-parent/set-title；标题通过 `/set-title` 与 tab 头部
+  内联编辑；直接改父迁移逐边授权，detach/跨组合移动从默认 deny 开始；
 - 删除非根节点时弹框，由用户选择“下属提升为根”或“级联删子树”；两者都只删图节点，
   不删 DSH Session；根会话节点不可删，删除组合是独立动作。
 
@@ -620,7 +620,9 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
   另加 `dsh-combinagents-count` 入口显示数量并打开本插件 tab；未改动任何工具 schema
   或消息路由；
 - 已实现：逐边 `allowMessage` / `allowInterrupt` 授权、三工具、原生 relay source、
-  跨工作区 + 非完全权限时的 approval 门、审计表；
+  跨工作区 + 非完全权限时的 approval 门、审计表；直接改父迁移授权，detach/跨组合
+  移动从 deny 开始；
+- 已实现：组合标题编辑（`/set-title` + tab 头部）；
 - 已实现：插件自有任务板（`tasks` 表 + tab UI + `/tasks`、`/create-task`、
   `/update-task`，revision 冲突保护）；不写 DSH Team；
 - 已实现并在 desktop profile 启用/加载：`mode: 'composed'` 注册七个工具（三控制 +
@@ -633,7 +635,8 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
   创建/删除组合、sync-native、原生 `subagent-catalog` 共存）、浅色/深色与 420px
   窄宽度检查、Host 重启后重载验证；计数 chip 在编辑后即时刷新（窗口事件），窄屏行内
   按钮不再逐字换行；本 profile 没有发现外部叶子，外部占位通过 `/add-external` 渲染
-  验证，发现式外部添加未端到端点击；
+  验证，`/external` → `/add-external` 另由 fake-catalog 测试覆盖；标题编辑与改父授权
+  迁移由 manager/HTTP 测试覆盖，Host 侧路由需下次 Host 重启后做 GUI 复验；
 - 模型表面：overlay 三工具；composed 模式七个原生同名工具 + 三个不遮蔽的
   `composition_*` 别名；原生工具 schema 不改；
 - 验收：组合持久化、循环/重复拒绝、原 Session 无写入。
@@ -660,7 +663,7 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 ### Phase 4 — 加固
 
 - 冷恢复/容量/Team 任务；
-- 组合标题编辑、archived 节点“打开会话”策略、改父时是否保留逐边授权；
+- 跨组合移动是否迁移逐边授权（当前从 deny 开始）；
 - 超大组合（16 节点 + 巨大 transcript）的 tab 渲染性能；
 - UI 可访问性、窄屏、深色；
 - DSH 版本升级检查；
@@ -691,8 +694,10 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 | 删除节点 | 非根节点弹框二选一：下属提升为根 / 级联删子树；两者都只删图节点；根会话节点不可删 |
 | 根节点保护 | 根会话节点拒绝删除（`ROOT_PROTECTED`）；删除组合是独立确认动作 |
 | 外部/一次性代理 | 发现条件化；已挂节点始终可见；默认折叠为单节点，展开看详情；不可路由/克隆/打开 |
-| 打开会话 | 所有本地 Session 节点（含 saved）可打开；archived 节点仍显示按钮，实际能否恢复由 workspace 决定；外部节点禁用；跳转会切走当前会话，组合 tab 仍在根会话下 |
+| 打开会话 | 所有本地 Session 节点（含 saved）可打开；archived 节点仍显示按钮，实际能否恢复由 workspace 决定（2026-11-17 确认保留现状）；外部节点禁用；跳转会切走当前会话，组合 tab 仍在根会话下 |
 | 逐边授权 | 消息 `allowMessage`、中断 `allowInterrupt`；默认 deny；按组合路径逐边检查 |
+| 改父授权 | 直接改父（含同组合 `add-node` 移动）把授权迁移到新边；detach 或跨组合移动从 deny 开始 |
+| 组合标题 | 可编辑：`/set-title` + tab 头部内联编辑 |
 | 模型工具 | 三个静态 `composition_*` 工具；参数/返回对齐原生；原生工具 schema 不改；`mode: 'composed'` 已在 desktop profile 启用并验证，注册七个原生同名工具 + 三个不遮蔽的 `composition_*` 别名；仍需与真实原生请求比对工具顺序/前缀指纹 |
 | 消息 source | 复用原生 `{ kind: 'agent-message', form: 'relay', senderSessionId }` 与 relay 前缀 |
 | 敏感确认 | 仅跨工作区且调用方非完全权限时走 `approval.request`；`allowed-once` 才继续 |
@@ -701,7 +706,7 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 ### 仍需确认（后续阶段）
 
 1. 克隆产生**新 Session id** 是否可接受？（原生迁移不可行）
-2. 分支是复制整个根树，还是只复制选中的子树？
+2. ~~分支是复制整个根树，还是只复制选中的子树？~~ 已决定：**整棵根树**。
 3. Team 任务板：复制并重映射，还是从空板开始？
 4. ~~Bridge 是否需要模型可调用？~~ 已决定：需要，使用组合控制工具；不另设原生工具。
 5. 出芽后原节点默认保留还是提示归档？

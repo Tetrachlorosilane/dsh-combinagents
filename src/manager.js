@@ -23,6 +23,7 @@ import {
   renameNode as renameGraphNode,
   rootsOf,
   setParent as setGraphParent,
+  setTitle as setGraphTitle,
 } from './graph.js'
 
 /** Default title for a new composition. */
@@ -256,6 +257,46 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     const record = { composition, updatedAt: now() }
     await store.put(rootSessionId, record)
     return record
+  }
+
+  /**
+   * Carry a child's edge grants to its new incoming edge after a reparent.
+   * Detaching removes the stored grant; a fresh attach starts from deny.
+   * @param {string} rootSessionId - composition owner.
+   * @param {object} previous - composition before the change.
+   * @param {object} next - composition after the change.
+   * @param {string} childNodeId - node whose incoming edge changed.
+   */
+  async function migrateParentGrants(rootSessionId, previous, next, childNodeId) {
+    const previousEdge = previous.edges.find((edge) => edge.childId === childNodeId) ?? null
+    if (previousEdge === null) return
+    const nextEdge = next.edges.find((edge) => edge.childId === childNodeId) ?? null
+    if (nextEdge?.id === previousEdge.id) return
+    const policy = await store.getPolicy(rootSessionId)
+    const grant = policy?.edges?.[previousEdge.id]
+    if (grant === undefined) return
+    const edges = { ...(policy?.edges ?? {}) }
+    delete edges[previousEdge.id]
+    if (nextEdge !== null) {
+      edges[nextEdge.id] = {
+        allowMessage: grant.allowMessage === true,
+        allowInterrupt: grant.allowInterrupt === true,
+      }
+    }
+    await store.putPolicy(rootSessionId, {
+      version: 1,
+      rootSessionId,
+      edges,
+      updatedAt: now(),
+    })
+    if (nextEdge !== null) {
+      await recordAudit(rootSessionId, {
+        kind: 'grant',
+        edgeId: nextEdge.id,
+        outcome: 'migrated',
+        detail: { fromEdgeId: previousEdge.id },
+      })
+    }
   }
 
   /**
@@ -681,9 +722,11 @@ export function createManager({ store, discovery, agents = () => undefined, now 
       if (existing !== undefined) {
         assertIdle(record.composition, [existing.id], 'move a node')
         if (parentId !== null) assertIdle(record.composition, [parentId], 'move a node under a parent')
-        const composition = setGraphParent(record.composition, existing.id, parentId)
+        const previous = record.composition
+        const composition = setGraphParent(previous, existing.id, parentId)
         const saved = await save(rootSessionId, composition)
         indexComposition(rootSessionId, composition)
+        await migrateParentGrants(rootSessionId, previous, composition, existing.id)
         return saved
       }
       assertIdle(record.composition, parentId === null ? [] : [parentId], 'add a node')
@@ -781,9 +824,11 @@ export function createManager({ store, discovery, agents = () => undefined, now 
       const record = await requireRecord(rootSessionId)
       assertIdle(record.composition, [input.nodeId], 'reparent a node')
       if (parentId !== null) assertIdle(record.composition, [parentId], 'reparent under a node')
-      const composition = setGraphParent(record.composition, input.nodeId, parentId)
+      const previous = record.composition
+      const composition = setGraphParent(previous, input.nodeId, parentId)
       const saved = await save(rootSessionId, composition)
       indexComposition(rootSessionId, composition)
+      await migrateParentGrants(rootSessionId, previous, composition, input.nodeId)
       return saved
     })
   }
@@ -805,6 +850,20 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     return withLock(rootSessionId, async () => {
       const record = await requireRecord(rootSessionId)
       const composition = renameGraphNode(record.composition, input.nodeId, label)
+      return save(rootSessionId, composition)
+    })
+  }
+
+  /**
+   * Change one composition's title without touching its nodes or edges.
+   * @param {string} rootSessionId - composition owner.
+   * @param {{title: string}} input - new title.
+   * @returns {Promise<{composition: object, updatedAt: number}>}
+   */
+  async function setTitle(rootSessionId, input = {}) {
+    return withLock(rootSessionId, async () => {
+      const record = await requireRecord(rootSessionId)
+      const composition = setGraphTitle(record.composition, input.title)
       return save(rootSessionId, composition)
     })
   }
@@ -976,6 +1035,7 @@ export function createManager({ store, discovery, agents = () => undefined, now 
     removeNode,
     setParent,
     renameNode,
+    setTitle,
     resolveSession,
     autoAttach,
     syncNativeTree,

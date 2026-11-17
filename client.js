@@ -26,6 +26,7 @@ window.__ModuleLoader__.load({
         'guide.title': 'Agent composition',
         'guide.description': 'Arrange who reports to whom in a user-owned overlay',
         'header.tooltip': 'Open agent composition',
+        'editTitle': 'Edit title',
         'notice': 'Composition edges are advisory. Native messaging, interruption, and Team authority still follow DSH\u2019s original subagent tree.',
         'loading': 'Loading composition\u2026',
         'empty': 'No composition yet for this session.',
@@ -100,6 +101,7 @@ window.__ModuleLoader__.load({
         'guide.title': '代理组合',
         'guide.description': '在用户自有的叠加层中安排谁向谁汇报',
         'header.tooltip': '打开代理组合',
+        'editTitle': '编辑标题',
         'notice': '组合边只是约定。原生消息、中断与 Team 权限仍按 DSH 原有的子代理树执行。',
         'loading': '正在加载组合\u2026',
         'empty': '这个会话还没有组合。',
@@ -887,6 +889,8 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(false)
       const [notice, setNotice] = React.useState(null)
       const [confirmDelete, setConfirmDelete] = React.useState(false)
+      const [editingTitle, setEditingTitle] = React.useState(false)
+      const [titleDraft, setTitleDraft] = React.useState('')
       const syncOnce = React.useRef(false)
       const requestedTitles = React.useRef(new Set())
 
@@ -925,6 +929,10 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         void load()
       }, [load])
+
+      React.useEffect(() => {
+        setEditingTitle(false)
+      }, [sessionId])
 
       const mutate = React.useCallback(async (action, successMessage) => {
         setBusy(true)
@@ -1021,6 +1029,14 @@ window.__ModuleLoader__.load({
         null,
       )
 
+      const renameComposition = (title) => mutate(
+        () => callApi('/set-title', {
+          method: 'POST',
+          body: { rootSessionId: activeRoot, title },
+        }),
+        null,
+      )
+
       const reparentNode = (nodeId, parentId) => mutate(
         () => callApi('/set-parent', {
           method: 'POST',
@@ -1106,7 +1122,52 @@ window.__ModuleLoader__.load({
 
       return h('div', { style: styles.wrap }, [
         h('div', { key: 'header', style: styles.header }, [
-          h('h2', { key: 'title', style: styles.title }, t('tab.title')),
+          composition !== null && editingTitle
+            ? h('div', { key: 'title-edit', style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } }, [
+                h('input', {
+                  key: 'input',
+                  style: styles.input,
+                  value: titleDraft,
+                  placeholder: t('tab.title'),
+                  onChange: (event) => setTitleDraft(event.target.value),
+                }),
+                h('button', {
+                  key: 'save',
+                  type: 'button',
+                  style: styles.button,
+                  disabled: busy || titleDraft.trim().length === 0,
+                  onClick: () => {
+                    const title = titleDraft.trim()
+                    if (title.length === 0) return
+                    setEditingTitle(false)
+                    void renameComposition(title)
+                  },
+                }, t('save')),
+                h('button', {
+                  key: 'cancel',
+                  type: 'button',
+                  style: styles.linkButton,
+                  onClick: () => setEditingTitle(false),
+                }, t('cancel')),
+              ])
+            : h('h2', {
+                key: 'title',
+                style: { ...styles.title, display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' },
+              }, [
+                h('span', { key: 'text' }, composition?.title ?? t('tab.title')),
+                composition === null
+                  ? null
+                  : h('button', {
+                      key: 'edit',
+                      type: 'button',
+                      style: styles.linkButton,
+                      disabled: busy,
+                      onClick: () => {
+                        setTitleDraft(composition.title)
+                        setEditingTitle(true)
+                      },
+                    }, t('editTitle')),
+              ]),
           h('span', { key: 'root', style: styles.rootId }, sessionId),
           composition === null ? null : h('span', { key: 'count', style: styles.badge }, format(t, 'nodeCount', { count: String(nodes.length) })),
           h('span', { key: 'spacer', style: { flex: '1 1 auto' } }),

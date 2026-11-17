@@ -256,6 +256,7 @@ POST /sync-native                  import existing native descendants
 POST /remove-node                  { nodeId, mode: 'promote' | 'cascade' }
 POST /set-parent
 POST /rename-node
+POST /set-title                    { title }
 POST /set-grant                    { edgeId, allowMessage?, allowInterrupt? }
 GET  /tasks?rootSessionId=...      plugin-owned composition tasks
 POST /create-task                  { subject, description?, ownerNodeId? }
@@ -263,8 +264,9 @@ POST /update-task                  { taskId, expectedRevision, action }
 POST /delete-composition           remove the overlay record; sessions untouched
 ```
 
-The graph model has `setTitle`, but no manager method, HTTP route, or UI action
-is wired yet. The composition title is display-only.
+Title editing is implemented through `/set-title` and the tab header. Direct
+reparenting migrates the edge's grants to the replacement edge; detaching or a
+cross-composition move starts from deny.
 
 Rules:
 
@@ -320,7 +322,7 @@ phase 1.
 
 ```
 Header
-  Title (display only; editing not implemented)
+  Title (editable)
   Root session badge
   Reload / fullscreen
 
@@ -503,7 +505,10 @@ Walking skeleton:
 - [x] create, add, remove (promote or cascade), delete composition;
 - [x] external/catalog leaf discovery;
 - [x] reparent/rename UI and node details (open conversation for local sessions,
-      including persisted ones);
+      including persisted and archived ones);
+- [x] composition title editing through `/set-title` and the tab header;
+- [x] direct reparenting migrates edge grants; detaching or a cross-composition
+      move starts from deny;
 - [x] observation badges (cwd, sandbox mode, permission preset, native parent);
 - [x] shared membership: one composition per session, resolved from any member;
 - [x] busy-branch guard for structural edits;
@@ -555,8 +560,7 @@ viewer.
 - archived/stale handling;
 - Team task copy/remap decision;
 - accessibility, keyboard, narrow-width and theme pass;
-- composition title editing, archived-node open policy, and whether reparenting
-  preserves edge grants;
+- whether cross-composition moves should migrate edge grants (currently deny);
 - large-composition tab paint under an oversized session transcript;
 - DSH version re-verification.
 
@@ -585,14 +589,16 @@ viewer.
 11. A DSH-side smoke test verifies the tab opens from the header button and the
     guide.
 
-Verified on 2026-11-17: criteria 1, 3-11 through the 81 unit tests and the real
+Verified on 2026-11-17: criteria 1, 3-11 through the 85 unit tests and the real
 GUI (dark/light/420 px). Criterion 2 was demonstrated by adding a
 mahjong-workspace session to a `dsh-combinagents` composition and by the rich
 composition with 15 native subagent nodes; the cross-workspace node was removed
-afterward. The only external leaf in this profile was an API-added placeholder
-(no discovered external child existed), so external discovery itself was not
-exercised end to end. The guide entry is registered and covered by the client
-test; the header utility and count chip were clicked live.
+afterward. The live profile had no discovered external child, so the picker's
+external-add click was not exercised; `/external` followed by `/add-external`
+is covered by a fake-catalog bridge test instead. The guide entry is registered
+and covered by the client test; the header utility and count chip were clicked
+live. Title editing and grant migration are covered by manager/HTTP tests; their
+Host-side routes require the next Host restart before a live GUI pass.
 
 ### Phase 2 acceptance
 
@@ -629,12 +635,12 @@ test; the header utility and count chip were clicked live.
   the verified DSH version in docs and re-review before claiming support.
 - **Scope creep into routing.** Routing is the point where the clean permission
   story ends. Keep it separately approved.
-- **Reparenting resets edge grants.** A move creates a new edge id, so the old
-  message/interrupt grants no longer apply. This is conservative but surprising;
-  preserve or re-apply grants deliberately.
-- **Title editing and archived-open policy are unresolved.** The title is
-  display-only and archived nodes still offer "open conversation" with the
-  workspace deciding whether it can resume.
+- **Reparenting migrates grants.** A direct parent change (including a
+  same-composition `add-node` move) carries `allowMessage`/`allowInterrupt` to
+  the replacement edge. Detaching the node or moving it across compositions
+  deletes the old grant and starts from deny.
+- **Archived nodes still offer "open conversation".** This is intentional: the
+  workspace decides whether the session can resume.
 - **Large-session tab paint.** A 16-node composition under an oversized live
   transcript can keep the tab's loading state for tens of seconds even though
   `/state` returns in about 143 ms.

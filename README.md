@@ -13,9 +13,10 @@ composition; the tab resolves that shared composition from any member, walking
 native ancestors when the member is not mirrored yet. The Client half registers a
 right-sidebar tab, a session-header utility, a guide entry, and a separate
 composition-count header chip; the shipped subagent tree entry is retained. It
-provides node details, rename, reparent, moving a whole tree/subtree between
-compositions, external placeholders, per-edge message/interrupt grants,
-open-conversation for every local session (including persisted ones), and a
+provides node details, rename, reparent, composition title editing, moving a
+whole tree/subtree between compositions, external placeholders, per-edge
+message/interrupt grants, open-conversation for every local session (including
+persisted ones), and a
 sync-native action. Three static model tools
 (`composition_list_agents`, `composition_send_message`,
 `composition_interrupt_agent`) mirror the native control parameters and are
@@ -125,10 +126,9 @@ storage contract changes.
 
 ## Known limitations
 
-- Reparenting a node replaces its reporting edge, so that edge's message and
-  interrupt grants return to the default deny. Re-apply them after a move.
-- The composition title is display-only; the graph model can set it but no HTTP
-  route or UI action is wired yet.
+- Direct reparenting migrates the edge's message/interrupt grants to the new
+  edge. Detaching a node drops those grants, and a cross-composition move starts
+  its edges from the default deny; re-apply them when that matters.
 - A large archived 16-node composition can paint slowly while a very large
   session transcript is loading. The bridge `/state` response itself was
   measured at about 143 ms; the delay is in the surrounding session UI, not the
