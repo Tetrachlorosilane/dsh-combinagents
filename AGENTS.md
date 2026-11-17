@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, and a guide entry
   (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (79 total);
+  client-registration, host-wiring, controls, and bundle-shape tests (80 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`). Live

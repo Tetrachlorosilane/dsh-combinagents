@@ -32,7 +32,7 @@ function harness(options = {}) {
   }
   const composition = {
     nodes: [
-      { id: 'n-a', sessionId: 's-a', label: 'Lead', kind: 'session', source: 'top-level' },
+      { id: 'n-a', sessionId: 's-a', label: options.callerLabel ?? 'Lead', kind: 'session', source: 'top-level' },
       { id: 'n-b', sessionId: 's-b', label: 'Worker', kind: 'session', source: 'subagent' },
     ],
     edges: [{ id: 'e1', parentId: 'n-a', childId: 'n-b', role: 'reports-to' }],
@@ -89,7 +89,7 @@ function harness(options = {}) {
       }
       if (name === 'subagents') {
         return {
-          namesOf: () => ({ self: 'Lead' }),
+          namesOf: () => ({ self: options.nativeName ?? 'Lead' }),
           interrupt: (id, authority) => interrupted.push({ id, authority }),
           async startActivation(spec) {
             started.push(spec)
@@ -196,6 +196,14 @@ test('composition_send_message uses the native relay source and delivers to an i
   assert.deepEqual(message.source, { kind: 'agent-message', form: 'relay', senderSessionId: 's-a' })
   assert.equal(message.content[0].text, 'Agent Lead sent a message: ')
   assert.equal(message.content[1].text, 'hello')
+})
+
+test('relay prefix uses the composition label instead of a repeated native root name', async () => {
+  const harnessed = harness({ callerLabel: 'Repeat OK', nativeName: 'lead' })
+  await harnessed.tool('composition_send_message').execute({ agent: 'Worker', message: 'hello' }, {
+    agent: { id: 's-a' }, signal: new AbortController().signal,
+  })
+  assert.equal(harnessed.delivered[0].content[0].text, 'Agent Repeat OK sent a message: ')
 })
 
 test('composition_send_message uses the native relay when the target is a native descendant', async () => {

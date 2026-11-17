@@ -452,13 +452,16 @@ export function createControls({
    * @returns {string} sender name for the relay envelope.
    */
   function senderName(agent, callerNode) {
+    if (typeof callerNode?.label === 'string' && callerNode.label.length > 0) {
+      return callerNode.label
+    }
     try {
       const names = subagents()?.namesOf?.(agent)
       if (typeof names?.self === 'string' && names.self.length > 0) return names.self
     } catch {
-      // fall back to the composition label
+      // fall back to the session id
     }
-    return callerNode.label
+    return agent.id
   }
 
   /**
