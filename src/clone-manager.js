@@ -132,6 +132,39 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
   }
 
   /**
+   * Find the workspace that owns a source session (walking native ancestors for
+   * subagents, matching the ordinary fork command).
+   * @param {string} sessionId - source session.
+   * @param {object} header - source header.
+   * @returns {Promise<object|undefined>}
+   */
+  async function workspaceOf(sessionId, header) {
+    const registry = ctx.get?.('workspaceRegistry')
+    const workspaces = registry?.list?.() ?? []
+    const direct = workspaces.find((workspace) => workspace.sessionIds?.includes(sessionId))
+    if (direct !== undefined || header?.origin !== 'subagent') return direct
+    const trace = await ctx.get?.('sessionQuery')?.traceSession?.(sessionId)
+    for (const ancestor of trace?.ancestors ?? []) {
+      const workspace = workspaces.find((candidate) => candidate.sessionIds?.includes(ancestor.header?.id))
+      if (workspace !== undefined) return workspace
+    }
+    return undefined
+  }
+
+  /**
+   * Attach a new clone session to the source workspace so it is visible in the
+   * normal session list.
+   * @param {string} sourceSessionId - source session.
+   * @param {object} sourceHeader - source header.
+   * @param {string} newSessionId - clone session.
+   */
+  async function attachWorkspace(sourceSessionId, sourceHeader, newSessionId) {
+    const workspace = await workspaceOf(sourceSessionId, sourceHeader)
+    if (workspace?.attachSession === undefined) return
+    await workspace.attachSession(newSessionId)
+  }
+
+  /**
    * @param {string} sourceRootSessionId - composition owner or member.
    * @returns {Promise<{rootSessionId: string, record: object}>}
    */
@@ -249,6 +282,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     const edges = []
     try {
       root = await createRoot(rootSourceNode, snapshotAt)
+      await attachWorkspace(rootSourceNode.sourceSessionId, root.sourceHeader, root.id)
       rootHandles.set(root.id, root.handle)
       cloneNodeBySource.set(rootSourceNode.sourceNodeId, {
         id: randomUUID(),
@@ -306,6 +340,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
           throw new CompositionError('CLONE_FAILED', `clone parent ${JSON.stringify(parentEdge.parentSourceNodeId)} is not live`)
         }
         const child = await createChild(sourceNode, parentAgent, snapshotAt)
+        await attachWorkspace(sourceNode.sourceSessionId, child.sourceHeader, child.id)
         createdActivations.push(child.activation)
         cloneNodeBySource.set(sourceNodeId, { id: nodeId, sessionId: child.id })
         liveAgentBySource.set(sourceNodeId, child.agent)

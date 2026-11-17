@@ -1044,6 +1044,12 @@ export function createManager({ store, discovery, agents = () => undefined, now 
       assertIdle(record.composition, record.composition.nodes.map((node) => node.id), 'delete the composition')
       await store.delete(rootSessionId)
       unindexComposition(rootSessionId, record.composition)
+      for (const [taskId, task] of await store.listTasks?.(rootSessionId) ?? []) {
+        if (task.rootSessionId === rootSessionId) await store.deleteTask?.(taskId)
+      }
+      for (const [cloneId, clone] of await store.listClones?.() ?? []) {
+        if (clone.newRootSessionId === rootSessionId) await store.deleteClone?.(cloneId)
+      }
     })
   }
 

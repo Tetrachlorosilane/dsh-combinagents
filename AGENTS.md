@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, and bundle-shape tests (90 total);
+  client-registration, host-wiring, controls, and bundle-shape tests (94 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`) and
@@ -156,13 +156,17 @@ src/graph.js              Pure composition graph: validation, forest, cycle chec
                           promote/cascade removal
 src/clone.js              Pure clone/bud planner: whole-root tree, markers,
                           task-copy owner mapping
+src/clone-manager.js      Whole-tree clone/bud adapter: seeded root/children,
+                          post-order idle, task copy, failure cleanup
 src/store.js              DSH storage-domain adapter + memory fallback
+                          (compositions/policies/audit/tasks/clones)
 src/discovery.js          Live/persisted session discovery and observations
 src/manager.js            Serialized mutations, grants, path authorization
 src/http.js               Loopback, token-authenticated JSON bridge
 src/controls.js           Composition tools (overlay 3, composed 10)
 tests/graph.test.mjs      Graph tests (18)
 tests/clone.test.mjs      Clone/bud plan tests
+tests/clone-manager.test.mjs  Clone/bud adapter tests
 tests/store.test.mjs      Domain adapter, fallback, record schema
 tests/manager.test.mjs    Creation, serialization, root protection
 tests/discovery.test.mjs  Read-only discovery and observations
