@@ -134,7 +134,7 @@ export const cloneRecordSchema = {
     if (typeof raw.id !== 'string' || typeof raw.sourceCompositionId !== 'string'
       || typeof raw.sourceRootSessionId !== 'string' || typeof raw.newRootSessionId !== 'string'
       || (raw.kind !== 'clone' && raw.kind !== 'bud')
-      || (raw.status !== 'completed' && raw.status !== 'failed')
+      || (raw.status !== 'completed' && raw.status !== 'failed' && raw.status !== 'orphaned')
       || !Number.isSafeInteger(raw.snapshotAt) || raw.snapshotAt < 0
       || !Array.isArray(raw.nodeMapping)) {
       throw new TypeError('clone record is malformed')

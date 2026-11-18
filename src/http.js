@@ -44,6 +44,8 @@ const ROUTES = new Set([
   '/delete-composition',
   '/clone-tree',
   '/bud',
+  '/session-cleanup',
+  '/clone-estimate',
 ])
 
 class HttpError extends Error {
@@ -210,7 +212,7 @@ function errorOf(error) {
   if (error instanceof CompositionError) {
     const status = error.code === 'ROOT_PROTECTED' || error.code === 'TASK_FORBIDDEN' || error.code === 'MODEL_SELECTION_FORBIDDEN'
       ? 403
-      : error.code === 'CLONE_UNAVAILABLE' || error.code === 'STORAGE_UNAVAILABLE'
+      : error.code === 'CLONE_UNAVAILABLE' || error.code === 'STORAGE_UNAVAILABLE' || error.code === 'CLEANUP_UNAVAILABLE'
         ? 503
         : error.code === 'CLONE_FAILED'
           ? 500
@@ -233,6 +235,7 @@ export function createApi({
   manager,
   discovery,
   cloneManager = undefined,
+  sessionCleanup = undefined,
   token,
   version = '0.1.0',
   platform = process.platform,
@@ -316,6 +319,21 @@ export function createApi({
     if (route === '/external') {
       const rootSessionId = url.searchParams.get('rootSessionId') ?? ''
       return json(200, await discovery.listNative(rootSessionId))
+    }
+    if (route === '/session-cleanup') {
+      if (sessionCleanup === undefined) {
+        throw new HttpError(503, 'CLEANUP_UNAVAILABLE', 'session cleanup is unavailable')
+      }
+      return json(200, await sessionCleanup.preview())
+    }
+    if (route === '/clone-estimate') {
+      if (sessionCleanup === undefined) {
+        throw new HttpError(503, 'CLEANUP_UNAVAILABLE', 'session cleanup is unavailable')
+      }
+      const rootSessionId = url.searchParams.get('rootSessionId') ?? ''
+      if (rootSessionId === '') throw new HttpError(400, 'INVALID_REQUEST', 'rootSessionId is required')
+      const nodeId = url.searchParams.get('nodeId')
+      return json(200, await sessionCleanup.estimateClone(rootSessionId, nodeId === null || nodeId === '' ? null : nodeId))
     }
     if (route === '/summary') {
       const sessionId = url.searchParams.get('sessionId') ?? ''
@@ -404,6 +422,18 @@ export function createApi({
    * @returns {Promise<object>} response.
    */
   async function writeRoute(route, body, signal = undefined) {
+    if (route === '/session-cleanup') {
+      if (sessionCleanup === undefined) {
+        throw new HttpError(503, 'CLEANUP_UNAVAILABLE', 'session cleanup is unavailable')
+      }
+      const sessionIds = Array.isArray(body.sessionIds) ? body.sessionIds : []
+      const oneShotNodeIds = Array.isArray(body.oneShotNodeIds) ? body.oneShotNodeIds : []
+      return json(200, await sessionCleanup.clean({
+        sessionIds,
+        oneShotNodeIds,
+        includeLegacy: body.includeLegacy === true,
+      }))
+    }
     if (route === '/create') {
       const record = await manager.create(body.rootSessionId, { title: body.title })
       return json(200, { composition: record.composition, updatedAt: record.updatedAt })

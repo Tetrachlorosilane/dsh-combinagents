@@ -195,6 +195,7 @@ function harness(options = {}) {
   return {
     controls,
     tool,
+    manager,
     delivered,
     steered,
     interrupted,
@@ -512,6 +513,26 @@ test('tool definitions use native names and preserve contracts', () => {
     assert.equal(definition.parameters.additionalProperties, undefined)
   }
   assert.equal(controls.taskDefinition.name, 'composition_task')
+})
+
+test('retries a fork mirror once before reporting a manual-add fallback', async () => {
+  const harnessed = harness()
+  let calls = 0
+  harnessed.manager.autoAttach = async () => {
+    calls += 1
+    if (calls === 1) throw new Error('fork root still settling')
+    return { id: 'attached' }
+  }
+  const result = await harnessed.tool('subagent_fork').execute({
+    description: 'Forked analysis',
+    prompt: 'Continue.',
+  }, {
+    agent: harnessed.callerAgent,
+    signal: new AbortController().signal,
+  })
+  assert.equal(calls, 2)
+  assert.deepEqual(result, { kind: 'activation', name: 'agent-1' })
+  assert.equal(harnessed.grantedEdges.length, 1)
 })
 
 test('subagent starts a native activation and mirrors the child', async () => {

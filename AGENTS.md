@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 19 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (158 total);
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (165 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`; current target is DSH
   `0.2.2-rc.5`, with `engines.dsh` and plugin version `0.2.0`.
 
@@ -181,6 +181,7 @@ src/discovery.js          Live/persisted session discovery and observations
 src/manager.js            Serialized mutations, grants, path authorization
 src/http.js               Loopback, token-authenticated JSON bridge
 src/controls.js           Execution interception (6) + composition_task
+src/session-cleanup.js    User-confirmed orphan/one-shot session cleanup (default JSONL root)
 tests/graph.test.mjs      Graph tests (19)
 tests/clone.test.mjs      Clone/bud plan tests
 tests/clone-manager.test.mjs  Clone/bud adapter tests
@@ -230,14 +231,26 @@ relay-label sanitization, workspace detach on failed clone, moving the
 The 2026-11-19 follow-up audit fixed ordinary-fork membership inheritance,
 cross-composition grant migration, external-placeholder idempotency, create/add
 membership races, the store reload-revision skip and reload-failure fallback,
-effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 158 tests pass. The
+effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 165 tests pass. The
 findings and remaining accepted risks are in
 [`docs/AUDIT-2026-11-19.md`](docs/AUDIT-2026-11-19.md). The live composition/bridge
 probe is in [`docs/BRIDGE-TEST-2026-11-19.md`](docs/BRIDGE-TEST-2026-11-19.md):
 the HTTP bridge and native workflow child mirroring passed; the composed
 `subagent`/`send_message` tools exposed the `exec.args` bug, which was fixed and
 retested after the 2026-11-19 restart (persistent spawn/fork, send_message, and
-wait_agent now pass).
+wait_agent now pass). The session-lifecycle audit is in
+[`docs/SESSION-LIFECYCLE-AUDIT-2026-11-19.md`](docs/SESSION-LIFECYCLE-AUDIT-2026-11-19.md):
+failed clones and deleted clone compositions leave persisted sessions; the live
+snapshot showed 20 likely orphan clone roots plus 43 children (166 MB).
+The user-facing cleanup tool is implemented in `src/session-cleanup.js` and the
+composition tab: it previews tracked failed/orphaned clone sessions, opt-in
+historical seeded suspects, and one-shot placeholders, then deletes only
+inactive, unowned sessions after a DSH-styled confirmation. It refuses to run
+when composition storage is memory-backed or degraded, operates on the default
+`$DSH_HOME/sessions` JSONL root (configurable with `sessionRoot`), detaches
+workspace/archive/pin state, and never touches live sessions or composition
+members. Clone failures now write a durable failed clone record, and deleting a
+clone composition marks its record orphaned instead of deleting provenance.
 Remaining audit items: SEC-6 (default bidirectional grant, product decision),
 SEC-8 rate limiting, SEC-11 (loopback/proxy trust), SEC-12 (clone permission
 drift), X-10 (agent_preset/provider capability), X-12 (storageDomain hard
@@ -303,7 +316,7 @@ the original node, never auto-archives it, and leaves two parallel trees.
 Before handing a change back:
 
 ```bash
-node --check index.js src/graph.js src/clone.js src/store.js src/discovery.js src/manager.js src/http.js src/controls.js client.js
+node --check index.js src/graph.js src/clone.js src/store.js src/discovery.js src/manager.js src/http.js src/controls.js src/session-cleanup.js client.js
 node --test tests/*.test.mjs
 node -e "for (const f of ['package.json', 'locale/en.json', 'locale/zh.json']) JSON.parse(require('fs').readFileSync(f,'utf8'))"
 ```
@@ -379,6 +392,12 @@ sessions use `standard`. Clone/bud GUI checks passed on 2026-11-18.
   Profile the surrounding session UI before blaming the bridge.
 - **Archived nodes still offer "open conversation".** The workspace decides
   whether it can resume; this is an intentional 2026-11-17 decision.
+- **Session cleanup is a file-level operation.** DSH 0.2.2-rc.5 has no public
+  session-delete service, so the cleanup tool removes the default JSONL session
+  directory and detaches workspace/archive/pin state. It does not remove shared
+  attachments/cache files, and deleting a local one-shot Session can leave its
+  parent's append-only `subagent/catalog` entry. Never run cleanup against a
+  custom backend without setting `sessionRoot`.
 
 ## 8. Commit hygiene
 

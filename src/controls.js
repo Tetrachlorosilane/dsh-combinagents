@@ -519,26 +519,59 @@ export function createControls({
       ...(selectedPreset === undefined ? {} : { agentPreset: selectedPreset }),
       ...(childOptions === undefined ? {} : { agentOptions: childOptions }),
     })
-    try {
-      await manager.autoAttach(agent.id, {
-        childId: started.childId,
-        local: true,
-        provider,
-        label: started.name,
-        ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
-      })
-      if (autoGrantDelegatedEdges) {
-        await manager.grantDelegatedEdge(caller.rootSessionId, agent.id, started.childId)
+    let mirrored = false
+    let mirrorError
+    // A fork root can still be settling when the native activation resolves.
+    // Retry once before declaring a mirror miss; a miss must not fail the
+    // delegation because result delivery is owned by the native runtime.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const attached = await manager.autoAttach(agent.id, {
+          childId: started.childId,
+          local: true,
+          provider,
+          label: started.name,
+          ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
+        })
+        if (attached !== null) {
+          mirrored = true
+          mirrorError = undefined
+          break
+        }
+      } catch (error) {
+        mirrorError = error
       }
-    } catch {
-      // Result delivery is owned by the native runtime; a mirror miss is
-      // recoverable with sync-native and must not fail the delegation.
+      if (attempt === 0) {
+        if (signal?.aborted === true) break
+        await new Promise((resolve) => setTimeout(resolve, 60))
+      }
+    }
+    if (!mirrored) {
+      if (mirrorError !== undefined) {
+        ctx.logger?.warn?.('dsh-combinagents: delegated child started but was not mirrored', {
+          childSessionId: started.childId,
+          provider,
+        }, mirrorError)
+      }
+      ctx.logger?.warn?.('dsh-combinagents: delegated child has no composition node; add it manually if it is a fork root', {
+        childSessionId: started.childId,
+        provider,
+      })
+    }
+    if (mirrored && autoGrantDelegatedEdges) {
+      try {
+        await manager.grantDelegatedEdge(caller.rootSessionId, agent.id, started.childId)
+      } catch (error) {
+        ctx.logger?.warn?.('dsh-combinagents: delegated edge could not be granted', {
+          childSessionId: started.childId,
+        }, error)
+      }
     }
     await manager.recordAudit(caller.rootSessionId, {
       kind: 'delegation',
       fromNodeId: caller.callerNode.id,
       outcome: 'started',
-      detail: { childSessionId: started.childId, name: started.name, provider },
+      detail: { childSessionId: started.childId, name: started.name, provider, mirrored },
     })
     return { kind: 'activation', name: started.name }
   }

@@ -338,6 +338,40 @@ test('maps a degraded storage write to 503', async () => {
   assert.equal(response.data.error.code, 'STORAGE_UNAVAILABLE')
 })
 
+test('exposes session cleanup preview and deletion through the bridge', async () => {
+  const calls = []
+  const sessionCleanup = {
+    async preview() {
+      return { available: true, wild: [{ sessionId: 'session-wild' }], legacy: [], oneShot: [], totals: {} }
+    },
+    async clean(input) {
+      calls.push(input)
+      return { deleted: input.sessionIds, failures: [], bytesFreed: 10 }
+    },
+    async estimateClone(rootSessionId, nodeId) {
+      return { rootSessionId, nodeId, nodes: 3, sessions: 2, bytes: 2048 }
+    },
+  }
+  const api = createApi({ manager: {}, discovery: {}, sessionCleanup, token: TOKEN })
+  const preview = await call(api, authorized('GET', '/dsh-combinagents/session-cleanup'))
+  assert.equal(preview.status, 200)
+  assert.equal(preview.data.available, true)
+  const estimate = await call(api, authorized('GET', '/dsh-combinagents/clone-estimate?rootSessionId=s-a&nodeId=n-1'))
+  assert.equal(estimate.status, 200)
+  assert.equal(estimate.data.sessions, 2)
+  const cleaned = await call(api, authorized('POST', '/dsh-combinagents/session-cleanup', JSON.stringify({
+    sessionIds: ['session-wild'],
+    oneShotNodeIds: ['node-one'],
+    includeLegacy: true,
+  })))
+  assert.equal(cleaned.status, 200)
+  assert.deepEqual(calls[0], {
+    sessionIds: ['session-wild'],
+    oneShotNodeIds: ['node-one'],
+    includeLegacy: true,
+  })
+})
+
 test('maps graph rejections to stable status codes', async () => {
   const { api } = makeHarness()
   const missing = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-missing'))

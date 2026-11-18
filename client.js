@@ -36,6 +36,7 @@ window.__ModuleLoader__.load({
         'editTitle': 'Edit title',
         'cloneTree': 'Clone whole tree',
         'cloneTreeConfirm': 'Clone the whole tree into new sessions? The source tree is not changed.',
+        'cloneEstimate': 'Creates {sessions} new sessions and copies about {size} of history. Repeating clone/bud grows storage linearly.',
         'cloneDone': 'Clone created: {session}',
         'bud': 'Bud as new root',
         'budConfirm': 'Clone this node and its subtree as a new independent root? The original stays in place.',
@@ -116,6 +117,24 @@ window.__ModuleLoader__.load({
         'taskDelete': 'Delete',
         'taskDeleteTitle': 'Delete task',
         'taskDeleteConfirm': 'Delete this task? It exists only in the plugin task board.',
+        'cleanup': 'Session cleanup',
+        'cleanupHint': 'Check and delete orphaned clone sessions and one-shot placeholders that are no longer part of any composition. Only inactive, unowned sessions can be removed.',
+        'cleanupCheck': 'Check and clean up',
+        'cleanupDelete': 'Delete selected',
+        'cleanupChecking': 'Checking sessions…',
+        'cleanupDeleting': 'Deleting sessions…',
+        'cleanupNone': 'No orphaned or one-shot sessions found.',
+        'cleanupSummary': 'Wild: {wild} · historical suspects: {legacy} · one-shot nodes: {oneShot} · {size}',
+        'cleanupWild': 'Wild',
+        'cleanupLegacy': 'Historical suspects',
+        'cleanupOneShot': 'One-shot',
+        'cleanupMore': '+{count} more',
+        'cleanupLegacyOption': 'Include historical suspects (seeded, no composition)',
+        'cleanupConfirm': 'Permanently delete {count} item(s), about {size}? This cannot be undone.',
+        'cleanupDone': 'Deleted {count} item(s), freed {size}.',
+        'cleanupPartial': '{count} item(s) could not be deleted; review the session list.',
+        'cleanupCheckFailed': 'Session check failed.',
+        'cleanupUnavailable': 'Session cleanup is unavailable for this storage backend.',
         'statusPending': 'pending',
         'statusInProgress': 'in progress',
         'statusCompleted': 'completed',
@@ -129,6 +148,7 @@ window.__ModuleLoader__.load({
         'editTitle': '编辑标题',
         'cloneTree': '克隆整棵树',
         'cloneTreeConfirm': '把整棵树克隆成新的 Session 树？源树不会被修改。',
+        'cloneEstimate': '将创建 {sessions} 个新 Session，并复制约 {size} 的历史。重复 clone/bud 会线性增长存储。',
         'cloneDone': '克隆已创建：{session}',
         'bud': '出芽为根',
         'budConfirm': '把这个节点及其子树克隆为新的独立根？原节点保留在原树。',
@@ -209,6 +229,24 @@ window.__ModuleLoader__.load({
         'taskDelete': '删除',
         'taskDeleteTitle': '删除任务',
         'taskDeleteConfirm': '删除这个任务？它只存在于插件任务板，不是 DSH Team。',
+        'cleanup': '会话清理',
+        'cleanupHint': '检查并删除已脱离组合的克隆会话和一次性占位；只能删除非 live、无组合归属的会话。',
+        'cleanupCheck': '检查并清理',
+        'cleanupDelete': '删除选中',
+        'cleanupChecking': '正在检查会话…',
+        'cleanupDeleting': '正在删除会话…',
+        'cleanupNone': '没有发现野会话或一次性会话。',
+        'cleanupSummary': '野会话：{wild} · 历史疑似：{legacy} · 一次性节点：{oneShot} · {size}',
+        'cleanupWild': '野会话',
+        'cleanupLegacy': '历史疑似',
+        'cleanupOneShot': '一次性',
+        'cleanupMore': '还有 {count} 项',
+        'cleanupLegacyOption': '包含历史疑似项（seeded、无组合归属）',
+        'cleanupConfirm': '永久删除 {count} 项，约 {size}？此操作不可撤销。',
+        'cleanupDone': '已删除 {count} 项，释放 {size}。',
+        'cleanupPartial': '有 {count} 项未能删除，请检查会话列表。',
+        'cleanupCheckFailed': '会话检查失败。',
+        'cleanupUnavailable': '当前存储后端不支持会话清理。',
         'statusPending': '待处理',
         'statusInProgress': '进行中',
         'statusCompleted': '已完成',
@@ -564,6 +602,23 @@ window.__ModuleLoader__.load({
       const text = t(key)
       if (values === undefined) return text
       return text.replace(/\{(\w+)\}/g, (match, name) => values[name] ?? match)
+    }
+
+    /**
+     * @param {unknown} value - byte count.
+     * @returns {string} compact human-readable size.
+     */
+    function formatBytes(value) {
+      const bytes = typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+      if (bytes < 1024) return `${Math.round(bytes)} B`
+      const units = ['KB', 'MB', 'GB', 'TB']
+      let amount = bytes / 1024
+      let index = 0
+      while (amount >= 1024 && index < units.length - 1) {
+        amount /= 1024
+        index += 1
+      }
+      return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`
     }
 
     /**
@@ -1145,6 +1200,10 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState(null)
       const [confirmDelete, setConfirmDelete] = React.useState(false)
       const [pendingClone, setPendingClone] = React.useState(null)
+      const [cleanup, setCleanup] = React.useState({
+        loading: false, busy: false, data: null, error: null, notice: null, includeLegacy: false,
+      })
+      const [cleanupConfirm, setCleanupConfirm] = React.useState(false)
       const [editingTitle, setEditingTitle] = React.useState(false)
       const [titleDraft, setTitleDraft] = React.useState('')
       const requestedTitles = React.useRef(new Set())
@@ -1306,7 +1365,17 @@ window.__ModuleLoader__.load({
         null,
       )
 
-      const runClone = (path, body, doneKey) => setPendingClone({ path, body, doneKey })
+      const runClone = async (path, body, doneKey) => {
+        let estimate = null
+        try {
+          const query = new URLSearchParams({ rootSessionId: body.rootSessionId })
+          if (typeof body.nodeId === 'string') query.set('nodeId', body.nodeId)
+          estimate = await callApi(`/clone-estimate?${query.toString()}`)
+        } catch {
+          // The estimate is advisory; the clone route still validates the plan.
+        }
+        setPendingClone({ path, body, doneKey, estimate })
+      }
 
       const confirmClone = () => {
         const pending = pendingClone
@@ -1324,8 +1393,8 @@ window.__ModuleLoader__.load({
           .finally(() => setBusy(false))
       }
 
-      const cloneTree = () => runClone('/clone-tree', { rootSessionId: activeRoot }, 'cloneDone')
-      const budNode = (nodeId) => runClone('/bud', { rootSessionId: activeRoot, nodeId }, 'budDone')
+      const cloneTree = () => { void runClone('/clone-tree', { rootSessionId: activeRoot }, 'cloneDone') }
+      const budNode = (nodeId) => { void runClone('/bud', { rootSessionId: activeRoot, nodeId }, 'budDone') }
 
       const reparentNode = (nodeId, parentId) => mutate(
         () => callApi('/set-parent', {
@@ -1398,6 +1467,58 @@ window.__ModuleLoader__.load({
         )
       }
 
+      const checkCleanup = async (requestDelete = false) => {
+        setCleanup((previous) => ({ ...previous, loading: true, error: null, notice: null }))
+        try {
+          const data = await callApi('/session-cleanup')
+          setCleanup((previous) => ({ ...previous, loading: false, data }))
+          if (requestDelete && data.available === true) {
+            const pending = data.totals.wild.count + data.totals.oneShot.count
+              + (cleanup.includeLegacy ? data.totals.legacy.count : 0)
+            if (pending > 0) setCleanupConfirm(true)
+          }
+        } catch (error) {
+          setCleanup((previous) => ({ ...previous, loading: false, error: error.message }))
+        }
+      }
+
+      const runCleanup = async () => {
+        const data = cleanup.data
+        if (data === null) return
+        setCleanupConfirm(false)
+        setCleanup((previous) => ({ ...previous, busy: true, error: null, notice: null }))
+        const sessionIds = [
+          ...data.wild.map((entry) => entry.sessionId),
+          ...(cleanup.includeLegacy ? data.legacy.map((entry) => entry.sessionId) : []),
+        ]
+        const oneShotNodeIds = data.oneShot.map((entry) => entry.nodeId)
+        try {
+          const result = await callApi('/session-cleanup', {
+            method: 'POST',
+            body: { sessionIds, oneShotNodeIds, includeLegacy: cleanup.includeLegacy },
+          })
+          await load({ silent: true })
+          const fresh = await callApi('/session-cleanup')
+          const removed = result.deleted.length + result.oneShotRemoved
+          const done = format(t, 'cleanupDone', {
+            count: String(removed),
+            size: formatBytes(result.bytesFreed),
+          })
+          setCleanup({
+            loading: false,
+            busy: false,
+            data: fresh,
+            error: null,
+            notice: result.failures.length === 0
+              ? done
+              : `${done} ${format(t, 'cleanupPartial', { count: String(result.failures.length) })}`,
+            includeLegacy: false,
+          })
+        } catch (error) {
+          setCleanup((previous) => ({ ...previous, busy: false, error: error.message }))
+        }
+      }
+
       const composition = state.composition
       const filteredComposition = React.useMemo(
         () => visibleComposition(composition, showOneShot),
@@ -1405,6 +1526,30 @@ window.__ModuleLoader__.load({
       )
       const tree = React.useMemo(() => treeOf(filteredComposition), [filteredComposition])
       const nodes = filteredComposition?.nodes ?? []
+      const cleanupTotals = cleanup.data?.totals ?? null
+      const cleanupLegacyCount = cleanup.includeLegacy ? cleanupTotals?.legacy.count ?? 0 : 0
+      const cleanupLegacyBytes = cleanup.includeLegacy ? cleanupTotals?.legacy.bytes ?? 0 : 0
+      const cleanupCount = (cleanupTotals?.wild.count ?? 0) + cleanupLegacyCount + (cleanupTotals?.oneShot.count ?? 0)
+      const cleanupBytes = (cleanupTotals?.wild.bytes ?? 0) + cleanupLegacyBytes + (cleanupTotals?.oneShot.bytes ?? 0)
+      const cleanupAllBytes = (cleanupTotals?.wild.bytes ?? 0)
+        + (cleanupTotals?.legacy.bytes ?? 0)
+        + (cleanupTotals?.oneShot.bytes ?? 0)
+      const cleanupAny = ((cleanupTotals?.wild.count ?? 0)
+        + (cleanupTotals?.legacy.count ?? 0)
+        + (cleanupTotals?.oneShot.count ?? 0)) > 0
+      const cleanupList = (key, labelKey, entries) => entries.length === 0 ? null : h('div', {
+        key,
+        style: { display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' },
+      }, [
+        h('div', { key: 'label', style: styles.sessionMeta }, t(labelKey)),
+        ...entries.slice(0, 5).map((entry) => h('div', {
+          key: entry.sessionId ?? entry.nodeId,
+          style: { ...styles.sessionMeta, overflowWrap: 'anywhere' },
+        }, `${entry.title} · ${formatBytes(entry.size)}`)),
+        entries.length > 5
+          ? h('div', { key: 'more', style: styles.sessionMeta }, format(t, 'cleanupMore', { count: String(entries.length - 5) }))
+          : null,
+      ])
 
       if (state.loading) return h('div', { style: styles.wrap }, h('div', { key: 'loading' }, t('loading')))
       if (state.error !== null) {
@@ -1557,6 +1702,62 @@ window.__ModuleLoader__.load({
                 onCreate: createTask,
                 onUpdate: updateTask,
               }),
+              h('div', { key: 'cleanup', style: styles.board }, [
+                h('div', { key: 'title', style: styles.sectionTitle }, t('cleanup')),
+                h('div', { key: 'hint', style: styles.sessionMeta }, t('cleanupHint')),
+                h('div', { key: 'actions', style: styles.confirmRow }, [
+                  h('button', {
+                    key: 'check',
+                    type: 'button',
+                    style: styles.button,
+                    disabled: busy || cleanup.loading || cleanup.busy,
+                    onClick: () => void checkCleanup(true),
+                  }, cleanup.loading ? t('cleanupChecking') : t('cleanupCheck')),
+                  cleanup.data !== null && cleanup.data.available === true && cleanupCount > 0
+                    ? h('button', {
+                        key: 'delete',
+                        type: 'button',
+                        style: styles.danger,
+                        disabled: busy || cleanup.loading || cleanup.busy,
+                        onClick: () => setCleanupConfirm(true),
+                      }, t('cleanupDelete'))
+                    : null,
+                ]),
+                cleanup.busy ? h('div', { key: 'busy', style: styles.sessionMeta }, t('cleanupDeleting')) : null,
+                cleanup.error === null ? null : h('div', { key: 'error', style: styles.error }, `${t('cleanupCheckFailed')} ${cleanup.error}`),
+                cleanup.notice === null ? null : h('div', { key: 'notice', style: styles.notice }, cleanup.notice),
+                cleanup.data === null
+                  ? null
+                  : cleanup.data.available !== true
+                    ? h('div', { key: 'unavailable', style: styles.warning }, t('cleanupUnavailable'))
+                    : h('div', { key: 'result', style: { display: 'flex', flexDirection: 'column', gap: '4px' } }, [
+                        h('div', { key: 'summary', style: styles.sessionMeta }, cleanupAny === false
+                          ? t('cleanupNone')
+                          : format(t, 'cleanupSummary', {
+                              wild: String(cleanup.data.totals.wild.count),
+                              legacy: String(cleanup.data.totals.legacy.count),
+                              oneShot: String(cleanup.data.totals.oneShot.count),
+                              size: formatBytes(cleanupAllBytes),
+                            })),
+                        cleanup.data.totals.legacy.count > 0
+                          ? h('label', {
+                              key: 'legacy',
+                              style: { display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px' },
+                            }, [
+                              h('input', {
+                                key: 'input',
+                                type: 'checkbox',
+                                checked: cleanup.includeLegacy,
+                                onChange: (event) => setCleanup((previous) => ({ ...previous, includeLegacy: event.target.checked })),
+                              }),
+                              h('span', { key: 'label' }, t('cleanupLegacyOption')),
+                            ])
+                          : null,
+                        cleanupList('wild', 'cleanupWild', cleanup.data.wild),
+                        cleanupList('legacy-list', 'cleanupLegacy', cleanup.data.legacy),
+                        cleanupList('one-shot-list', 'cleanupOneShot', cleanup.data.oneShot),
+                      ]),
+              ]),
               h('button', {
                 key: 'delete',
                 type: 'button',
@@ -1591,13 +1792,34 @@ window.__ModuleLoader__.load({
               pendingClone === null ? null : h(ConfirmDialog, {
                 key: 'clone-dialog',
                 title: pendingClone.path === '/clone-tree' ? t('cloneTree') : t('bud'),
-                message: t(pendingClone.path === '/clone-tree' ? 'cloneTreeConfirm' : 'budConfirm'),
+                message: `${t(pendingClone.path === '/clone-tree' ? 'cloneTreeConfirm' : 'budConfirm')}${
+                  pendingClone.estimate === null
+                    ? ''
+                    : ` ${format(t, 'cloneEstimate', {
+                        sessions: String(pendingClone.estimate.sessions),
+                        size: formatBytes(pendingClone.estimate.bytes),
+                      })}`
+                }`,
                 confirmLabel: pendingClone.path === '/clone-tree' ? t('cloneTree') : t('bud'),
                 cancelLabel: t('cancel'),
                 busy,
                 onCancel: () => setPendingClone(null),
                 onConfirm: confirmClone,
               }),
+              cleanupConfirm ? h(ConfirmDialog, {
+                key: 'cleanup-dialog',
+                title: t('cleanup'),
+                message: format(t, 'cleanupConfirm', {
+                  count: String(cleanupCount),
+                  size: formatBytes(cleanupBytes),
+                }),
+                confirmLabel: t('cleanupDelete'),
+                cancelLabel: t('cancel'),
+                danger: true,
+                busy: cleanup.busy,
+                onCancel: () => setCleanupConfirm(false),
+                onConfirm: runCleanup,
+              }) : null,
             ]),
       ])
     }

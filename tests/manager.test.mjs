@@ -22,6 +22,7 @@ function fakeStore(initial = new Map()) {
   const data = new Map(initial)
   const policies = new Map()
   const tasks = new Map()
+  const clones = new Map()
   return {
     mode: 'memory',
     async get(key) {
@@ -61,6 +62,10 @@ function fakeStore(initial = new Map()) {
     async listTasks(rootSessionId) {
       return [...tasks.entries()].filter(([, task]) => task.rootSessionId === rootSessionId)
     },
+    async getClone(key) { return clones.get(key) },
+    async putClone(key, value) { clones.set(key, value) },
+    async deleteClone(key) { clones.delete(key) },
+    async listClones() { return [...clones.entries()] },
   }
 }
 
@@ -787,6 +792,27 @@ test('records task provenance and limits updates to the owner or an ancestor', a
   assert.equal(remaining.some((entry) => entry.id === userTask.id), false)
 })
 
+
+test('deleting a clone composition keeps its clone mapping as orphaned', async () => {
+  const store = fakeStore()
+  const manager = createManager({ store, discovery: fakeDiscovery() })
+  await manager.create('s-a')
+  await store.putClone('clone-1', {
+    id: 'clone-1',
+    kind: 'clone',
+    status: 'completed',
+    sourceCompositionId: 'source',
+    sourceRootSessionId: 's-source',
+    newRootSessionId: 's-a',
+    snapshotAt: 1,
+    nodeMapping: [{ sourceSessionId: 's-source', newSessionId: 's-a' }],
+  })
+  await manager.deleteComposition('s-a')
+  const clones = await store.listClones('s-a')
+  assert.equal(clones.length, 1)
+  assert.equal(clones[0][1].status, 'orphaned')
+  assert.equal(typeof clones[0][1].orphanedAt, 'number')
+})
 
 test('deleting a composition removes its stored policy', async () => {
   const store = fakeStore()

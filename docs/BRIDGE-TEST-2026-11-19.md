@@ -121,7 +121,7 @@ live `exec.args` 为 `undefined`：
 - `list_agents` 不读参数，所以是唯一正常工作的原生名工具。
 
 测试以前直接调用 `definition.execute(args, exec)`，没有经过 live
-`tools/execute`，所以 158 个测试全绿仍漏掉了这个真实问题。
+`tools/execute`，所以 165 个测试全绿仍漏掉了这个真实问题。
 
 ### 3.3 已修复并复测
 

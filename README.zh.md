@@ -59,6 +59,8 @@ DSH 原生已经为每个 subagent 固定了 parent。本插件在此基础上�
 - id: dsh-combinagents
   config:
     autoGrantDelegatedEdges: true
+    # 仅当 JSONL session root 不是 $DSH_HOME/sessions 时需要
+    # sessionRoot: /absolute/path/to/sessions
   disabled: false
 ```
 
@@ -95,6 +97,7 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 | Bud as new root | 把某节点及其子树克隆为新的 root |
 | Show one-shot agents | 显示默认隐藏的一次性节点 |
 | Composition tasks | 创建、开始、完成、重开、删除插件任务 |
+| Session cleanup | 检查并删除孤儿克隆会话和一次性占位 |
 | Open conversation | 打开本地会话；外部节点不提供 |
 
 节点会显示 `live`、`saved`、`archived` 状态，以及 native parent、workspace、sandbox、permission preset、agent preset 和 lifecycle mode（如果可用）。
@@ -151,6 +154,7 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 - 每次 delivered、denied 或 approval-denied 操作都会写入 audit。
 - External 节点不能接收 follow-up。
 - 删除节点只删除 overlay，不删除 DSH 会话。
+- **Session cleanup** 是唯一会删除会话的操作：只删除非 live、无组合归属、经用户明确确认的孤儿克隆会话和一次性占位；默认操作 `$DSH_HOME/sessions` 下的 JSONL session 目录，自定义 root 用 `sessionRoot`。它回收的是 session 日志目录，共享 attachment/cache 文件不会删除。此操作不可撤销。
 
 ## 常见问题
 

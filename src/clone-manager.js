@@ -283,8 +283,9 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     const source = await observe(query(), sourceNode.sourceSessionId)
     const id = `session-${randomUUID()}`
     pendingSources.set(id, sourceNode.sourceSessionId)
+    let activation
     try {
-      const activation = await service.startActivation({
+      activation = await service.startActivation({
         provider: CLONE_PROVIDER,
         label: sourceNode.label,
         childId: id,
@@ -311,6 +312,17 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
       pendingSources.delete(id)
       return { id, activation, agent, header: agent.session.header, sourceHeader: source.header, snapshotAt }
     } catch (error) {
+      // `startActivation` may have published a live child before a later
+      // projection read failed. Release that activation so it cannot sit
+      // resident behind a failed clone; the created session still persists
+      // and is reported by the caller's failure path.
+      if (activation !== undefined) {
+        try {
+          await activation.dispose?.()
+        } catch (disposeError) {
+          ctx.logger?.warn?.('dsh-combinagents: failed to release an unpublished clone child', disposeError)
+        }
+      }
       pendingSources.delete(id)
       throw error instanceof CompositionError ? error : cloneFailure(sourceNode, error)
     }
@@ -580,6 +592,53 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
       }
       for (const [childId, sourceId] of pendingSources) {
         if (plan.nodes.some((node) => node.sourceSessionId === sourceId)) pendingSources.delete(childId)
+      }
+      // Sessions already published by `agents.create` or a child activation
+      // cannot be rolled back by this plugin (DSH exposes no session delete).
+      // Keep the failed clone diagnosable instead of silently leaving them
+      // undiscoverable: the caller can archive them through the workspace.
+      const createdSessionIds = [...cloneNodeBySource.values()]
+        .map((entry) => entry.sessionId)
+        .filter((sessionId) => typeof sessionId === 'string')
+      if (createdSessionIds.length > 0) {
+        ctx.logger?.warn?.('dsh-combinagents: clone failed after creating sessions; sessions remain persisted', {
+          rootSessionId: root?.id,
+          createdSessionIds,
+        })
+      }
+      if (root !== undefined && typeof store.putClone === 'function') {
+        // Durable failure journal: without it a failed clone leaves sessions
+        // that no clone record can ever locate again. The cleanup tool reads
+        // this record and deletes the sessions only after explicit user
+        // confirmation.
+        const failedCloneId = randomUUID()
+        const failedClone = {
+          id: failedCloneId,
+          kind,
+          status: 'failed',
+          sourceCompositionId: sourceComposition.id,
+          sourceRootSessionId: sourceComposition.rootSessionId,
+          newRootSessionId: root.id,
+          snapshotAt,
+          nodeMapping: plan.nodes.map((node) => {
+            const cloned = cloneNodeBySource.get(node.sourceNodeId)
+            return {
+              sourceNodeId: node.sourceNodeId,
+              sourceSessionId: node.sourceSessionId,
+              newSessionId: cloned?.sessionId
+                ?? (node.sourceNodeId === plan.rootSourceNodeId ? root.id : null),
+              label: node.label,
+              cloneOf: node.cloneOf,
+            }
+          }),
+          failure: { code: error?.code ?? 'CLONE_FAILED' },
+          createdAt: snapshotAt,
+        }
+        try {
+          await store.putClone(failedCloneId, failedClone)
+        } catch (recordError) {
+          ctx.logger?.warn?.('dsh-combinagents: failed to journal a failed clone', recordError)
+        }
       }
       throw error
     }

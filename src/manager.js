@@ -1474,7 +1474,17 @@ export function createManager({
         if (task.rootSessionId === rootSessionId) await store.deleteTask?.(taskId)
       }
       for (const [cloneId, clone] of await store.listClones?.(rootSessionId) ?? []) {
-        if (clone.newRootSessionId === rootSessionId) await store.deleteClone?.(cloneId)
+        if (clone.newRootSessionId === rootSessionId && typeof store.putClone === 'function') {
+          // Keep the clone mapping so the session cleanup tool can find the
+          // persisted clone sessions after the overlay is gone. The record is
+          // removed only after those sessions are explicitly deleted. A
+          // metadata write failure must not resurrect or block the deletion.
+          try {
+            await store.putClone(cloneId, { ...clone, status: 'orphaned', orphanedAt: now() })
+          } catch (error) {
+            warn('dsh-combinagents: could not mark the clone record orphaned', error)
+          }
+        }
       }
     })
   }

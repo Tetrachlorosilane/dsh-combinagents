@@ -166,6 +166,7 @@ export function createDiscovery(ctx, options = {}) {
       // root (continuable); a subagent's exact mode comes from the native
       // catalog walk and is filled by sync/auto-attach when available.
       mode: sourceOf(header) === 'subagent' ? 'unknown' : 'continuable',
+      isSeeded: header.isSeeded === true,
       nativeParentSessionId: header.parentSession ?? null,
       agentPreset: header.agentPreset ?? null,
       ...policyOf(live),
@@ -625,5 +626,21 @@ export function createDiscovery(ctx, options = {}) {
     }
   }
 
-  return { list, titles, describe, describeHeader, describeMany, isKnownSession, listNative, countNative, peekNativeCount, listTree, invalidateNative }
+  return {
+    list,
+    titles,
+    describe,
+    describeHeader,
+    describeMany,
+    isKnownSession,
+    listNative,
+    countNative,
+    peekNativeCount,
+    listTree,
+    invalidateNative,
+    /** Force the next corpus read to rebuild after external session removal. */
+    invalidateCorpus() {
+      corpusCache = { at: 0, data: null }
+    },
+  }
 }

@@ -77,6 +77,8 @@ entry). It is not published to npm.
 - id: dsh-combinagents
   config:
     autoGrantDelegatedEdges: true
+    # Optional: only needed when the JSONL session root is not $DSH_HOME/sessions.
+    # sessionRoot: /absolute/path/to/sessions
   disabled: false
 ```
 
@@ -128,6 +130,7 @@ composition membership from its `parentSession` header.
 | Bud as new root | Clone one node and its subtree as a new root |
 | Show one-shot agents | Show one-shot nodes that are hidden by default |
 | Composition tasks | Create, start, complete, reopen, and delete plugin tasks |
+| Session cleanup | Check and delete orphaned clone sessions and one-shot placeholders |
 | Open conversation | Open a local session; external nodes never offer it |
 
 Nodes show `live`, `saved`, or `archived` state, plus the native parent,
@@ -213,6 +216,12 @@ storage backend outside the default directory needs a `storageDir` override.
 - Every delivered, denied, or approval-denied action is audited.
 - External nodes cannot receive follow-ups.
 - Removing a node removes only the overlay. It never deletes a DSH session.
+- **Session cleanup** is the only destructive session operation. It never
+  touches live sessions or composition members; it deletes only inactive,
+  explicitly confirmed orphaned clone sessions and one-shot placeholders from
+  the default JSONL session root. Set `sessionRoot` for a custom root. It
+  reclaims the session-log directory; shared attachment/cache files are not
+  deleted. This cannot be undone.
 
 ## Troubleshooting
 

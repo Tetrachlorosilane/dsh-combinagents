@@ -15,6 +15,7 @@ import { createCloneManager } from './src/clone-manager.js'
 import { createControls } from './src/controls.js'
 import { createDiscovery } from './src/discovery.js'
 import { createManager } from './src/manager.js'
+import { createSessionCleanup } from './src/session-cleanup.js'
 import { createStore } from './src/store.js'
 
 /** Package identity used by the bundle and the Client module. */
@@ -36,6 +37,14 @@ export function apply(ctx, config = {}) {
   const discovery = createDiscovery(ctx)
   const manager = createManager({ store, discovery, agents: () => ctx.get('agents'), logger: ctx.logger })
   const cloneManager = createCloneManager({ ctx, store, discovery, manager })
+  const sessionCleanup = createSessionCleanup({
+    ctx,
+    store,
+    discovery,
+    manager,
+    sessionsRoot: config?.sessionRoot,
+    logger: ctx.logger,
+  })
   const controls = createControls({
     ctx,
     manager,
@@ -111,6 +120,7 @@ export function apply(ctx, config = {}) {
       manager,
       discovery,
       cloneManager,
+      sessionCleanup,
       token,
       version,
       platform: process.platform,

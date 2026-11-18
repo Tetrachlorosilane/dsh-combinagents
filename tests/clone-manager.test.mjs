@@ -65,7 +65,7 @@ function sourceSummary(sessionId, parentSession = null) {
   }
 }
 
-function createHarness({ failChild = false, workspaces = [] } = {}) {
+function createHarness({ failChild = false, hideChildAgent = false, workspaces = [] } = {}) {
   const summaries = new Map([
     ['s-a', sourceSummary('s-a')],
     ['s-b', sourceSummary('s-b', 's-a')],
@@ -79,6 +79,7 @@ function createHarness({ failChild = false, workspaces = [] } = {}) {
   const created = []
   let activeChildren = 0
   let peakChildren = 0
+  const disposed = []
   const agents = {
     async create(options) {
       created.push(options.sessionId)
@@ -135,12 +136,14 @@ function createHarness({ failChild = false, workspaces = [] } = {}) {
         options: {},
       }
       live.set(agent.id, agent)
+      if (hideChildAgent) live.delete(agent.id)
       return {
         childId: spec.childId,
         messageId: 'message-1',
         async dispose() {
           live.delete(agent.id)
           activeChildren -= 1
+          disposed.push(spec.childId)
         },
       }
     },
@@ -179,7 +182,7 @@ function createHarness({ failChild = false, workspaces = [] } = {}) {
   }
   const manager = createManager({ store, discovery, agents: () => agents })
   const cloneManager = createCloneManager({ ctx, store, discovery, manager, now: () => 5000 })
-  return { store, manager, cloneManager, live, created, peakChildren: () => peakChildren }
+  return { store, manager, cloneManager, live, created, disposed, peakChildren: () => peakChildren }
 }
 
 function installSource(store, composition, tasks = []) {
@@ -325,12 +328,34 @@ test('cleans up the new root and records when child creation fails', async () =>
     return true
   })
   assert.equal(live.size, 0)
-  assert.equal((await store.listClones()).length, 0)
+  const failed = await store.listClones()
+  assert.equal(failed.length, 1)
+  assert.equal(failed[0][1].status, 'failed')
+  assert.equal(failed[0][1].newRootSessionId, created[0])
+  assert.equal(failed[0][1].nodeMapping.length, 2)
   assert.equal((await store.listTasks(created[0])).length, 0)
   assert.equal(await store.get(created[0]), undefined)
   cloneManager.dispose()
 })
 
+
+test('releases a published child activation when its agent is not readable', async () => {
+  const { store, cloneManager, disposed, live } = createHarness({ hideChildAgent: true })
+  installSource(store, createComposition({
+    id: 'source',
+    title: 'Team',
+    rootSessionId: 's-a',
+    nodes: [node('n-a', 's-a', 'Root'), node('n-b', 's-b', 'Child')],
+    edges: [{ id: 'e-1', parentId: 'n-a', childId: 'n-b', role: 'reports-to' }],
+  }))
+  await assert.rejects(
+    () => cloneManager.cloneTree('s-a'),
+    (error) => error?.code === 'CLONE_FAILED' && /did not publish a live agent/.test(error.message),
+  )
+  assert.equal(disposed.length, 1)
+  assert.equal(live.size, 0)
+  cloneManager.dispose()
+})
 
 test('detaches a failed clone root from its workspace', async () => {
   const attached = []

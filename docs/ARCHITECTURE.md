@@ -297,6 +297,9 @@ GET  /tasks?rootSessionId=...      plugin-owned composition tasks
 POST /create-task                  { subject, description?, ownerNodeId? }
 POST /update-task                  { taskId, expectedRevision, action }
 POST /delete-composition           remove the overlay record; sessions untouched
+GET  /session-cleanup              preview tracked orphan/one-shot cleanup candidates
+POST /session-cleanup              { sessionIds?, oneShotNodeIds?, includeLegacy? }
+GET  /clone-estimate?rootSessionId=&nodeId=  new-session count + copied-history bytes
 ```
 
 Title editing is implemented through `/set-title` and the tab header. A
@@ -336,6 +339,31 @@ Rules:
   back, and membership is reindexed only after both records settle;
 - tasks record `createdBy` and audit actor; only the owner or one of its
   composition ancestors may change a task (`TASK_FORBIDDEN` otherwise);
+
+### 5.5 Session cleanup
+
+`src/session-cleanup.js` is the only destructive session path. DSH 0.2.2-rc.5
+has no public session-delete service, so it operates on the default
+`$DSH_HOME/sessions` JSONL directory (overridable with `sessionRoot`) and only
+after a user-confirmed request:
+
+- refuse when composition storage is memory-backed or degraded; a missing
+  composition view must not make a member look ownerless;
+- preview tracked `failed`/`orphaned` clone sessions, opt-in historical
+  `isSeeded` sessions with no composition (covers clone roots and
+  `subagent_fork` mirror misses), and leaf one-shot nodes/placeholders;
+- never delete a live session, a composition member, a native ancestor of a
+  member, or a clone provenance source;
+- require `includeLegacy: true` for historical suspects;
+- delete the exact session directory under the real session root, then detach
+  workspace accounting and remove archive/pin entries;
+- remove a clone record only after every Session it maps is gone;
+- write a `session-cleanup` audit row; it does not reclaim shared
+  attachments/cache files.
+
+`GET /clone-estimate` is advisory: it reports selected node count and the sum of
+persisted source-session bytes before the clone/bud confirmation; the clone
+route revalidates the plan.
 
 A future routing phase should add its routes only after the authority design is
 settled; do not hide routing behind the phase-1 API.
