@@ -191,6 +191,7 @@ export function createControls({
   const approval = () => ctx.get?.('approval')
   const permissionPresets = () => ctx.get?.('permissionPresets')
   const sandboxPolicy = () => ctx.get?.('sandboxPolicy')
+  const workingDirectories = () => ctx.get?.('workingDirectory')
   const llm = () => ctx.get?.('llm')
   /** Input ids already reported by a wait in the same model tool call. */
   const reportedInput = new WeakMap()
@@ -389,19 +390,36 @@ export function createControls({
   }
 
   /**
-   * A delivery crosses a security boundary when the workspace differs, or when
-   * live sandbox/permission/approval state differs inside the same cwd. A
-   * missing target Session is treated as crossing (fail closed) instead of
-   * trusting a stale composition snapshot.
+   * Effective working directory, preferring the live projection over the
+   * immutable creation header.
+   * @param {object|undefined} session - live Session.
+   * @returns {string|null}
+   */
+  function cwdOfSession(session) {
+    if (session === undefined) return null
+    try {
+      const current = workingDirectories()?.get?.(session)
+      if (typeof current === 'string' && current.length > 0) return current
+    } catch {
+      // fall through to the immutable header
+    }
+    return typeof session.header?.cwd === 'string' ? session.header.cwd : null
+  }
+
+  /**
+   * A delivery crosses a security boundary when the effective workspace
+   * differs, or when live sandbox/permission/approval state differs inside the
+   * same cwd. A missing target Session is treated as crossing (fail closed)
+   * instead of trusting a stale composition snapshot.
    * @param {object|undefined} callerSession - caller Session.
    * @param {object|undefined} targetSession - target Session.
    * @returns {boolean} whether delivery crosses a boundary.
    */
   function crossesWorkspace(callerSession, targetSession) {
     if (callerSession === undefined || targetSession === undefined) return true
-    const left = callerSession.header?.cwd
-    const right = targetSession.header?.cwd
-    if (typeof left !== 'string' || typeof right !== 'string') return true
+    const left = cwdOfSession(callerSession)
+    const right = cwdOfSession(targetSession)
+    if (left === null || right === null) return true
     if (left !== right) return true
     const sandbox = policyValue((session) => sandboxPolicy()?.resolve?.({ session })?.mode, callerSession)
     const targetSandbox = policyValue((session) => sandboxPolicy()?.resolve?.({ session })?.mode, targetSession)
@@ -1108,7 +1126,11 @@ export function createControls({
     // Never steal a same-name tool installed by another plugin. Intercept the
     // observed native definition or this plugin's own static fallback.
     if (current !== undefined && current !== definition && current !== known) return next()
-    const value = await definition.execute(exec.args, exec)
+    // The live `tools/execute` event exposes parsed arguments as
+    // `exec.arguments`; tool bodies receive them as their first parameter.
+    // Keep the legacy `args` spelling for direct callers and older harnesses.
+    const args = exec.arguments ?? exec.args
+    const value = await definition.execute(args, exec)
     return { isError: false, value }
   }
 

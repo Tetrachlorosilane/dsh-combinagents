@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 19 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (146 total);
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (158 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`; current target is DSH
   `0.2.2-rc.5`, with `engines.dsh` and plugin version `0.2.0`.
 
@@ -204,10 +204,10 @@ docs/CLONE-SPIKE.md       DSH seed/catalog/permission findings for clone/bud
 package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
 
-Remaining work: verify the execution interception, the six native definitions,
-and native-path restoration in a live standard session; compare tool order and
-the prefix fingerprint with the native request; keep large-session tab latency
-under observation. The legacy composed preset is no longer the default; do not
+Remaining work: verify native-path restoration in a live standard session;
+compare tool order and the prefix fingerprint with the native request; keep
+large-session tab latency under observation. The execution interception itself
+has now been live-probed and retested after the 2026-11-19 restart. The legacy composed preset is no longer the default; do not
 use it for new sessions because it removes the native definitions the interceptor
 relies on.
 Clone/bud live verification and the temporary `/clone-spike` removal are
@@ -227,6 +227,17 @@ rotation to an `audit_archive` table, same-cwd sandbox/permission/approval
 comparison for cross-workspace messages, native-relay error propagation,
 relay-label sanitization, workspace detach on failed clone, moving the
 `autoAttach` title retry outside the root lock, and a picker truncation hint.
+The 2026-11-19 follow-up audit fixed ordinary-fork membership inheritance,
+cross-composition grant migration, external-placeholder idempotency, create/add
+membership races, the store reload-revision skip and reload-failure fallback,
+effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 158 tests pass. The
+findings and remaining accepted risks are in
+[`docs/AUDIT-2026-11-19.md`](docs/AUDIT-2026-11-19.md). The live composition/bridge
+probe is in [`docs/BRIDGE-TEST-2026-11-19.md`](docs/BRIDGE-TEST-2026-11-19.md):
+the HTTP bridge and native workflow child mirroring passed; the composed
+`subagent`/`send_message` tools exposed the `exec.args` bug, which was fixed and
+retested after the 2026-11-19 restart (persistent spawn/fork, send_message, and
+wait_agent now pass).
 Remaining audit items: SEC-6 (default bidirectional grant, product decision),
 SEC-8 rate limiting, SEC-11 (loopback/proxy trust), SEC-12 (clone permission
 drift), X-10 (agent_preset/provider capability), X-12 (storageDomain hard
@@ -322,10 +333,12 @@ registration, and the rendered GUI are verified. Completed on 2026-11-17:
 - dark and light themes and 420 px width (no horizontal overflow; action buttons
   no longer split mid-word).
 
-Still open: live standard-session verification of the execution interception,
-the canonical request-prefix fingerprint, and large-session tab paint. The
-legacy composed preset remains on disk only for old sessions; new sessions use
-`standard`. Clone/bud GUI checks passed on 2026-11-18.
+Live standard-session interception was probed on 2026-11-19: it exposed the
+`exec.args`/`exec.arguments` bug listed as A-11, which was fixed and retested
+after the Host restart (persistent spawn/fork, `send_message`, and `wait_agent`
+passed). Still open: the canonical request-prefix fingerprint and large-session
+tab paint. The legacy composed preset remains on disk only for old sessions; new
+sessions use `standard`. Clone/bud GUI checks passed on 2026-11-18.
 
 
 ## 7. Known pitfalls

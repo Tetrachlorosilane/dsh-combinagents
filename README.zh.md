@@ -79,7 +79,7 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 6. 正常使用 `subagent` 或 `subagent_fork` 启动子代理。子代理会自动镜像到组合，并带上 native parent 和自动授权的 delegation edge。
 7. 如果有 native 后代没有出现，使用 **Sync native agents**。
 
-一个会话最多属于一个组合。把已在其他组合中的会话加进来时，它的子树会移动；如果源组合还剩下其他 root，会重新指定一个本地 root 持有者。
+一个会话最多属于一个组合。把已在其他组合中的会话加进来时，它的子树会移动；如果源组合还剩下其他 root，会重新指定一个本地 root 持有者。被移动的子树保留内部 grant；新的边界 edge 继承旧的入边 grant，显式 deny 不会被重置为允许。普通 DSH fork 是新 root，不会仅凭 `parentSession` header 继承源组合的成员关系。
 
 ## 界面说明
 
@@ -161,6 +161,7 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 | `NOT_IN_COMPOSITION` | 先为当前会话创建组合；或从 top-level agent 使用 `subagent`。 |
 | `AGENT_BUSY` | 受影响的 agent 或其组合祖先/后代正在运行，等它结束。 |
 | `another DSH profile is changing the composition` | 另一个 profile 持有 mutation lock，稍后重试。 |
+| `STORAGE_UNAVAILABLE` | Domain 重新加载失败；读取保留最后一次内存快照，写入 fail-closed。重启 Host。 |
 | `storageMemory` 警告 | Storage domain 未能打开；修改只在 Host 重启前有效，检查 DSH storage backend。 |
 | 看不到某个 one-shot 代理 | 默认隐藏；打开 **Show one-shot agents**，必要时先 **Sync native agents**。 |
 | 另一个 profile 的树看起来是旧的 | 等待 3 秒轮询、刷新页面，或确认两个 profile 都运行当前版本。 |

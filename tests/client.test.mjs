@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+
+test('client confirmations use the DSH-themed dialog instead of browser dialogs', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /window\.(?:confirm|alert|prompt)\s*\(/)
+  assert.match(source, /role: 'dialog'/)
+  assert.match(source, /--dsw-alias-bg-mask-1/)
+  assert.match(source, /--dsw-radius-panel/)
+})
 
 test('client module registers one tab type, its body, and the header utility', async () => {
   let definition

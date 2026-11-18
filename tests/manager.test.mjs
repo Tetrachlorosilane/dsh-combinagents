@@ -377,6 +377,35 @@ test('resolves one shared composition from a member session', async () => {
   assert.equal(moved.composition.edges.length, 0)
 })
 
+test('ordinary forks lead a new composition instead of inheriting the source', async () => {
+  const fork = {
+    ...summary('s-fork', 'Fork'),
+    nativeParentSessionId: 's-a',
+  }
+  const discovery = {
+    async describe(sessionId) {
+      return sessionId === 's-fork' ? fork : sessionId === 's-a' ? summary('s-a', 'Lead') : null
+    },
+    async describeHeader(sessionId) {
+      return sessionId === 's-fork' ? fork : sessionId === 's-a' ? summary('s-a', 'Lead') : null
+    },
+    async listTree() {
+      return { available: true, children: [] }
+    },
+  }
+  const store = fakeStore()
+  const manager = createManager({ store, discovery })
+  await manager.create('s-a')
+
+  // `header.parentSession` alone is not native subagent membership: an
+  // ordinary fork has no `origin: 'subagent'` and leads a new native tree.
+  assert.equal(await manager.resolveSession('s-fork'), null)
+  const created = await manager.create('s-fork')
+  assert.equal(created.composition.rootSessionId, 's-fork')
+  assert.equal((await manager.state('s-fork')).composition.rootSessionId, 's-fork')
+  assert.equal((await manager.state('s-a')).composition.nodes.length, 1)
+})
+
 test('blocks structural edits in a working branch but not collateral nodes', async () => {
   const running = new Set()
   const manager = createManager({
@@ -485,6 +514,59 @@ test('imports the existing native tree on create', async () => {
   const nativeEdge = composition.edges.find((edge) => edge.parentId === root.id && edge.childId === b.id)
   assert.deepEqual((await manager.getGrants('s-a'))[nativeEdge.id], { allowMessage: false, allowInterrupt: false })
   assert.equal((await manager.authorizeMessage('s-a', root.id, b.id)).allowed, false)
+})
+
+test('sync-native is idempotent for external placeholders and one-shot leaves', async () => {
+  const tree = [
+    { kind: 'child', id: 's-ext', parentId: 's-a', depth: 1, mode: 'external', label: 'ACP', activity: 'inactive' },
+    { kind: 'child', id: 's-one', parentId: 's-a', depth: 1, mode: 'one-shot', label: 'Once', activity: 'inactive' },
+  ]
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(['s-a'], tree) })
+  await manager.create('s-a')
+  await manager.syncNativeTree('s-a')
+  await manager.syncNativeTree('s-a')
+  const composition = (await manager.state('s-a')).composition
+  assert.equal(composition.nodes.filter((node) => node.kind === 'external').length, 2)
+  assert.equal(composition.nodes.filter((node) => node.kind === 'external' && node.mode === 'external').length, 1)
+  assert.equal(composition.nodes.filter((node) => node.kind === 'external' && node.mode === 'one-shot').length, 1)
+
+  await manager.autoAttach('s-a', {
+    childId: 's-ext',
+    local: false,
+    provider: 'external',
+  })
+  const after = (await manager.state('s-a')).composition
+  assert.equal(after.nodes.filter((node) => node.kind === 'external').length, 2)
+})
+
+test('sync-native skips title reads for already mirrored nodes', async () => {
+  let describes = 0
+  const tree = [
+    { kind: 'child', id: 's-b', parentId: 's-a', depth: 1, mode: 'continuable', label: 'Worker', activity: 'inactive' },
+  ]
+  const manager = createManager({
+    store: fakeStore(),
+    discovery: {
+      async describe(sessionId) {
+        describes += 1
+        return summary(sessionId, sessionId)
+      },
+      async describeHeader(sessionId) {
+        return summary(sessionId, sessionId)
+      },
+      async listTree() {
+        return { available: true, children: tree }
+      },
+    },
+  })
+  await manager.create('s-a')
+  describes = 0
+  tree[0].mode = 'one-shot'
+  await manager.syncNativeTree('s-a')
+  assert.equal(describes, 0)
+  const composition = (await manager.state('s-a')).composition
+  assert.equal(composition.nodes.length, 2)
+  assert.equal(composition.nodes.find((node) => node.sessionId === 's-b').mode, 'one-shot')
 })
 
 test('authorizes messages and interrupts only along granted edge paths', async () => {
@@ -793,6 +875,129 @@ test('skips malformed composition records when building membership', async () =>
   })
   assert.equal(await manager.resolveSession('s-a'), null)
   assert.ok(warnings.some((entry) => entry[0].includes('malformed nodes')))
+})
+
+test('create and add-node re-check membership under the composition lock', async () => {
+  const data = new Map()
+  const policies = new Map()
+  const tasks = new Map()
+  let generation = 0
+  let inject = null
+  const store = {
+    mode: 'memory',
+    get generation() {
+      return generation
+    },
+    async refresh() {},
+    async withMutationLock(task) {
+      if (inject !== null) {
+        const run = inject
+        inject = null
+        run()
+        generation += 1
+      }
+      return task()
+    },
+    async get(key) { return data.get(key) },
+    async put(key, value) { data.set(key, value) },
+    async delete(key) { data.delete(key) },
+    async list() { return [...data.entries()] },
+    async getPolicy(key) { return policies.get(key) },
+    async putPolicy(key, value) { policies.set(key, value) },
+    async deletePolicy(key) { policies.delete(key) },
+    async appendAudit() {},
+    async listAudit() { return [] },
+    async getTask(key) { return tasks.get(key) },
+    async putTask(key, value) { tasks.set(key, value) },
+    async deleteTask(key) { tasks.delete(key) },
+    async listTasks(rootSessionId) {
+      return [...tasks.entries()].filter(([, task]) => task.rootSessionId === rootSessionId)
+    },
+  }
+  const ids = ['a', 'b', 's-b', 's-c']
+  const discovery = {
+    async describe(sessionId) {
+      return ids.includes(sessionId) ? summary(sessionId, sessionId) : null
+    },
+    async describeHeader(sessionId) {
+      return ids.includes(sessionId) ? summary(sessionId, sessionId) : null
+    },
+    async listTree() {
+      return { available: true, children: [] }
+    },
+  }
+  const otherComposition = (root, child) => createComposition({
+    title: root,
+    rootSessionId: root,
+    nodes: [
+      { id: `n-${root}`, sessionId: root, label: root, kind: 'session', source: 'top-level' },
+      { id: `n-${child}`, sessionId: child, label: child, kind: 'session', source: 'top-level' },
+    ],
+    edges: [{ id: `e-${root}-${child}`, parentId: `n-${root}`, childId: `n-${child}`, role: 'reports-to' }],
+  })
+
+  const addManager = createManager({ store, discovery })
+  await addManager.create('a')
+  inject = () => data.set('b', { composition: otherComposition('b', 's-b'), updatedAt: 1 })
+  await rejectsWithCode(addManager.addNode('a', { sessionId: 's-b' }), 'SESSION_ALREADY_COMPOSED')
+  assert.equal((await addManager.state('a')).composition.nodes.some((node) => node.sessionId === 's-b'), false)
+
+  data.clear()
+  policies.clear()
+  generation = 0
+  inject = null
+  const createManagerInstance = createManager({ store, discovery })
+  await createManagerInstance.create('a')
+  inject = () => data.set('b', { composition: otherComposition('b', 's-c'), updatedAt: 1 })
+  const created = await createManagerInstance.create('s-c')
+  assert.equal(created.composition.rootSessionId, 'b')
+  assert.equal(await store.get('s-c'), undefined)
+})
+
+test('preserves edge grants when a subtree moves across compositions', async () => {
+  const manager = createManager({
+    store: fakeStore(),
+    discovery: fakeDiscovery(['s-a', 's-b', 's-c', 's-d', 's-e']),
+  })
+  await manager.create('s-a')
+  const aRoot = (await manager.state('s-a')).composition.nodes[0]
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: aRoot.id })
+  const aState = await manager.state('s-a')
+  const b = aState.composition.nodes.find((node) => node.sessionId === 's-b')
+  await manager.addNode('s-a', { sessionId: 's-c', parentId: b.id })
+  let state = await manager.state('s-a')
+  const c = state.composition.nodes.find((node) => node.sessionId === 's-c')
+  const oldBoundary = state.composition.edges.find((edge) => edge.childId === b.id)
+  const internal = state.composition.edges.find((edge) => edge.childId === c.id)
+  await manager.setEdgeGrant('s-a', oldBoundary.id, { allowMessage: false, allowInterrupt: false })
+  await manager.setEdgeGrant('s-a', internal.id, { allowMessage: true, allowInterrupt: true })
+
+  // An auto-mirrored node has no grant (deny). Moving it must not silently
+  // create the manual-connection default.
+  await manager.autoAttach('s-a', { childId: 's-e', local: true, provider: 'spawn', label: 'Mirrored' })
+
+  await manager.create('s-d')
+  const dRoot = (await manager.state('s-d')).composition.nodes[0]
+  await manager.addNode('s-d', { sessionId: 's-b', parentId: dRoot.id })
+
+  state = await manager.state('s-d')
+  const b2 = state.composition.nodes.find((node) => node.sessionId === 's-b')
+  const c2 = state.composition.nodes.find((node) => node.sessionId === 's-c')
+  const newBoundary = state.composition.edges.find((edge) => edge.childId === b2.id)
+  const newInternal = state.composition.edges.find((edge) => edge.childId === c2.id)
+  const grants = await manager.getGrants('s-d')
+  assert.deepEqual(grants[newBoundary.id], { allowMessage: false, allowInterrupt: false })
+  assert.deepEqual(grants[newInternal.id], { allowMessage: true, allowInterrupt: true })
+  assert.equal(newBoundary.id === oldBoundary.id, false)
+  assert.equal(newInternal.id, internal.id)
+
+  const e = (await manager.state('s-a')).composition.nodes.find((node) => node.sessionId === 's-e')
+  await manager.addNode('s-d', { sessionId: 's-e', parentId: dRoot.id })
+  state = await manager.state('s-d')
+  const e2 = state.composition.nodes.find((node) => node.sessionId === 's-e')
+  const eEdge = state.composition.edges.find((edge) => edge.childId === e2.id)
+  assert.equal((await manager.getGrants('s-d'))[eEdge.id].allowMessage, false)
+  assert.ok(e)
 })
 
 test('moving a task between compositions removes it from the source on the real store', async () => {

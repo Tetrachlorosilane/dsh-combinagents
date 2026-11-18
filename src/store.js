@@ -18,7 +18,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unl
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { validateComposition } from './graph.js'
+import { CompositionError, validateComposition } from './graph.js'
 
 /** Domain name owned by this plugin. */
 export const COMPOSITION_DOMAIN_NAME = 'combinagents'
@@ -222,6 +222,10 @@ export function createStore(ctx, options = {}) {
   /** @type {null | {tables: Map<string, object>, close: Function}} */
   let opened = null
   let mode = 'memory'
+  /** True only after a durable domain could not be reloaded; reads use the
+   * snapshot kept in `memory`, and mutations must fail instead of silently
+   * becoming process-local. */
+  let degraded = false
   /** @type {{loaded: boolean, byRoot: Map<string, Map<string, object>>}} */
   const taskIndex = { loaded: false, byRoot: new Map() }
   /** @type {{loaded: boolean, byRoot: Map<string, Map<string, object>>}} */
@@ -288,33 +292,66 @@ export function createStore(ctx, options = {}) {
    * The domain is reopened rather than patched so the storage-domain snapshot
    * remains the single source of truth. Reads after this call see the new
    * snapshot; manager membership is invalidated through `generation`.
-   * @returns {Promise<void>}
+   * @returns {Promise<boolean>} whether the snapshot is current (or usable).
    */
   async function refresh(force = false) {
-    if (revisionPath === null || mode !== 'durable') return
+    if (revisionPath === null || mode !== 'durable' || degraded) return true
     if (!force && (writeDepth > 0 || mutationActive)) {
       reloadPending = true
-      return
+      return true
     }
     const disk = readRevision()
-    if (disk === null || disk === revision) return
+    if (disk === null || disk === revision) return true
     if (reloading !== null) return reloading
     reloading = (async () => {
       const previous = opened
+      // The storage facility allows only one open handle per domain name, so
+      // the old handle must close before the new snapshot can open. Keep a
+      // process-local snapshot first: if the reopen fails, reads must still
+      // show the composition instead of an empty memory table.
+      if (previous !== null) snapshotTables(previous)
       opened = null
-      if (previous !== null) await previous.close()
-      await open()
-      if (mode === 'durable') {
-        revision = readRevision()
-        generation += 1
-        taskIndex.loaded = false
-        taskIndex.byRoot.clear()
-        cloneIndex.loaded = false
-        cloneIndex.byRoot.clear()
-        onReload?.()
+      if (previous !== null) {
+        try {
+          await previous.close()
+        } catch (error) {
+          log?.warn?.('dsh-combinagents: closing the previous composition domain failed', error)
+        }
       }
+      if (!await open()) {
+        mode = 'memory'
+        degraded = true
+        log?.warn?.('dsh-combinagents: composition domain reload failed; serving the in-memory snapshot until restart')
+        return false
+      }
+      generation += 1
+      taskIndex.loaded = false
+      taskIndex.byRoot.clear()
+      cloneIndex.loaded = false
+      cloneIndex.byRoot.clear()
+      onReload?.()
+      return true
     })().finally(() => { reloading = null })
     return reloading
+  }
+
+  /**
+   * Copy one open domain's records into the memory fallback. Record values are
+   * immutable, so sharing references is safe.
+   * @param {{tables: Map<string, object>}} source - open domain handle.
+   * @returns {void}
+   */
+  function snapshotTables(source) {
+    for (const [name, table] of source.tables) {
+      const bucket = memory.get(name)
+      if (bucket === undefined) continue
+      try {
+        bucket.clear()
+        for (const [key, value] of table.entries()) bucket.set(key, value)
+      } catch (error) {
+        log?.warn?.('dsh-combinagents: could not snapshot a composition table', { table: name }, error)
+      }
+    }
   }
 
   /**
@@ -329,6 +366,12 @@ export function createStore(ctx, options = {}) {
     if (storageDir === null) return task()
     if (mutationScope.getStore() === true) return task()
     const run = async () => {
+      if (degraded) {
+        throw new CompositionError(
+          'STORAGE_UNAVAILABLE',
+          'composition storage is unavailable; restart the Host',
+        )
+      }
       await refresh()
       mkdirSync(storageDir, { recursive: true })
       const lockPath = join(storageDir, '.mutation.lock')
@@ -361,8 +404,14 @@ export function createStore(ctx, options = {}) {
       mutationActive = true
       try {
         // Re-read after the lock: the previous owner may have written while we
-        // waited.
-        await refresh(true)
+        // waited. Never apply a mutation to a snapshot that could not be
+        // refreshed; that would overwrite another profile's newer state.
+        if (!await refresh(true) || degraded) {
+          throw new CompositionError(
+            'STORAGE_UNAVAILABLE',
+            'composition storage is unavailable; restart the Host',
+          )
+        }
         return await mutationScope.run(true, task)
       } finally {
         mutationActive = false
@@ -410,20 +459,29 @@ export function createStore(ctx, options = {}) {
     const service = ctx.get?.('storageDomain') ?? ctx.storageDomain
     if (service === undefined) {
       log?.warn?.('dsh-combinagents: storageDomain unavailable; using memory storage')
-      return
+      return false
     }
+    let domain
     try {
-      const domain = await service.open(COMPOSITION_DOMAIN_SPEC)
+      domain = await service.open(COMPOSITION_DOMAIN_SPEC)
       const tables = new Map()
       for (const name of tableNames) tables.set(name, domain.table(name))
       opened = { tables, close: () => domain.close() }
       mode = 'durable'
-      // Keep the marker observed before loadAll: if another Host writes during
-      // the open, the next refresh sees the newer marker and reloads again.
+      // Keep the marker observed before loadAll: if another Host writes while
+      // the snapshot loads, the next refresh sees the newer marker and reloads.
+      // Re-reading it here would adopt a revision the snapshot does not contain.
       revision = observedRevision
       log?.info?.('dsh-combinagents: composition domain open')
+      return true
     } catch (error) {
+      try {
+        await domain?.close?.()
+      } catch {
+        // The failed open still owns nothing useful.
+      }
       log?.warn?.('dsh-combinagents: composition domain open failed; using memory storage', error)
+      return false
     }
   }
 
@@ -564,6 +622,21 @@ export function createStore(ctx, options = {}) {
     return opened === null ? null : opened.tables.get(name) ?? null
   }
 
+  /**
+   * Reject durable mutations after a reload failure. Audits keep their own
+   * best-effort catch, but composition/task records must not report success
+   * for a process-local write that will disappear.
+   * @returns {void}
+   */
+  function assertWritable() {
+    if (degraded) {
+      throw new CompositionError(
+        'STORAGE_UNAVAILABLE',
+        'composition storage is unavailable; restart the Host',
+      )
+    }
+  }
+
   return {
     ready,
     refresh,
@@ -577,12 +650,16 @@ export function createStore(ctx, options = {}) {
     get mode() {
       return mode
     },
+    get degraded() {
+      return degraded
+    },
     async get(key) {
       const table = await tableOf(COMPOSITION_TABLE)
       if (table !== null) return table.get(key)
       return memory.get(COMPOSITION_TABLE).get(key)
     },
     async put(key, record) {
+      assertWritable()
       const table = await tableOf(COMPOSITION_TABLE)
       if (table !== null) {
         await durableWrite(() => table.put(key, record))
@@ -592,6 +669,7 @@ export function createStore(ctx, options = {}) {
       memory.get(COMPOSITION_TABLE).set(key, record)
     },
     async delete(key) {
+      assertWritable()
       const table = await tableOf(COMPOSITION_TABLE)
       if (table !== null) {
         await durableWrite(() => table.delete(key))
@@ -611,6 +689,7 @@ export function createStore(ctx, options = {}) {
       return memory.get(POLICY_TABLE).get(rootSessionId)
     },
     async putPolicy(rootSessionId, record) {
+      assertWritable()
       const table = await tableOf(POLICY_TABLE)
       if (table !== null) {
         await durableWrite(() => table.put(rootSessionId, record))
@@ -620,6 +699,7 @@ export function createStore(ctx, options = {}) {
       memory.get(POLICY_TABLE).set(rootSessionId, record)
     },
     async deletePolicy(rootSessionId) {
+      assertWritable()
       const table = await tableOf(POLICY_TABLE)
       if (table !== null) {
         await durableWrite(() => table.delete(rootSessionId))
@@ -657,6 +737,7 @@ export function createStore(ctx, options = {}) {
       return memory.get(TASK_TABLE).get(taskId)
     },
     async putTask(taskId, record) {
+      assertWritable()
       const table = await tableOf(TASK_TABLE)
       if (table !== null) {
         await durableWrite(() => table.put(taskId, record))
@@ -667,6 +748,7 @@ export function createStore(ctx, options = {}) {
       indexTask(taskId, record)
     },
     async deleteTask(taskId) {
+      assertWritable()
       const table = await tableOf(TASK_TABLE)
       const previous = table !== null ? table.get(taskId) : memory.get(TASK_TABLE).get(taskId)
       if (table !== null) {
@@ -692,6 +774,7 @@ export function createStore(ctx, options = {}) {
       return memory.get(CLONE_TABLE).get(cloneId)
     },
     async putClone(cloneId, record) {
+      assertWritable()
       const table = await tableOf(CLONE_TABLE)
       if (table !== null) {
         await durableWrite(() => table.put(cloneId, record))
@@ -701,6 +784,7 @@ export function createStore(ctx, options = {}) {
       indexClone(cloneId, record)
     },
     async deleteClone(cloneId) {
+      assertWritable()
       const table = await tableOf(CLONE_TABLE)
       const previous = table !== null ? table.get(cloneId) : memory.get(CLONE_TABLE).get(cloneId)
       if (table !== null) {

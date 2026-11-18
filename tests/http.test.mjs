@@ -323,6 +323,21 @@ test('lists sessions and deletes a composition', async () => {
   assert.equal(state.data.composition, null)
 })
 
+test('maps a degraded storage write to 503', async () => {
+  const api = createApi({
+    manager: {
+      async create() {
+        throw new CompositionError('STORAGE_UNAVAILABLE', 'composition storage is unavailable; restart the Host')
+      },
+    },
+    discovery: {},
+    token: TOKEN,
+  })
+  const response = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  assert.equal(response.status, 503)
+  assert.equal(response.data.error.code, 'STORAGE_UNAVAILABLE')
+})
+
 test('maps graph rejections to stable status codes', async () => {
   const { api } = makeHarness()
   const missing = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-missing'))
@@ -387,19 +402,25 @@ test('discovers an external leaf and attaches it through the bridge', async () =
   const leaf = listed.data.leaves[0]
   assert.equal(leaf.mode, 'external')
 
-  const added = await call(api, authorized('POST', '/dsh-combinagents/add-external', JSON.stringify({
+  const body = JSON.stringify({
     rootSessionId: 's-a',
     label: leaf.label,
     provider: leaf.mode,
     nativeParentSessionId: leaf.nativeParentSessionId,
+    externalId: leaf.externalId,
     parentId: root.id,
-  })))
+  })
+  const added = await call(api, authorized('POST', '/dsh-combinagents/add-external', body))
   assert.equal(added.status, 200)
   const external = added.data.composition.nodes.find((node) => node.kind === 'external')
   assert.equal(external.label, 'ACP helper')
   assert.equal(external.provider, 'external')
   assert.equal(external.nativeParentSessionId, 's-a')
   assert.ok(added.data.composition.edges.some((edge) => edge.parentId === root.id && edge.childId === external.id))
+
+  const again = await call(api, authorized('POST', '/dsh-combinagents/add-external', body))
+  assert.equal(again.status, 200)
+  assert.equal(again.data.composition.nodes.filter((node) => node.kind === 'external').length, 1)
 })
 
 test('resolves state and summary from a member session', async () => {

@@ -9,7 +9,7 @@ function header(id, extra = {}) {
 
 test('describes a live session without writing any session state', async () => {
   const writes = []
-  const live = { header: header('s-a', { parentSession: 's-parent', agentPreset: 'default' }) }
+  const live = { header: header('s-a', { parentSession: 's-parent', agentPreset: 'default', cwd: '/work/header' }) }
   const ctx = {
     get(name) {
       if (name === 'sessions') {
@@ -323,6 +323,34 @@ test('caches native catalog walks and invalidates them explicitly', async () => 
   discovery.invalidateNative('s-a')
   assert.equal((await discovery.countNative('s-a')).count, 1)
   assert.equal(walks, 2)
+})
+
+test('coalesces concurrent cold corpus reads', async () => {
+  let calls = 0
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const ctx = {
+    get(name) {
+      if (name === 'sessionQuery') {
+        return {
+          async listSessions() {
+            calls += 1
+            await gate
+            return [{ header: header('s-a'), live: true, persisted: true }]
+          },
+        }
+      }
+      return undefined
+    },
+    logger: { warn() {} },
+  }
+  const discovery = createDiscovery(ctx)
+  const pending = Promise.all([discovery.list(), discovery.list(), discovery.list()])
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(calls, 1)
+  release()
+  const results = await pending
+  assert.deepEqual(results.map((result) => result.sessions.length), [1, 1, 1])
 })
 
 test('describeMany reuses the corpus cache instead of filterSessions', async () => {

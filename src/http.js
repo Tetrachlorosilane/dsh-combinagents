@@ -210,7 +210,7 @@ function errorOf(error) {
   if (error instanceof CompositionError) {
     const status = error.code === 'ROOT_PROTECTED' || error.code === 'TASK_FORBIDDEN' || error.code === 'MODEL_SELECTION_FORBIDDEN'
       ? 403
-      : error.code === 'CLONE_UNAVAILABLE'
+      : error.code === 'CLONE_UNAVAILABLE' || error.code === 'STORAGE_UNAVAILABLE'
         ? 503
         : error.code === 'CLONE_FAILED'
           ? 500
@@ -421,6 +421,7 @@ export function createApi({
         label: body.label,
         provider: body.provider,
         nativeParentSessionId: body.nativeParentSessionId,
+        externalId: body.externalId,
         parentId: body.parentId,
       })
       return json(200, { composition: record.composition, updatedAt: record.updatedAt })

@@ -137,6 +137,11 @@ function harness(options = {}) {
           }),
         }
       }
+      if (name === 'workingDirectory') {
+        return {
+          get: (session) => options.effectiveCwd?.[session?.header?.id],
+        }
+      }
       if (name === 'approval') {
         return {
           overrideOf: (session) => options.approvalById?.[session?.header?.id],
@@ -225,6 +230,19 @@ test('send_message uses the native relay source and delivers to an idle agent', 
   assert.deepEqual(message.source, { kind: 'agent-message', form: 'relay', senderSessionId: 's-a' })
   assert.equal(message.content[0].text, 'Agent Lead sent a message: ')
   assert.equal(message.content[1].text, 'hello')
+})
+
+test('cross-workspace approval uses the effective live cwd', async () => {
+  const harnessed = harness({
+    cwd: { 's-a': '/work/shared', 's-b': '/work/shared' },
+    effectiveCwd: { 's-a': '/work/shared', 's-b': '/work/other' },
+  })
+  await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'hello' }, {
+    agent: { id: 's-a' },
+    signal: new AbortController().signal,
+  })
+  assert.equal(harnessed.approvals.length, 1)
+  assert.equal(harnessed.delivered.length, 1)
 })
 
 test('send_message alias works when native names are shadowed', async () => {
@@ -376,7 +394,7 @@ test('interception leaves the native interface untouched and returns a canonical
   let nativeCalled = false
   const result = await harnessed.controls.intercept({
     name: 'list_agents',
-    args: {},
+    arguments: {},
     agent: harnessed.callerAgent,
     signal: new AbortController().signal,
   }, async () => {
@@ -399,6 +417,22 @@ test('interception leaves the native interface untouched and returns a canonical
     passedThrough = true
   })
   assert.equal(passedThrough, true)
+})
+
+test('interception forwards the live exec.arguments shape to tool bodies', async () => {
+  const harnessed = harness()
+  const exec = {
+    name: 'subagent',
+    arguments: { description: 'live-shape probe', prompt: 'Reply OK.' },
+    agent: harnessed.callerAgent,
+    signal: new AbortController().signal,
+  }
+  const result = await harnessed.controls.intercept(exec, async () => {
+    throw new Error('native continuation must not run for an intercepted tool')
+  })
+  assert.deepEqual(result, { isError: false, value: { kind: 'activation', name: 'agent-1' } })
+  assert.equal(harnessed.started.length, 1)
+  assert.equal(harnessed.attached.length, 1)
 })
 
 test('does not recreate a native tool hidden by a scope restriction', () => {

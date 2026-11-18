@@ -665,7 +665,11 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     dispose() {
       for (const [id, handle] of rootHandles) {
         rootHandles.delete(id)
-        void handle.dispose?.().catch?.(() => {})
+        try {
+          void Promise.resolve(handle.dispose?.()).catch(() => {})
+        } catch {
+          // A synchronous dispose failure must not stop unload cleanup.
+        }
       }
       pendingSources.clear()
       if (providerDispose !== undefined) {

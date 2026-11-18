@@ -119,6 +119,121 @@ test('reloads the domain when another process publishes a revision', async () =>
   }
 })
 
+
+test('does not adopt a revision that the reopened snapshot does not contain', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-combinagents-store-'))
+  const disk = new Map()
+  let opens = 0
+  let afterSnapshot = null
+  const service = {
+    async open() {
+      opens += 1
+      const snapshot = new Map(disk)
+      const tables = new Map(Object.keys(COMPOSITION_DOMAIN_SPEC.tables).map((name) => [name, snapshot]))
+      if (afterSnapshot !== null) {
+        const run = afterSnapshot
+        afterSnapshot = null
+        run()
+      }
+      return {
+        table(name) {
+          return {
+            get: (key) => tables.get(name).get(key),
+            entries: () => tables.get(name).entries(),
+            async put(key, value) {
+              tables.get(name).set(key, value)
+              disk.set(key, value)
+            },
+            async delete(key) {
+              tables.get(name).delete(key)
+              return disk.delete(key)
+            },
+          }
+        },
+        async close() {},
+      }
+    },
+  }
+  try {
+    const store = createStore(fakeContext(service), { storageDir: root })
+    await store.ready
+    const first = { composition: createComposition({ title: 'First' }), updatedAt: 1 }
+    await store.put('s-root', first)
+    const generation = store.generation
+    const second = { composition: createComposition({ title: 'Second' }), updatedAt: 2 }
+    disk.set('s-root', second)
+    writeFileSync(join(root, '.revision'), 'external-token', 'utf8')
+
+    // Pretend another Host writes once more after the new snapshot was taken.
+    const third = { composition: createComposition({ title: 'Third' }), updatedAt: 3 }
+    afterSnapshot = () => {
+      disk.set('s-root', third)
+      writeFileSync(join(root, '.revision'), 'later-token', 'utf8')
+    }
+    assert.equal(await store.refresh(), true)
+    // The first refresh loaded the snapshot that preceded the hook's write.
+    // Its revision must stay at the pre-open marker, so the next refresh loads
+    // the newer record instead of adopting a revision the snapshot lacks.
+    assert.equal(await store.refresh(), true)
+    assert.equal(opens, 3)
+    assert.equal((await store.get('s-root')).composition.title, 'Third')
+    assert.equal(store.generation, generation + 2)
+    await store.close()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('keeps a readable snapshot and fails closed when a reload fails', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-combinagents-store-'))
+  const disk = new Map()
+  let fail = false
+  const service = {
+    async open() {
+      if (fail) throw new Error('backend down')
+      const snapshot = new Map(disk)
+      const tables = new Map(Object.keys(COMPOSITION_DOMAIN_SPEC.tables).map((name) => [name, snapshot]))
+      return {
+        table(name) {
+          return {
+            get: (key) => tables.get(name).get(key),
+            entries: () => tables.get(name).entries(),
+            async put(key, value) {
+              tables.get(name).set(key, value)
+              disk.set(key, value)
+            },
+            async delete(key) {
+              tables.get(name).delete(key)
+              return disk.delete(key)
+            },
+          }
+        },
+        async close() {},
+      }
+    },
+  }
+  try {
+    const store = createStore(fakeContext(service), { storageDir: root })
+    await store.ready
+    const first = { composition: createComposition({ title: 'First' }), updatedAt: 1 }
+    await store.put('s-root', first)
+
+    fail = true
+    writeFileSync(join(root, '.revision'), 'unreadable-token', 'utf8')
+    assert.equal(await store.refresh(), false)
+    assert.equal(store.mode, 'memory')
+    assert.equal(store.degraded, true)
+    assert.equal((await store.get('s-root')).composition.title, 'First')
+    await assert.rejects(
+      store.withMutationLock(async () => 'should not run'),
+      /storage is unavailable/,
+    )
+    await store.close()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('falls back to memory when the domain cannot open', async () => {
   const service = {
     async open() {

@@ -33,6 +33,8 @@ export function createDiscovery(ctx, options = {}) {
   let archiveCache = { at: 0, ids: new Set() }
   /** @type {{at: number, data: {sessions: object[], complete: boolean}|null}} */
   let corpusCache = { at: 0, data: null }
+  /** @type {Promise<{sessions: object[], complete: boolean}>|null} */
+  let corpusInFlight = null
   /** Full summaries whose title was folded from the session log. */
   const describeCache = new Map()
   /** Metadata-only summaries (no log-backed title); never used by `describe`. */
@@ -103,13 +105,19 @@ export function createDiscovery(ctx, options = {}) {
    * @returns {string|null}
    */
   function cwdOf(header, live) {
-    if (typeof header?.cwd === 'string' && header.cwd.length > 0) return header.cwd
-    if (live === undefined) return null
-    try {
-      return workingDirectories()?.get?.(live) ?? null
-    } catch {
-      return null
+    // The header cwd is immutable creation metadata. A live session can change
+    // its effective directory with `workingDirectory.set`, so observations must
+    // prefer the current value; the header remains the persisted fallback.
+    if (live !== undefined) {
+      try {
+        const current = workingDirectories()?.get?.(live)
+        if (typeof current === 'string' && current.length > 0) return current
+      } catch {
+        // fall through to the immutable header
+      }
     }
+    if (typeof header?.cwd === 'string' && header.cwd.length > 0) return header.cwd
+    return null
   }
 
   /**
@@ -342,35 +350,46 @@ export function createDiscovery(ctx, options = {}) {
     if (corpusCache.data !== null && now - corpusCache.at < CORPUS_TTL_MS) {
       return filterCorpus(corpusCache.data, request.query)
     }
-    const query = sessionQuery()
-    /** @type {Array<{header: object, live: boolean, persisted: boolean}>} */
-    let records = []
-    let complete = false
-    if (query?.listSessions) {
-      try {
-        records = await query.listSessions()
-        complete = true
-      } catch (error) {
-        log?.warn?.('dsh-combinagents: session listing failed; falling back to live sessions', error)
-      }
-    }
-    if (!complete) {
-      records = (sessionStore()?.list?.() ?? []).map((session) => ({
-        header: session.header,
-        live: true,
-        persisted: false,
-      }))
-    }
+    // Several tabs poll /state and /sessions at the same moment. One shared
+    // corpus build prevents a cold burst from repeating a full listSessions()
+    // scan per request.
+    if (corpusInFlight === null) {
+      corpusInFlight = (async () => {
+        const query = sessionQuery()
+        /** @type {Array<{header: object, live: boolean, persisted: boolean}>} */
+        let records = []
+        let complete = false
+        if (query?.listSessions) {
+          try {
+            records = await query.listSessions()
+            complete = true
+          } catch (error) {
+            log?.warn?.('dsh-combinagents: session listing failed; falling back to live sessions', error)
+          }
+        }
+        if (!complete) {
+          records = (sessionStore()?.list?.() ?? []).map((session) => ({
+            header: session.header,
+            live: true,
+            persisted: false,
+          }))
+        }
 
-    const sessions = records.map((record) => summaryOf(
-      record.header,
-      record.live ? liveSession(record.header.id) : undefined,
-      record.persisted,
-      undefined,
-      record.live,
-    ))
-    const corpus = { sessions, complete }
-    corpusCache = { at: Date.now(), data: corpus }
+        const sessions = records.map((record) => summaryOf(
+          record.header,
+          record.live ? liveSession(record.header.id) : undefined,
+          record.persisted,
+          undefined,
+          record.live,
+        ))
+        const corpus = { sessions, complete }
+        corpusCache = { at: Date.now(), data: corpus }
+        return corpus
+      })().finally(() => {
+        corpusInFlight = null
+      })
+    }
+    const corpus = await corpusInFlight
     return filterCorpus(corpus, request.query)
   }
 

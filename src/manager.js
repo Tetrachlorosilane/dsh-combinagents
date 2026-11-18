@@ -7,7 +7,7 @@
  * the root-session node can never be removed from its own composition.
  */
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 import {
   CompositionError,
@@ -50,6 +50,41 @@ function textOf(value, max) {
  */
 function labelOf(value) {
   return textOf(value, MAX_LABEL)
+}
+
+/**
+ * Stable node id for a native external placeholder. The native catalog has no
+ * DSH session to key on, so a deterministic id is what makes sync-native and
+ * auto-attach idempotent. A hash keeps the id within the graph cap and avoids
+ * embedding an arbitrary native id.
+ * @param {unknown} externalId - native catalog entry id.
+ * @returns {string|null} stable node id.
+ */
+function externalNodeId(externalId) {
+  if (typeof externalId !== 'string' || externalId.length === 0) return null
+  return `external-${createHash('sha256').update(externalId).digest('hex').slice(0, 32)}`
+}
+
+/**
+ * Find an external placeholder by its deterministic id, or by the legacy
+ * (random-id) shape when a record predates deterministic ids.
+ * @param {object} composition - current graph.
+ * @param {string|null} externalId - deterministic id, when known.
+ * @param {{label: string, nativeParentSessionId: string|null}} fields - placeholder identity.
+ * @returns {object|undefined} matching node.
+ */
+function externalPlaceholder(composition, externalId, fields) {
+  if (externalId !== null) {
+    const byId = composition.nodes.find((node) => node.id === externalId)
+    if (byId !== undefined) return byId
+  }
+  return composition.nodes.find((node) => node.kind === 'external'
+    && node.sessionId === null
+    // When the caller knows the native id, only a legacy random-id node may
+    // match by label; two distinct deterministic placeholders stay distinct.
+    && (externalId === null || !node.id.startsWith('external-'))
+    && (node.nativeParentSessionId ?? null) === (fields.nativeParentSessionId ?? null)
+    && node.label === fields.label)
 }
 
 /**
@@ -227,7 +262,10 @@ export function createManager({
       }
       // A native descendant that has not been mirrored yet still belongs to
       // the composition of its native ancestor: walk the durable parent chain.
+      // Ordinary forks also carry `header.parentSession`, but they lead a new
+      // native tree (`origin` is absent), so they must not inherit membership.
       const summary = await (discovery.describeHeader?.(current) ?? discovery.describe(current))
+      if (summary?.source !== 'subagent') return null
       const parent = summary?.nativeParentSessionId
       if (typeof parent !== 'string' || parent.length === 0) return null
       current = parent
@@ -731,6 +769,12 @@ export function createManager({
     const owner = await resolveSession(rootSessionId)
     if (owner !== null) return await syncNativeTree(owner.rootSessionId) ?? owner.record
     const record = await withLock(rootSessionId, async () => {
+      // Re-check membership under the lock: another profile may have attached
+      // this session between the resolution above and lock acquisition.
+      const ownerNow = await resolveSession(rootSessionId)
+      if (ownerNow !== null && ownerNow.rootSessionId !== rootSessionId) {
+        if (ownerNow.record !== undefined) return ownerNow.record
+      }
       const existing = await store.get(rootSessionId)
       if (existing !== undefined) return existing
       const summary = await discovery.describe(rootSessionId)
@@ -818,6 +862,15 @@ export function createManager({
    */
   async function addNodeExclusive(rootSessionId, input) {
     const record = await requireRecord(rootSessionId)
+    // The pre-lock owner lookup can race another profile. Re-check under the
+    // lock so this path can never create a second membership.
+    const ownerNow = await resolveSession(input.sessionId)
+    if (ownerNow !== null && ownerNow.rootSessionId !== rootSessionId) {
+      throw new CompositionError(
+        'SESSION_ALREADY_COMPOSED',
+        `session ${JSON.stringify(input.sessionId)} already belongs to composition ${JSON.stringify(ownerNow.rootSessionId)}`,
+      )
+    }
     const parentId = typeof input.parentId === 'string' && input.parentId.length > 0 ? input.parentId : null
     const existing = record.composition.nodes.find((node) => node.sessionId === input.sessionId)
     if (existing !== undefined) {
@@ -857,12 +910,25 @@ export function createManager({
     assertIdle(targetRecord.composition, parentId === null ? [] : [parentId], 'move a node into')
     const sourceNode = sourceRecord.composition.nodes.find((node) => node.sessionId === input.sessionId)
     if (sourceNode === undefined) {
-      return attachDiscovered(targetRecord, targetRoot, input, parentId)
+      // The session is a native descendant of the source composition but was
+      // never mirrored into its graph. Moving it must also move membership;
+      // otherwise the target graph would contain a node that still resolves to
+      // the source composition.
+      unindexSession(sourceRoot, input.sessionId)
+      try {
+        return await attachDiscovered(targetRecord, targetRoot, input, parentId)
+      } catch (error) {
+        membership?.set(input.sessionId, sourceRoot)
+        throw error
+      }
     }
     if (isWorking(input.sessionId)) {
       throw new CompositionError('AGENT_BUSY', 'cannot move a node: that agent is running')
     }
     assertIdle(sourceRecord.composition, [sourceNode.id], 'move a node')
+    const sourcePolicy = await store.getPolicy?.(sourceRoot)
+    const targetPolicy = await store.getPolicy?.(targetRoot)
+    const previousEdge = sourceRecord.composition.edges.find((edge) => edge.childId === sourceNode.id) ?? null
     const detached = detachSubtree(sourceRecord.composition, sourceNode.id)
     const remaining = detached.remaining
     let nextSourceRoot = sourceRoot
@@ -875,6 +941,37 @@ export function createManager({
       remaining.rootSessionId = nextSourceRoot
     }
     const targetComposition = attachSubtree(targetRecord.composition, detached.subtree, parentId)
+    // Carry the grants stored with the moved subtree. Internal edge ids are
+    // preserved by attachSubtree; the new boundary edge must inherit the old
+    // incoming grant (including an explicit deny) instead of defaulting to
+    // bidirectional messaging. A root moved under a parent with no previous
+    // edge is a new manual connection and keeps the manual default.
+    /** @type {Record<string, {allowMessage: boolean, allowInterrupt: boolean}>} */
+    const movedGrants = {}
+    for (const edge of detached.subtree.edges) {
+      const grant = sourcePolicy?.edges?.[edge.id]
+      if (grant === undefined) continue
+      movedGrants[edge.id] = {
+        allowMessage: grant.allowMessage === true,
+        allowInterrupt: grant.allowInterrupt === true,
+      }
+    }
+    const boundaryEdge = parentId === null
+      ? null
+      : targetComposition.edges.find((edge) => edge.childId === sourceNode.id) ?? null
+    if (boundaryEdge !== null) {
+      if (previousEdge === null) {
+        movedGrants[boundaryEdge.id] = { allowMessage: true, allowInterrupt: false }
+      } else {
+        const grant = sourcePolicy?.edges?.[previousEdge.id]
+        movedGrants[boundaryEdge.id] = grant === undefined
+          ? { allowMessage: false, allowInterrupt: false }
+          : {
+              allowMessage: grant.allowMessage === true,
+              allowInterrupt: grant.allowInterrupt === true,
+            }
+      }
+    }
     const saved = await save(targetRoot, targetComposition)
     try {
       if (remaining === null) {
@@ -897,6 +994,28 @@ export function createManager({
       }
       throw error
     }
+    if (Object.keys(movedGrants).length > 0 && typeof store.putPolicy === 'function') {
+      try {
+        await store.putPolicy(targetRoot, {
+          version: 1,
+          rootSessionId: targetRoot,
+          edges: { ...(targetPolicy?.edges ?? {}), ...movedGrants },
+          updatedAt: now(),
+        })
+        if (boundaryEdge !== null) {
+          await recordAudit(targetRoot, {
+            kind: 'grant',
+            edgeId: boundaryEdge.id,
+            outcome: previousEdge === null ? 'defaulted' : 'migrated',
+            ...(previousEdge === null ? {} : { detail: { fromEdgeId: previousEdge.id } }),
+          })
+        }
+      } catch (error) {
+        // The graph move is already committed; a failed grant write must fail
+        // closed (the new edge reads as deny) rather than default to allow.
+        warn('dsh-combinagents: grant migration failed after move', error)
+      }
+    }
     await migrateMovedSideTables(
       sourceRoot,
       targetRoot,
@@ -906,13 +1025,6 @@ export function createManager({
     unindexComposition(sourceRoot, sourceRecord.composition)
     if (remaining !== null) indexComposition(nextSourceRoot, remaining)
     indexComposition(targetRoot, targetComposition)
-    if (parentId !== null) {
-      try {
-        await grantManualConnection(targetRoot, targetComposition, sourceNode.id)
-      } catch (error) {
-        warn('dsh-combinagents: manual connection grant failed after move', error)
-      }
-    }
     return saved
   }
 
@@ -984,7 +1096,7 @@ export function createManager({
    * routed to; the node exists only in the overlay.
    * @param {string} rootSessionId - composition owner.
    * @param {{label: string, provider?: string, nativeParentSessionId?: string|null,
-   *   parentId?: string|null}} input - external node fields.
+   *   externalId?: string, parentId?: string|null}} input - external node fields.
    * @returns {Promise<{composition: object, updatedAt: number}>}
    */
   async function addExternal(rootSessionId, input = {}) {
@@ -992,18 +1104,27 @@ export function createManager({
     if (label === null) {
       throw new CompositionError('INVALID_FIELD', 'label must be a non-empty string')
     }
+    const externalId = externalNodeId(textOf(input.externalId, 256))
+    const nativeParentSessionId = textOf(input.nativeParentSessionId, 128)
     return withLock(rootSessionId, async () => {
       const record = await requireRecord(rootSessionId)
       const parentId = typeof input.parentId === 'string' && input.parentId.length > 0 ? input.parentId : null
       assertIdle(record.composition, parentId === null ? [] : [parentId], 'add an external node')
+      // Adding the same native placeholder twice is a no-op, not a duplicate
+      // node and not a node-cap failure.
+      if (externalPlaceholder(record.composition, externalId, {
+        label,
+        nativeParentSessionId,
+      }) !== undefined) return record
       const node = {
+        ...(externalId === null ? {} : { id: externalId }),
         sessionId: null,
         label,
         kind: 'external',
         source: 'external',
         mode: 'external',
         provider: textOf(input.provider, 80),
-        nativeParentSessionId: textOf(input.nativeParentSessionId, 128),
+        nativeParentSessionId,
         cwd: null,
         permissionPreset: null,
       }
@@ -1097,6 +1218,9 @@ export function createManager({
         preparedSummary = await discovery.describe(info.childId)
       }
     }
+    const externalId = info.local === true ? null : externalNodeId(info.childId)
+    const externalLabel = textOf(info.provider, 120) ?? 'External subagent'
+    const externalParent = textOf(parentSessionId, 128)
     return withLock(owner.rootSessionId, async () => {
       const record = await requireRecord(owner.rootSessionId)
       const parent = record.composition.nodes.find((node) => node.sessionId === parentSessionId)
@@ -1111,6 +1235,12 @@ export function createManager({
         return null
       }
       const existing = record.composition.nodes.find((node) => node.sessionId === info.childId)
+        ?? (externalId === null
+          ? undefined
+          : externalPlaceholder(record.composition, externalId, {
+              label: externalLabel,
+              nativeParentSessionId: externalParent,
+            }))
       if (existing !== undefined) {
         if (typeof info.label === 'string' && info.label.length > 0 && existing.label !== info.label) {
           const composition = renameGraphNode(record.composition, existing.id, info.label)
@@ -1147,13 +1277,14 @@ export function createManager({
         }
       } else {
         node = {
+          ...(externalId === null ? {} : { id: externalId }),
           sessionId: null,
-          label: textOf(info.provider, 120) ?? 'External subagent',
+          label: externalLabel,
           kind: 'external',
           source: 'external',
           mode: 'external',
           provider: textOf(info.provider, 80),
-          nativeParentSessionId: textOf(parentSessionId, 128),
+          nativeParentSessionId: externalParent,
           cwd: null,
           permissionPreset: null,
         }
@@ -1185,46 +1316,65 @@ export function createManager({
     // Collect the expensive I/O outside the per-root lock. The lock only
     // re-reads the graph, checks membership, and merges the prepared nodes.
     const prepared = []
+    const knownSessions = new Set(direct.composition.nodes
+      .map((node) => node.sessionId)
+      .filter((sessionId) => typeof sessionId === 'string'))
+    const knownExternal = new Set(direct.composition.nodes
+      .filter((node) => node.kind === 'external')
+      .map((node) => node.id))
     for (const entry of tree.children) {
       let nodeInput = null
+      const placeholderId = externalNodeId(entry.id)
+      // Already-present nodes only need their lifecycle mode reconciled. Do
+      // not fold a title or read a log for a tree that is already mirrored.
+      if (knownSessions.has(entry.id) || (placeholderId !== null && knownExternal.has(placeholderId))) {
+        prepared.push({
+          entry,
+          nodeInput: null,
+          externalId: knownSessions.has(entry.id) ? null : placeholderId,
+        })
+        continue
+      }
+      const placeholder = {
+        sessionId: null,
+        label: textOf(entry.name ?? entry.label, 120) ?? entry.id,
+        kind: 'external',
+        source: 'external',
+        mode: entry.mode,
+        provider: textOf(entry.mode, 80),
+        nativeParentSessionId: textOf(entry.parentId, 128),
+        cwd: null,
+        permissionPreset: null,
+      }
       if (entry.mode === 'external') {
-        nodeInput = {
-          sessionId: null,
-          label: textOf(entry.name ?? entry.label, 120) ?? entry.id,
-          kind: 'external',
-          source: 'external',
-          mode: entry.mode,
-          provider: textOf(entry.mode, 80),
-          nativeParentSessionId: textOf(entry.parentId, 128),
-          cwd: null,
-          permissionPreset: null,
-        }
+        nodeInput = { ...(placeholderId === null ? {} : { id: placeholderId }), ...placeholder }
       } else {
         const summary = await discovery.describe(entry.id)
         if (summary !== null) {
           nodeInput = { ...nodeFromSummary(summary), mode: entry.mode }
         } else if (entry.mode === 'one-shot') {
-          nodeInput = {
-            sessionId: null,
-            label: textOf(entry.name ?? entry.label, 120) ?? entry.id,
-            kind: 'external',
-            source: 'external',
-            mode: entry.mode,
-            provider: textOf(entry.mode, 80),
-            nativeParentSessionId: textOf(entry.parentId, 128),
-            cwd: null,
-            permissionPreset: null,
-          }
+          nodeInput = { ...(placeholderId === null ? {} : { id: placeholderId }), ...placeholder }
         }
       }
-      if (nodeInput !== null) prepared.push({ entry, nodeInput })
+      if (nodeInput !== null) {
+        prepared.push({
+          entry,
+          nodeInput,
+          externalId: nodeInput.kind === 'external' ? placeholderId : null,
+        })
+      }
     }
     return withLock(root, async () => {
       const record = await requireRecord(root)
       let composition = record.composition
       let changed = false
-      for (const { entry, nodeInput } of prepared) {
+      for (const { entry, nodeInput, externalId } of prepared) {
         const existing = composition.nodes.find((node) => node.sessionId === entry.id)
+          ?? (externalId === null
+            ? undefined
+            : nodeInput === null
+              ? composition.nodes.find((node) => node.id === externalId)
+              : externalPlaceholder(composition, externalId, nodeInput))
         if (existing !== undefined) {
           if (existing.mode !== entry.mode) {
             composition = {
@@ -1235,6 +1385,9 @@ export function createManager({
           }
           continue
         }
+        // The pre-lock snapshot said this node existed; if it disappeared
+        // meanwhile there is no prepared input to add, so skip it.
+        if (nodeInput === null) continue
         const childOwner = await directOwner(entry.id)
         if (childOwner !== null) {
           if (childOwner !== root) {

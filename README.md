@@ -109,7 +109,10 @@ profile and refresh the page after the Host restart.
 
 A session belongs to at most one composition. If you attach a session that is
 already in another composition, its subtree moves; a remaining source forest is
-re-keyed to another local root.
+re-keyed to another local root. The moved subtree keeps its internal grants, and
+a new boundary edge inherits the previous incoming grant, so an explicit deny
+stays denied. An ordinary DSH fork is a new root; it does not inherit
+composition membership from its `parentSession` header.
 
 ## The tab
 
@@ -220,6 +223,7 @@ storage backend outside the default directory needs a `storageDir` override.
 | `NOT_IN_COMPOSITION` | Create a composition for this session, or use `subagent` from a top-level agent. |
 | `AGENT_BUSY` | An affected agent or one of its composition ancestors/descendants is running. Wait for it to finish. |
 | `another DSH profile is changing the composition` | Another profile holds the mutation lock. Retry after a moment. |
+| `STORAGE_UNAVAILABLE` | The domain could not be reloaded; reads keep the last in-memory snapshot and writes fail closed. Restart the Host. |
 | `storageMemory` warning | The storage domain could not open. Changes last until the Host restarts; check the DSH storage backend. |
 | A one-shot agent is missing | It is hidden by default. Enable **Show one-shot agents**; use **Sync native agents** if its mode is still unknown. |
 | The tree looks stale in another profile | Wait for the 3-second poll, refresh the page, or check that both profiles run this version. |

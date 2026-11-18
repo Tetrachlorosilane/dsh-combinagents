@@ -11,6 +11,13 @@ window.__ModuleLoader__.load({
   id: '@dsh-external/dsh-combinagents',
   factory(require) {
     const React = require('react')
+    const ReactDOM = (() => {
+      try {
+        return require('react-dom')
+      } catch {
+        return null
+      }
+    })()
     const h = React.createElement
 
     const NS = 'dsh-combinagents'
@@ -48,6 +55,7 @@ window.__ModuleLoader__.load({
         'parent': 'Reports to',
         'noParent': 'No parent (root)',
         'remove': 'Remove',
+        'removeTitle': 'Remove from composition',
         'removePrompt': 'Remove \u201c{label}\u201d from this composition?',
         'promote': 'Promote reports to roots',
         'cascade': 'Remove the whole subtree',
@@ -106,6 +114,7 @@ window.__ModuleLoader__.load({
         'taskComplete': 'Complete',
         'taskReopen': 'Reopen',
         'taskDelete': 'Delete',
+        'taskDeleteTitle': 'Delete task',
         'taskDeleteConfirm': 'Delete this task? It exists only in the plugin task board.',
         'statusPending': 'pending',
         'statusInProgress': 'in progress',
@@ -139,6 +148,7 @@ window.__ModuleLoader__.load({
         'parent': '汇报给',
         'noParent': '无上级（根节点）',
         'remove': '移除',
+        'removeTitle': '从组合中移除',
         'removePrompt': '从组合中移除“{label}”？',
         'promote': '下属提升为根',
         'cascade': '删除整棵子树',
@@ -197,6 +207,7 @@ window.__ModuleLoader__.load({
         'taskComplete': '完成',
         'taskReopen': '重新打开',
         'taskDelete': '删除',
+        'taskDeleteTitle': '删除任务',
         'taskDeleteConfirm': '删除这个任务？它只存在于插件任务板，不是 DSH Team。',
         'statusPending': '待处理',
         'statusInProgress': '进行中',
@@ -320,17 +331,72 @@ window.__ModuleLoader__.load({
         cursor: 'pointer',
         whiteSpace: 'nowrap',
       },
-      confirm: {
+      confirmRow: { display: 'flex', gap: '6px', flexWrap: 'wrap' },
+      modalRoot: {
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 'max(24px, var(--dsh-frame-overlay-top, 24px)) 24px',
+        boxSizing: 'border-box',
+      },
+      modalMask: {
+        position: 'absolute',
+        inset: 'var(--dsh-frame-chrome-top, 0px) 0 0',
+        background: 'var(--dsw-alias-bg-mask-1)',
+        backdropFilter: 'var(--dsw-mask-blur)',
+      },
+      modal: {
+        position: 'relative',
+        zIndex: 1,
         display: 'flex',
         flexDirection: 'column',
-        gap: '6px',
-        border: '1px solid var(--dsw-alias-border-l2)',
-        borderRadius: '8px',
-        padding: '8px',
-        margin: '4px 0 4px 14px',
+        gap: '16px',
+        width: 'min(420px, 100%)',
+        maxHeight: 'calc(100dvh - 48px)',
+        overflowY: 'auto',
+        padding: '22px 24px 20px',
+        boxSizing: 'border-box',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        borderRadius: 'var(--dsw-radius-panel)',
         background: 'var(--dsw-alias-bg-layer-2)',
+        boxShadow: 'var(--dsw-elevation-prominent)',
+        color: 'var(--dsw-alias-label-primary)',
       },
-      confirmRow: { display: 'flex', gap: '6px', flexWrap: 'wrap' },
+      modalTitle: {
+        margin: 0,
+        fontSize: '16px',
+        lineHeight: '24px',
+        fontWeight: 500,
+        color: 'var(--dsw-alias-label-primary)',
+      },
+      modalMessage: {
+        margin: 0,
+        fontSize: '14px',
+        lineHeight: '22px',
+        color: 'var(--dsw-alias-label-secondary)',
+        overflowWrap: 'anywhere',
+        whiteSpace: 'pre-wrap',
+      },
+      modalActions: {
+        display: 'flex',
+        justifyContent: 'flex-end',
+        gap: '8px',
+        flexWrap: 'wrap',
+        paddingTop: '4px',
+      },
+      primary: {
+        border: '1px solid var(--dsw-alias-button-primary-fill)',
+        background: 'var(--dsw-alias-button-primary-fill)',
+        color: 'var(--dsw-alias-label-primary-foreground)',
+        borderRadius: '6px',
+        padding: '5px 12px',
+        fontSize: '12px',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      },
       input: {
         border: '1px solid var(--dsw-alias-border-l1)',
         background: 'var(--dsw-alias-bg-base)',
@@ -702,8 +768,8 @@ window.__ModuleLoader__.load({
 
     function NodeRow(props) {
       const {
-        node, depth, tree, composition, observations, t, pendingRemove, setPendingRemove, busy,
-        onRemove, expanded, onToggle, allNodes, onRename, onReparent, onOpen, openAvailable,
+        node, depth, tree, composition, observations, t, setPendingRemove, busy,
+        expanded, onToggle, allNodes, onRename, onReparent, onOpen, openAvailable,
         grants, onGrant, onBud,
       } = props
       const observation = node.sessionId === null ? null : observations[node.sessionId] ?? null
@@ -765,33 +831,6 @@ window.__ModuleLoader__.load({
           onBud,
         }))
       }
-      if (pendingRemove !== null && pendingRemove.id === node.id) {
-        rows.push(h('div', { key: 'confirm', style: { ...styles.confirm, marginLeft: `${14 + depth * 14}px` } }, [
-          h('div', { key: 'prompt' }, format(t, 'removePrompt', { label: node.label })),
-          h('div', { key: 'actions', style: styles.confirmRow }, [
-            h('button', {
-              key: 'promote',
-              type: 'button',
-              style: styles.button,
-              disabled: busy,
-              onClick: () => onRemove('promote'),
-            }, t('promote')),
-            h('button', {
-              key: 'cascade',
-              type: 'button',
-              style: styles.danger,
-              disabled: busy,
-              onClick: () => onRemove('cascade'),
-            }, t('cascade')),
-            h('button', {
-              key: 'cancel',
-              type: 'button',
-              style: styles.linkButton,
-              onClick: () => setPendingRemove(null),
-            }, t('cancel')),
-          ]),
-        ]))
-      }
       if (node.kind !== 'external' || isExpanded) {
         for (const child of children) {
           rows.push(h(NodeRow, {
@@ -802,10 +841,8 @@ window.__ModuleLoader__.load({
             composition,
             observations,
             t,
-            pendingRemove,
             setPendingRemove,
             busy,
-            onRemove,
             expanded,
             onToggle,
             allNodes,
@@ -892,11 +929,109 @@ window.__ModuleLoader__.load({
       ])
     }
 
+    /**
+     * DSH-themed confirmation surface. It replaces browser `window.confirm`
+     * dialogs so destructive actions stay inside the app's visual language.
+     * The dialog is deliberately not portaled: a fixed overlay already escapes
+     * the sidebar scroll container, and the plugin keeps its client surface to
+     * the shared React runtime.
+     */
+    function ConfirmDialog(props) {
+      const {
+        title, message, confirmLabel, cancelLabel, secondaryLabel, onConfirm,
+        onSecondary, onCancel, danger = false, secondaryDanger = false, busy = false,
+      } = props
+      const titleId = React.useId()
+      const messageId = React.useId()
+      const dialogRef = React.useRef(null)
+      const previousFocus = React.useRef(null)
+      React.useEffect(() => {
+        if (typeof document !== 'undefined') previousFocus.current = document.activeElement
+        dialogRef.current?.focus?.()
+        return () => {
+          previousFocus.current?.focus?.()
+        }
+      }, [])
+      React.useEffect(() => {
+        if (typeof document === 'undefined') return undefined
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape' && !busy) {
+            event.preventDefault()
+            onCancel()
+            return
+          }
+          if (event.key !== 'Tab' || dialogRef.current === null) return
+          const focusable = [...dialogRef.current.querySelectorAll(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          )]
+          if (focusable.length === 0) return
+          const first = focusable[0]
+          const last = focusable[focusable.length - 1]
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault()
+            last.focus()
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault()
+            first.focus()
+          }
+        }
+        document.addEventListener('keydown', onKeyDown)
+        return () => document.removeEventListener('keydown', onKeyDown)
+      }, [busy, onCancel])
+      const dismissFromMask = (event) => {
+        if (!busy && event.target === event.currentTarget) onCancel()
+      }
+      const content = h('div', { style: styles.modalRoot }, [
+        h('div', { key: 'mask', style: styles.modalMask, onClick: dismissFromMask }),
+        h('div', {
+          key: 'dialog',
+          role: 'dialog',
+          'aria-modal': 'true',
+          'aria-labelledby': titleId,
+          'aria-describedby': message ? messageId : undefined,
+          tabIndex: -1,
+          ref: dialogRef,
+          style: styles.modal,
+        }, [
+          h('h2', { key: 'title', id: titleId, style: styles.modalTitle }, title),
+          message ? h('p', { key: 'message', id: messageId, style: styles.modalMessage }, message) : null,
+          h('div', { key: 'actions', style: styles.modalActions }, [
+            h('button', {
+              key: 'cancel',
+              type: 'button',
+              style: styles.button,
+              disabled: busy,
+              onClick: onCancel,
+            }, cancelLabel),
+            secondaryLabel ? h('button', {
+              key: 'secondary',
+              type: 'button',
+              style: secondaryDanger ? styles.danger : styles.button,
+              disabled: busy,
+              onClick: onSecondary,
+            }, secondaryLabel) : null,
+            h('button', {
+              key: 'confirm',
+              type: 'button',
+              style: danger ? styles.danger : styles.primary,
+              disabled: busy,
+              onClick: onConfirm,
+            }, confirmLabel),
+          ]),
+        ]),
+      ])
+      if (ReactDOM?.createPortal !== undefined && typeof document !== 'undefined') {
+        return ReactDOM.createPortal(content, document.body)
+      }
+      return content
+    }
+
     function TaskBoard(props) {
       const { tasks, nodes, busy, t, onCreate, onUpdate } = props
       const [subject, setSubject] = React.useState('')
       const [description, setDescription] = React.useState('')
       const [owner, setOwner] = React.useState('')
+      const [pendingDelete, setPendingDelete] = React.useState(null)
       const owners = nodes.filter((node) => node.kind === 'session')
       const statusKey = {
         pending: 'statusPending',
@@ -972,13 +1107,26 @@ window.__ModuleLoader__.load({
                     type: 'button',
                     style: styles.danger,
                     disabled: busy,
-                    onClick: () => {
-                      if (window.confirm(t('taskDeleteConfirm'))) onUpdate(task.id, 'delete', task.revision)
-                    },
+                    onClick: () => setPendingDelete(task),
                   }, t('taskDelete')),
                 ]),
               ])
             }),
+        pendingDelete === null ? null : h(ConfirmDialog, {
+          key: 'task-delete-dialog',
+          title: t('taskDeleteTitle'),
+          message: t('taskDeleteConfirm'),
+          confirmLabel: t('taskDelete'),
+          cancelLabel: t('cancel'),
+          danger: true,
+          busy,
+          onCancel: () => setPendingDelete(null),
+          onConfirm: () => {
+            const task = pendingDelete
+            setPendingDelete(null)
+            if (task !== null) onUpdate(task.id, 'delete', task.revision)
+          },
+        }),
       ])
     }
 
@@ -996,6 +1144,7 @@ window.__ModuleLoader__.load({
       const [showOneShot, setShowOneShot] = React.useState(false)
       const [notice, setNotice] = React.useState(null)
       const [confirmDelete, setConfirmDelete] = React.useState(false)
+      const [pendingClone, setPendingClone] = React.useState(null)
       const [editingTitle, setEditingTitle] = React.useState(false)
       const [titleDraft, setTitleDraft] = React.useState('')
       const requestedTitles = React.useRef(new Set())
@@ -1134,6 +1283,7 @@ window.__ModuleLoader__.load({
             label: leaf.label,
             provider: leaf.mode,
             nativeParentSessionId: leaf.nativeParentSessionId,
+            externalId: leaf.externalId,
             parentId: picker.parentId.length > 0 ? picker.parentId : null,
           },
         }),
@@ -1156,14 +1306,18 @@ window.__ModuleLoader__.load({
         null,
       )
 
-      const runClone = (path, body, doneKey) => {
-        if (!window.confirm(t(path === '/clone-tree' ? 'cloneTreeConfirm' : 'budConfirm'))) return
+      const runClone = (path, body, doneKey) => setPendingClone({ path, body, doneKey })
+
+      const confirmClone = () => {
+        const pending = pendingClone
+        if (pending === null) return
+        setPendingClone(null)
         setBusy(true)
         setNotice(null)
-        callApi(path, { method: 'POST', body })
+        callApi(pending.path, { method: 'POST', body: pending.body })
           .then((data) => {
             const newRoot = data?.clone?.newRootSessionId
-            setNotice(format(t, doneKey, { session: typeof newRoot === 'string' ? newRoot : t('none') }))
+            setNotice(format(t, pending.doneKey, { session: typeof newRoot === 'string' ? newRoot : t('none') }))
             if (typeof newRoot === 'string' && typeof openSession === 'function') openSession(newRoot)
           })
           .catch((error) => setNotice(error.code === 'AGENT_BUSY' ? t('agentBusy') : error.message))
@@ -1362,10 +1516,8 @@ window.__ModuleLoader__.load({
                 composition: filteredComposition,
                 observations: state.observations,
                 t,
-                pendingRemove,
                 setPendingRemove,
                 busy,
-                onRemove: removeNode,
                 expanded,
                 onToggle: toggleExpanded,
                 allNodes: nodes,
@@ -1405,15 +1557,47 @@ window.__ModuleLoader__.load({
                 onCreate: createTask,
                 onUpdate: updateTask,
               }),
-              confirmDelete
-                ? h('div', { key: 'delete-confirm', style: styles.confirm }, [
-                    h('div', { key: 'text' }, t('deleteConfirm')),
-                    h('div', { key: 'actions', style: styles.confirmRow }, [
-                      h('button', { key: 'yes', type: 'button', style: styles.danger, disabled: busy, onClick: deleteComposition }, t('confirmDelete')),
-                      h('button', { key: 'no', type: 'button', style: styles.linkButton, onClick: () => setConfirmDelete(false) }, t('cancel')),
-                    ]),
-                  ])
-                : h('button', { key: 'delete', type: 'button', style: styles.linkButton, disabled: busy, onClick: () => setConfirmDelete(true) }, t('deleteComposition')),
+              h('button', {
+                key: 'delete',
+                type: 'button',
+                style: styles.linkButton,
+                disabled: busy,
+                onClick: () => setConfirmDelete(true),
+              }, t('deleteComposition')),
+              pendingRemove === null ? null : h(ConfirmDialog, {
+                key: 'remove-dialog',
+                title: t('removeTitle'),
+                message: format(t, 'removePrompt', { label: pendingRemove.label }),
+                confirmLabel: t('promote'),
+                secondaryLabel: t('cascade'),
+                secondaryDanger: true,
+                cancelLabel: t('cancel'),
+                busy,
+                onCancel: () => setPendingRemove(null),
+                onConfirm: () => removeNode('promote'),
+                onSecondary: () => removeNode('cascade'),
+              }),
+              confirmDelete ? h(ConfirmDialog, {
+                key: 'delete-dialog',
+                title: t('deleteComposition'),
+                message: t('deleteConfirm'),
+                confirmLabel: t('confirmDelete'),
+                cancelLabel: t('cancel'),
+                danger: true,
+                busy,
+                onCancel: () => setConfirmDelete(false),
+                onConfirm: deleteComposition,
+              }) : null,
+              pendingClone === null ? null : h(ConfirmDialog, {
+                key: 'clone-dialog',
+                title: pendingClone.path === '/clone-tree' ? t('cloneTree') : t('bud'),
+                message: t(pendingClone.path === '/clone-tree' ? 'cloneTreeConfirm' : 'budConfirm'),
+                confirmLabel: pendingClone.path === '/clone-tree' ? t('cloneTree') : t('bud'),
+                cancelLabel: t('cancel'),
+                busy,
+                onCancel: () => setPendingClone(null),
+                onConfirm: confirmClone,
+              }),
             ]),
       ])
     }
