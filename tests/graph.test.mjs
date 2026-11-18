@@ -260,3 +260,23 @@ test('assertComposition throws the first issue', () => {
     (error) => error instanceof CompositionError && error.code === 'INVALID_COMPOSITION',
   )
 })
+
+test('records native lifecycle mode and accepts legacy records without it', () => {
+  const composition = createComposition({
+    title: 'Modes',
+    rootSessionId: 's-root',
+    nodes: [
+      { id: 'n-root', sessionId: 's-root', label: 'root', kind: 'session', source: 'top-level' },
+      {
+        id: 'n-one', sessionId: null, label: 'one', kind: 'external', source: 'external', mode: 'one-shot',
+      },
+    ],
+  })
+  assert.equal(composition.nodes[0].mode, 'continuable')
+  assert.equal(composition.nodes[1].mode, 'one-shot')
+
+  const legacy = createComposition({ title: 'Legacy', nodes: [{ id: 'n', sessionId: 's', label: 'x', kind: 'session', source: 'subagent' }] })
+  const withoutMode = { ...legacy, nodes: legacy.nodes.map(({ mode: _mode, ...node }) => node) }
+  assert.equal(validateComposition(withoutMode).ok, true)
+  assert.throws(() => createComposition({ nodes: [{ id: 'n', sessionId: 's', label: 'x', kind: 'session', mode: 'bogus' }] }))
+})

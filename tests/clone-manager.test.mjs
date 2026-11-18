@@ -332,6 +332,31 @@ test('cleans up the new root and records when child creation fails', async () =>
 })
 
 
+test('detaches a failed clone root from its workspace', async () => {
+  const attached = []
+  const detached = []
+  const workspace = {
+    id: 'w-1',
+    path: '/work/s-a',
+    title: 'work',
+    sessionIds: ['s-x'],
+    async attachSession(sessionId) { attached.push(sessionId) },
+    async detachSession(sessionId) { detached.push(sessionId) },
+  }
+  const { store, cloneManager, created } = createHarness({ failChild: true, workspaces: [workspace] })
+  installSource(store, createComposition({
+    id: 'source',
+    title: 'Team',
+    rootSessionId: 's-a',
+    nodes: [node('n-a', 's-a', 'Root'), node('n-b', 's-b', 'Child')],
+    edges: [{ id: 'e-1', parentId: 'n-a', childId: 'n-b', role: 'reports-to' }],
+  }))
+  await assert.rejects(() => cloneManager.cloneTree('s-a'), (error) => error?.code === 'CLONE_FAILED')
+  assert.equal(attached.length, 1)
+  assert.deepEqual(detached, [created[0]])
+  cloneManager.dispose()
+})
+
 test('caps retained clone roots and releases one explicitly', async () => {
   const { store, cloneManager, live } = createHarness()
   installSource(store, createComposition({

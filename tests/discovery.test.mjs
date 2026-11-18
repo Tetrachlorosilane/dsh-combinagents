@@ -240,6 +240,66 @@ test('describeMany uses metadata live flags without folding titles', async () =>
   assert.equal(result['s-b'].archived, true)
 })
 
+test('keeps metadata-only summaries out of the title-bearing describe cache', async () => {
+  const persisted = { id: 's-b', cwd: '/work/b' }
+  let titleReads = 0
+  const ctx = {
+    get(name) {
+      if (name === 'sessions') return { get: () => undefined, list: () => [] }
+      if (name === 'sessionQuery') {
+        return {
+          async filterSessions() {
+            return [{ header: persisted, live: false, persisted: true }]
+          },
+          async readTitleSnapshots(ids) {
+            return ids.map((sessionId) => ({
+              sessionId,
+              status: 'fulfilled',
+              value: { session: persisted, title: { title: 'Persisted agent' } },
+            }))
+          },
+          async readTitleSnapshot() {
+            titleReads += 1
+            return { session: persisted, title: { title: 'Persisted agent' } }
+          },
+        }
+      }
+      return undefined
+    },
+    logger: { warn() {} },
+  }
+  const discovery = createDiscovery(ctx)
+  const many = await discovery.describeMany(['s-b'])
+  assert.equal(many['s-b'].title, 's-b')
+  const described = await discovery.describe('s-b')
+  assert.equal(described.title, 'Persisted agent')
+  assert.equal(titleReads, 1)
+})
+
+test('does not fold a title for a missing node in the describeMany fallback', async () => {
+  let titleReads = 0
+  const ctx = {
+    get(name) {
+      if (name === 'sessions') return { get: () => undefined, list: () => [] }
+      if (name === 'sessionQuery') {
+        return {
+          async filterSessions() { return [] },
+          async readTitleSnapshot() {
+            titleReads += 1
+            throw new Error('missing session')
+          },
+        }
+      }
+      return undefined
+    },
+    logger: { warn() {} },
+  }
+  const discovery = createDiscovery(ctx)
+  const result = await discovery.describeMany(['s-missing'])
+  assert.equal(result['s-missing'], undefined)
+  assert.equal(titleReads, 0)
+})
+
 test('caches native catalog walks and invalidates them explicitly', async () => {
   let walks = 0
   const ctx = {

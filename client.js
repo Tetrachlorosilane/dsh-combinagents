@@ -44,6 +44,7 @@ window.__ModuleLoader__.load({
         'addSession': 'Add a session',
         'searchPlaceholder': 'Filter by title, id, or workspace',
         'noSessions': 'No matching sessions.',
+        'pickerLimit': 'Showing the first 200 matches. Refine the filter to narrow the list.',
         'parent': 'Reports to',
         'noParent': 'No parent (root)',
         'remove': 'Remove',
@@ -81,6 +82,12 @@ window.__ModuleLoader__.load({
         'nativeParent': 'Native parent',
         'agentPreset': 'Agent preset',
         'sessionId': 'Session id',
+        'mode': 'Mode',
+        'modeContinuable': 'Continuable',
+        'modeOneShot': 'One-shot',
+        'modeExternal': 'External',
+        'modeUnknown': 'Unknown',
+        'showOneShot': 'Show one-shot agents',
         'cwd': 'Workspace',
         'provider': 'Provider',
         'none': '\u2014',
@@ -128,6 +135,7 @@ window.__ModuleLoader__.load({
         'addSession': '添加会话',
         'searchPlaceholder': '按标题、ID 或工作区过滤',
         'noSessions': '没有匹配的会话。',
+        'pickerLimit': '仅显示前 200 个匹配项；请细化筛选条件以缩小范围。',
         'parent': '汇报给',
         'noParent': '无上级（根节点）',
         'remove': '移除',
@@ -165,6 +173,12 @@ window.__ModuleLoader__.load({
         'nativeParent': '原生父节点',
         'agentPreset': '代理预设',
         'sessionId': '会话 ID',
+        'mode': '模式',
+        'modeContinuable': '可继续',
+        'modeOneShot': '一次性',
+        'modeExternal': '外部',
+        'modeUnknown': '未知',
+        'showOneShot': '显示一次性代理',
         'cwd': '工作区',
         'provider': 'Provider',
         'none': '—',
@@ -487,6 +501,49 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Native lifecycle mode with a safe fallback for records written before
+     * mode existed.
+     * @param {object} node - composition node.
+     * @returns {'continuable'|'one-shot'|'external'|'unknown'}
+     */
+    function modeOf(node) {
+      if (node?.mode === 'continuable' || node?.mode === 'one-shot'
+        || node?.mode === 'external' || node?.mode === 'unknown') return node.mode
+      if (node?.kind === 'external') return 'external'
+      return node?.source === 'subagent' ? 'unknown' : 'continuable'
+    }
+
+    /**
+     * @param {object} node - composition node.
+     * @param {(key: string) => string} t - bound translate.
+     * @returns {string}
+     */
+    function modeLabel(node, t) {
+      const mode = modeOf(node)
+      return t(mode === 'one-shot' ? 'modeOneShot'
+        : mode === 'continuable' ? 'modeContinuable'
+          : mode === 'external' ? 'modeExternal' : 'modeUnknown')
+    }
+
+    /**
+     * Hide one-shot agents by default; keep edges only between visible nodes.
+     * @param {object|null} composition - validated graph.
+     * @param {boolean} includeOneShot - whether to show one-shot nodes.
+     * @returns {object|null}
+     */
+    function visibleComposition(composition, includeOneShot) {
+      if (composition === null || composition === undefined || includeOneShot) return composition
+      const nodes = composition.nodes.filter((node) => modeOf(node) !== 'one-shot')
+      if (nodes.length === composition.nodes.length) return composition
+      const ids = new Set(nodes.map((node) => node.id))
+      return {
+        ...composition,
+        nodes,
+        edges: composition.edges.filter((edge) => ids.has(edge.parentId) && ids.has(edge.childId)),
+      }
+    }
+
+    /**
      * @param {object} composition - validated graph.
      * @returns {{roots: object[], children: Map<string, object[]>}|null}
      */
@@ -526,6 +583,7 @@ window.__ModuleLoader__.load({
       const isExternal = node.kind === 'external'
       const rows = []
       if (isExternal) {
+        rows.push(h(DetailRow, { key: 'mode', label: t('mode'), value: modeLabel(node, t), t }))
         rows.push(h(DetailRow, { key: 'provider', label: t('provider'), value: node.provider ?? t('none'), t }))
         rows.push(h(DetailRow, { key: 'parent', label: t('nativeParent'), value: node.nativeParentSessionId ?? t('none'), t }))
         rows.push(h('div', { key: 'external', style: styles.detailRow }, t('externalNote')))
@@ -535,6 +593,12 @@ window.__ModuleLoader__.load({
         }, t('nativeMessagingNote')))
       } else {
         rows.push(h(DetailRow, { key: 'id', label: t('sessionId'), value: node.sessionId, t }))
+        rows.push(h(DetailRow, {
+          key: 'mode',
+          label: t('mode'),
+          value: modeLabel(node, t),
+          t,
+        }))
         rows.push(h(DetailRow, { key: 'cwd', label: t('cwd'), value: observation?.cwd ?? t('none'), t }))
         rows.push(h(DetailRow, {
           key: 'parent',
@@ -765,10 +829,11 @@ window.__ModuleLoader__.load({
       } = props
       const text = query.trim().toLowerCase()
       const labelOf = (session) => titles[session.sessionId] ?? session.title
-      const visible = (text.length === 0
+      const filtered = text.length === 0
         ? sessions
-        : sessions.filter((session) => `${labelOf(session)} ${session.sessionId} ${session.cwd ?? ''}`.toLowerCase().includes(text)))
-        .slice(0, 200)
+        : sessions.filter((session) => `${labelOf(session)} ${session.sessionId} ${session.cwd ?? ''}`.toLowerCase().includes(text))
+      const visible = filtered.slice(0, 200)
+      const truncated = filtered.length > visible.length
       const visibleKey = visible.slice(0, 20).map((session) => session.sessionId).join(',')
       React.useEffect(() => {
         if (visible.length > 0) onNeedTitles(visible.slice(0, 20).map((session) => session.sessionId))
@@ -806,6 +871,7 @@ window.__ModuleLoader__.load({
             }, t('add')),
           ])),
           visible.length === 0 ? h('div', { key: 'none', style: styles.sessionMeta }, t('noSessions')) : null,
+          truncated ? h('div', { key: 'limit', style: styles.sessionMeta }, t('pickerLimit')) : null,
           h('div', { key: 'external-title', style: styles.sectionTitle }, t('externalAgents')),
           externalAvailable === false
             ? h('div', { key: 'external-unavailable', style: styles.sessionMeta }, t('externalUnavailable'))
@@ -927,6 +993,7 @@ window.__ModuleLoader__.load({
       const [pendingRemove, setPendingRemove] = React.useState(null)
       const [expanded, setExpanded] = React.useState([])
       const [busy, setBusy] = React.useState(false)
+      const [showOneShot, setShowOneShot] = React.useState(false)
       const [notice, setNotice] = React.useState(null)
       const [confirmDelete, setConfirmDelete] = React.useState(false)
       const [editingTitle, setEditingTitle] = React.useState(false)
@@ -952,7 +1019,11 @@ window.__ModuleLoader__.load({
             rootSessionId: data.rootSessionId ?? data.composition?.rootSessionId ?? null,
           })
         } catch (error) {
-          setState({ loading: false, error, composition: null, observations: {}, grants: {}, tasks: [], storage: 'unknown', rootSessionId: null })
+          if (options.silent === true) {
+            setState((previous) => ({ ...previous, error }))
+          } else {
+            setState({ loading: false, error, composition: null, observations: {}, grants: {}, tasks: [], storage: 'unknown', rootSessionId: null })
+          }
         }
       }, [sessionId])
 
@@ -960,8 +1031,21 @@ window.__ModuleLoader__.load({
         void load()
       }, [load])
 
+      // Another profile can mutate the same durable composition. Poll the
+      // authoritative bridge while the tab is visible so this UI converges
+      // without a reload; a mutation in this tab is never overwritten mid-flight.
+      React.useEffect(() => {
+        if (typeof document === 'undefined') return undefined
+        const timer = setInterval(() => {
+          if (busy || document.visibilityState === 'hidden') return
+          void load({ silent: true })
+        }, 3000)
+        return () => clearInterval(timer)
+      }, [load, busy])
+
       React.useEffect(() => {
         setEditingTitle(false)
+        setShowOneShot(false)
       }, [sessionId])
 
       const mutate = React.useCallback(async (action, successMessage) => {
@@ -1161,8 +1245,12 @@ window.__ModuleLoader__.load({
       }
 
       const composition = state.composition
-      const tree = React.useMemo(() => treeOf(composition), [composition])
-      const nodes = composition?.nodes ?? []
+      const filteredComposition = React.useMemo(
+        () => visibleComposition(composition, showOneShot),
+        [composition, showOneShot],
+      )
+      const tree = React.useMemo(() => treeOf(filteredComposition), [filteredComposition])
+      const nodes = filteredComposition?.nodes ?? []
 
       if (state.loading) return h('div', { style: styles.wrap }, h('div', { key: 'loading' }, t('loading')))
       if (state.error !== null) {
@@ -1241,6 +1329,20 @@ window.__ModuleLoader__.load({
                 disabled: busy,
                 onClick: () => void syncNative(),
               }, t('syncNative')),
+          composition === null
+            ? null
+            : h('label', {
+                key: 'one-shot',
+                style: { display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px' },
+              }, [
+                h('input', {
+                  key: 'input',
+                  type: 'checkbox',
+                  checked: showOneShot,
+                  onChange: (event) => setShowOneShot(event.target.checked),
+                }),
+                h('span', { key: 'label' }, t('showOneShot')),
+              ]),
           h('button', { key: 'reload', type: 'button', style: styles.linkButton, onClick: () => void load() }, t('retry')),
         ]),
         h('div', { key: 'notice', style: styles.notice }, t('notice')),
@@ -1257,7 +1359,7 @@ window.__ModuleLoader__.load({
                 node,
                 depth: 0,
                 tree,
-                composition,
+                composition: filteredComposition,
                 observations: state.observations,
                 t,
                 pendingRemove,
@@ -1330,10 +1432,19 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         let cancelled = false
         if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined
-        callApi(`/summary?sessionId=${encodeURIComponent(sessionId)}`)
-          .then((data) => { if (!cancelled) setSummary(data) })
-          .catch(() => { if (!cancelled) setSummary(null) })
-        return () => { cancelled = true }
+        const loadSummary = () => {
+          callApi(`/summary?sessionId=${encodeURIComponent(sessionId)}`)
+            .then((data) => { if (!cancelled) setSummary(data) })
+            .catch(() => { if (!cancelled) setSummary(null) })
+        }
+        loadSummary()
+        const timer = setInterval(() => {
+          if (typeof document !== 'undefined' && document.visibilityState === 'visible') loadSummary()
+        }, 5000)
+        return () => {
+          cancelled = true
+          clearInterval(timer)
+        }
       }, [sessionId, revision])
       const sidebar = ctx.get('sidebarRight')
       if (sidebar === undefined || summary === null) return null

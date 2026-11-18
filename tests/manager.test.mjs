@@ -467,15 +467,20 @@ test('imports the existing native tree on create', async () => {
     { kind: 'child', id: 's-b', parentId: 's-a', depth: 1, mode: 'continuable', label: 'Worker', activity: 'inactive' },
     { kind: 'child', id: 's-c', parentId: 's-b', depth: 2, mode: 'continuable', label: 'Checker', activity: 'inactive' },
     { kind: 'child', id: 's-ext', parentId: 's-a', depth: 1, mode: 'external', label: 'ACP', activity: 'inactive' },
+    { kind: 'child', id: 's-one', parentId: 's-a', depth: 1, mode: 'one-shot', label: 'Once', activity: 'inactive' },
   ]
   const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(['s-a', 's-b', 's-c'], tree) })
   const record = await manager.create('s-a')
   const composition = record.composition
   assert.equal(composition.nodes.filter((node) => node.sessionId !== null).length, 3)
-  assert.equal(composition.nodes.filter((node) => node.kind === 'external').length, 1)
+  assert.equal(composition.nodes.filter((node) => node.kind === 'external').length, 2)
   const b = composition.nodes.find((node) => node.sessionId === 's-b')
   const c = composition.nodes.find((node) => node.sessionId === 's-c')
   const root = composition.nodes.find((node) => node.sessionId === 's-a')
+  assert.equal(root.mode, 'continuable')
+  assert.equal(b.mode, 'continuable')
+  assert.equal(c.mode, 'continuable')
+  assert.equal(composition.nodes.find((node) => node.sessionId === null && node.label === 'Once').mode, 'one-shot')
   assert.ok(composition.edges.some((edge) => edge.parentId === b.id && edge.childId === c.id))
   const nativeEdge = composition.edges.find((edge) => edge.parentId === root.id && edge.childId === b.id)
   assert.deepEqual((await manager.getGrants('s-a'))[nativeEdge.id], { allowMessage: false, allowInterrupt: false })
@@ -753,6 +758,28 @@ test('sync-native does not hold the root lock while reading the native tree', as
   assert.equal(added.composition.nodes.some((node) => node.sessionId === 's-b'), true)
   releaseTree()
   await syncing
+})
+
+test('auto-attach does not hold the root lock while describing the child', async () => {
+  const discovery = fakeDiscovery(['s-a', 's-b', 's-c'])
+  const summaries = new Map(['s-a', 's-b', 's-c'].map((id) => [id, summary(id, id)]))
+  const gate = Promise.withResolvers()
+  discovery.describe = async (sessionId) => {
+    if (sessionId === 's-b') await gate.promise
+    return summaries.get(sessionId) ?? null
+  }
+  const manager = createManager({ store: fakeStore(), discovery })
+  await manager.create('s-a')
+  const attaching = manager.autoAttach('s-a', { childId: 's-b', local: true, label: 'Child' })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  const added = await Promise.race([
+    manager.addNode('s-a', { sessionId: 's-c' }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('add waited for auto-attach describe')), 500)),
+  ])
+  assert.equal(added.composition.nodes.some((node) => node.sessionId === 's-c'), true)
+  gate.resolve()
+  const attached = await attaching
+  assert.equal(attached.composition.nodes.some((node) => node.sessionId === 's-b'), true)
 })
 
 test('skips malformed composition records when building membership', async () => {

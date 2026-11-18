@@ -1,168 +1,277 @@
 # dsh-combinagents
 
-**WARNING: Do NOT install the plugin right now. 
+[![dsh-plugin topic](https://img.shields.io/badge/topic-dsh--plugin-blue)](https://github.com/topics/dsh-plugin)
 
-**Status: installed in the `desktop` profile; Host bridge, shared membership
-(including native ancestors), busy guard, native-subagent mirror/sync,
-rename/reparent, client registration, and the real desktop GUI are verified
-(2026-11-17, dark/light themes and 420 px width).**
-The Host half provides a durable per-root composition domain, read-only session
-discovery (including external/one-shot leaves), serialized graph mutations,
-busy-branch protection, and a loopback JSON bridge. A session belongs to one
-composition; the tab resolves that shared composition from any member, walking
-native ancestors when the member is not mirrored yet. The Client half registers a
-right-sidebar tab, a session-header utility, a guide entry, and a separate
-composition-count header chip; the shipped subagent tree entry is retained. It
-provides node details, rename, reparent, composition title editing, moving a
-whole tree/subtree between compositions, external placeholders, per-edge
-message/interrupt grants, open-conversation for every local session (including
-persisted ones), and a
-sync-native action. Three static model tools
-(`composition_list_agents`, `composition_send_message`,
-`composition_interrupt_agent`) mirror the native control parameters and are
-gated by per-edge grants; cross-workspace delivery without full permission asks
-the user through the approval service. A plugin-owned task board (`tasks` table)
-supports create, start, complete, reopen, and delete with a revision guard; it is
-not DSH Team and never writes native Team state. The `mode: 'composed'` config option registers
-`list_agents`, `send_message`, `interrupt_agent`, `subagent`, `subagent_fork`,
-`wait_agent`, and `composition_task` under native names/descriptions/parameter
-schemas for the control/delegation tools and a plugin-owned task tool. Composed
-mode also exposes unshadowed `composition_list_agents`,
-`composition_send_message`, and `composition_interrupt_agent` aliases so a
-native-preset root can still direct composition children.
-`subagent`/`subagent_fork` start a native activation under the caller, mirror
-the child into the composition, and auto-grant the delegation edge;
-`send_message` prefers the native relay for native descendants (including cold
-resume), falling back to live cross-tree delivery. Composed mode is applied and
-loaded in the desktop profile after a Host restart; the current desktop session
-runs the composed preset with the native-name tools plus the unshadowed
-`composition_*` aliases. The composed preset mirrors the installed `standard`
-plugin list and removes only the three native delegation rows, so the other
-standard tools and `/compact` are present in new sessions after the Host
-restart. A clean headless profile verified
-the full chain (start → child edge → wait → follow-up message → wait →
-interrupt). Native `subagent/start` events are mirrored into the composition as
-new nodes without changing any tool schema or routing authority. Session status
-distinguishes `live`, `saved`, and the workspace registry's true `archived` set;
-the picker lists headers immediately and folds titles lazily so opening it no
-longer scans every session log. The real GUI was visually verified: both header
-entries (the count chip and the icon) open the tab, the count chip coexists with
-the shipped `subagent-catalog` entry, the picker filters and adds/removes
-sessions, details show cwd/sandbox/preset/native parent, rename/reparent and
-per-edge grants work, external placeholders render collapsed, the task board
-transitions, sync-native is callable, and composition create/delete leaves the
-DSH sessions untouched. Clone and bud execution are implemented: the pure
-planner in `src/clone.js` covers whole-root tree selection, clone markers, and
-task-copy owner mapping,
-and `src/clone-manager.js` provides the host adapter. Live verification on
-2026-11-18 cloned both a two-node and the 16-node mahjong team: the clone root
-appears in the source workspace, every child is cataloged and saved, the clone
-root stays idle, and the copied task board remaps its owner to the cloned node.
-The clone badge/details were confirmed in the GUI. The request-prefix
-fingerprint is still open. [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md) records
-the DSH API findings. The cross-tree
-delivery capability described as the Bridge is implemented as the composition
-control tools (per-edge grants, approval gate, audit), not as a separate layer.
+A user-owned **reporting composition** for DSH (DeepSeek Harness) agents and
+subagents.
 
-`dsh-combinagents` is an exploration for DSH (DeepSeek Harness): let a user
-arrange multiple **agents** and **subagents**, possibly from different sources
-(spawn, fork, ACP, and top-level sessions), into a separate reporting
-composition while each session keeps its own working directory, sandbox mode,
-approval policy, and tool composition.
+DSH already gives each subagent a fixed native parent. This plugin adds a
+separate, editable layer on top: you decide who reports to whom, independently
+of the native subagent tree. The composition is an overlay. The plugin does not
+move a session, rewrite its native parent, change its workspace, or change its
+sandbox or permission policy.
 
-The important distinction is:
+> **Compatibility:** DSH `0.2.2-rc.3` on the desktop/web profile. This is an
+> unpublished local plugin bundle, not an npm package to install from a
+> registry. Node.js 22 or newer is required.
 
-- **Native subagent lineage** is DSH-owned and immutable at session creation.
-- **This plugin's composition** is a user-owned overlay that can be edited at
-  any time.
+Part of the [dsh-plugin](https://github.com/topics/dsh-plugin) topic.
 
-The overlay never rewrites a DSH session header, DSH catalog, sandbox policy, or
-permission preset. That is what makes preserving each agent's workspace and
-permissions possible.
+## What you get
 
-## Read this first
+- A right-sidebar **Agent composition** tab.
+- A separate count chip in the session header.
+- Add local sessions or external agents, rename nodes, and set **Reports to**.
+- Per-edge **message** and **interrupt** grants.
+- Automatic mirroring when a subagent starts.
+- **Sync native agents** to import native descendants.
+- Clone a whole team, or bud one node into a new independent root.
+- A plugin-owned task board, separate from DSH Team.
+- Native-name model tools that use the composition, while keeping the native
+  tool schemas.
+- Cross-profile convergence: another DSH profile's edit becomes visible without
+  restarting the Host.
 
-- [设计与交接说明（中文）](docs/HANDOFF.md) — **authoritative product brief**
-  for the next agent: requirements, design principles, clone/bridge/bud logic,
-  cache-friendly rules, and UI compatibility notes.
-- [Feasibility analysis](docs/FEASIBILITY.md) — what DSH permits, what it does
-  not, and which designs are viable.
-- [Architecture proposal](docs/ARCHITECTURE.md) — the recommended overlay
-  foundation, storage, UI, and phased plan.
-- [Composed profile overlay](docs/COMPOSED-PROFILE.md) — how to enable the
-  native-name composed surface without duplicate tool registration.
-- [Clone/bud spike](docs/CLONE-SPIKE.md) — DSH seed, catalog, permission, and
-  idle-child findings before the Host adapter is written.
-- [AGENTS.md](AGENTS.md) — the working contract for changing this repository.
+## What it does not do
 
-## What is in the repository
+- It does **not** re-parent existing DSH sessions natively.
+- It does **not** delete or rewrite DSH sessions when you remove nodes.
+- It does **not** widen a sandbox, permission preset, or approval policy.
+- It does **not** merge sessions or move a session to another workspace.
+- It is **not** a cross-host or multi-user service. It is a local-profile
+  feature.
 
+Think of it as an editable organization chart beside the native subagent tree,
+not a replacement for that tree.
+
+## Requirements
+
+- DSH `0.2.2-rc.3` with the desktop/web UI.
+- Node.js 22 or newer.
+- A **standard** DSH profile (or another preset that keeps the native
+  delegation plugins mounted):
+  - `tool-subagent-control`
+  - `tool-subagent`
+  - `tool-subagent-fork`
+- The profile must expose `sessions`, `storageDomain`, `subagents`, and the
+  sidebar-right client UI. Missing optional services degrade individual fields,
+  not the whole tab.
+
+The plugin can run beside other tool plugins. It keeps the native tool
+definitions; it only intercepts execution for the six names listed below.
+
+## Install
+
+This checkout is a DSH **bundle** (`package.json` has a `dsh.bundle.patch`
+entry). It is not published to npm.
+
+1. Put the checkout in a stable local directory.
+2. Register it in your DSH profile as a local bundle. Use the DSH Plugin Manager
+   bundle installation for your DSH version, or the equivalent local package
+   link in the profile.
+3. Make sure the profile entry is enabled:
+
+```yaml
+- id: dsh-combinagents
+  config:
+    autoGrantDelegatedEdges: true
+  disabled: false
 ```
-index.js                 Host entry: storage, discovery, manager, HTTP bridge
-client.js                Right-sidebar tab, header utility, guide entry,
-                         composition-count chip
-src/graph.js             Pure composition graph (forest, cycles, subtree removal)
-src/clone.js             Pure clone/bud planner (whole root tree, markers, tasks)
-src/store.js             DSH storage-domain adapter + memory fallback
-src/discovery.js         Read-only live/persisted session discovery
-src/manager.js           Serialized mutations and root-session protection
-src/http.js              Loopback, token-authenticated JSON bridge
-src/controls.js          Composition control tools and composed delegation surface
-tests/                   Graph, clone-plan, store, manager, discovery, HTTP,
-                         controls, host, client-registration, and bundle tests
-locale/{en,zh}.json      Plugin Manager metadata
-icon.svg                 Bundle icon
-docs/HANDOFF.md          Product requirements, design logic, cache and UI handoff
-docs/FEASIBILITY.md      DSH source review and design options
-docs/ARCHITECTURE.md     Architecture, decisions, and implementation plan
-docs/CLONE-SPIKE.md      DSH clone/bud API findings and live spike checklist
-cordis.patch.yml         Bundle patch for the Host entry
-```
+
+4. Keep the native delegation plugins mounted. Do **not** use the legacy
+   `composed` preset that removes them; without the native definitions there is
+   nothing for the plugin to intercept.
+5. Restart the Host and refresh the GUI.
+
+After a Host restart, open a **standard** session. Existing sessions created
+under an older composed preset keep their old preset until you move them; they
+receive a compatibility fallback, but a new standard session is recommended.
+
+If the tab or header chip is missing, confirm the plugin is enabled in the
+profile and refresh the page after the Host restart.
+
+## Quick start
+
+1. Open a normal standard session.
+2. Open **Agent composition** from the right sidebar or the header chip.
+3. Click **Create composition** if this session has no composition yet.
+4. Click **Add a session** and select another session. Set its **Reports to**
+   parent, or leave it as a root.
+5. Open **Details** on an edge to allow messages or interrupts across that
+   edge. New manual connections allow messages by default; interrupts stay off
+   until enabled.
+6. Start a subagent normally with `subagent` or `subagent_fork`. It is mirrored
+   into the composition automatically, with its native parent and an
+   auto-granted delegation edge.
+7. Use **Sync native agents** if a native descendant is missing.
+
+A session belongs to at most one composition. If you attach a session that is
+already in another composition, its subtree moves; a remaining source forest is
+re-keyed to another local root.
+
+## The tab
+
+| Action | What it does |
+|---|---|
+| Add a session | Add an existing DSH session as a composition node |
+| Add external | Add a placeholder for an external/non-local execution |
+| Reports to | Set the node's parent; `No parent` makes it a root |
+| Rename | Change the node label (not the DSH session title) |
+| Message / Interrupt grants | Allow that action along the composition path |
+| Sync native agents | Import native descendants that are not mirrored yet |
+| Clone whole tree | Create a new independent tree; source stays unchanged |
+| Bud as new root | Clone one node and its subtree as a new root |
+| Show one-shot agents | Show one-shot nodes that are hidden by default |
+| Composition tasks | Create, start, complete, reopen, and delete plugin tasks |
+| Open conversation | Open a local session; external nodes never offer it |
+
+Nodes show `live`, `saved`, or `archived` state, plus the native parent,
+workspace, sandbox, permission preset, agent preset, and lifecycle mode when
+available.
+
+The tab filters **one-shot** nodes by default. Enable **Show one-shot agents**
+to see them. External nodes remain visible because they are placeholders, not
+necessarily one-shot agents.
+
+## Model tools
+
+The plugin does not register shadow copies of the native tools. It registers a
+`tools/execute` interceptor. For these six names, the native definition and
+therefore the model-facing name, description, parameters, output schema,
+presentation, prompt guidance, and restrictions stay unchanged; only the
+execution path uses the composition:
+
+| Tool | In this plugin |
+|---|---|
+| `list_agents` | Lists continuable composition nodes, with `mode=` in the description |
+| `send_message` | Follows composition edges and grants; rejects one-shot targets |
+| `interrupt_agent` | Follows composition ancestor/grant rules; can interrupt live one-shot agents |
+| `subagent` | Starts a native child, mirrors it, and auto-grants the edge |
+| `subagent_fork` | Same as `subagent`, using the fork provider |
+| `wait_agent` | Native caller-inbox wait behavior |
+
+`composition_task` is the only globally registered extra tool. The old
+`composition_list_agents`, `composition_send_message`, and
+`composition_interrupt_agent` aliases are removed. Native
+`list_subagent_models` and other unique tools are untouched.
+
+`list_agents` omits **one-shot** and **external** rows, matching the native
+continuable listing. One-shot targets cannot receive follow-ups. The lifecycle
+mode is shown in the row description because the native output schema does not
+have a separate `mode` field.
+
+### Lifecycle modes
+
+Composition nodes carry the same native lifecycle distinction:
+
+| Mode | Meaning |
+|---|---|
+| `continuable` | A long-lived child that can receive follow-up messages |
+| `one-shot` | A terminal execution with no follow-up |
+| `external` | An external execution with no local session |
+| `unknown` | A legacy or not-yet-synced record |
+
+A name is not a lifecycle mode. A child without an explicit name still gets a
+generated `agent-N` name and can still be continuable. Use **Sync native agents**
+to refresh modes from the native catalogs.
+
+## Cross-profile consistency
+
+The storages live under the DSH home, so two profiles can open the same
+composition data. Each Host keeps its own in-memory storage-domain snapshot.
+The plugin makes them converge:
+
+- After a durable composition or policy write, a small `.revision` marker is
+  updated.
+- A reader that sees a newer marker reopens the storage domain and rebuilds
+  session membership.
+- Composition mutations take a process-shared `.mutation.lock`, so two profiles
+  do not overwrite each other's read-modify-write.
+- The tab polls `/state` every 3 seconds and the header chip polls `/summary`
+  every 5 seconds while visible.
+
+This is **eventual convergence**, not a synchronous distributed database.
+Writes from an older plugin version do not publish the marker, and a custom
+storage backend outside the default directory needs a `storageDir` override.
+
+## Safety and authority
+
+- The overlay never writes a DSH `SessionHeader`, native `subagent/catalog`,
+  cwd, sandbox policy, or permission preset.
+- Composition edges are advisory for organization. The plugin's `send_message`
+  and `interrupt_agent` execution use composition grants; they do not bypass
+  native session policy.
+- Messages prefer the native relay inside a native tree. Live cross-tree
+  targets use the composition relay.
+- Crossing workspaces without full permission asks the approval service; only
+  an accepted one-shot approval proceeds.
+- Every delivered, denied, or approval-denied action is audited.
+- External nodes cannot receive follow-ups.
+- Removing a node removes only the overlay. It never deletes a DSH session.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| The six native-name tools still behave natively | Is the plugin enabled? Does the profile keep the native delegation rows? Restart the Host after installing. |
+| `composition_*` tools are missing | They were removed by design; use the native names plus `composition_task`. |
+| `NOT_IN_COMPOSITION` | Create a composition for this session, or use `subagent` from a top-level agent. |
+| `AGENT_BUSY` | An affected agent or one of its composition ancestors/descendants is running. Wait for it to finish. |
+| `another DSH profile is changing the composition` | Another profile holds the mutation lock. Retry after a moment. |
+| `storageMemory` warning | The storage domain could not open. Changes last until the Host restarts; check the DSH storage backend. |
+| A one-shot agent is missing | It is hidden by default. Enable **Show one-shot agents**; use **Sync native agents** if its mode is still unknown. |
+| The tree looks stale in another profile | Wait for the 3-second poll, refresh the page, or check that both profiles run this version. |
+| The tab is absent | Confirm the plugin and client UI are enabled, then refresh after the Host restart. |
+
+## Limitations
+
+- One composition per session, and a strict `reports-to` forest.
+- No native re-parenting and no merging of sessions.
+- Labels are user-facing and may be duplicated; duplicate labels make
+  `send_message` target selection ambiguous.
+- The plugin does not change a session's workspace, sandbox, permission preset,
+  or approval policy.
+- Task-board state is plugin-owned, not DSH Team state.
+- A very large archived composition under an enormous transcript can still make
+  the surrounding session UI paint slowly; the bridge itself is not the
+  bottleneck.
+- Legacy composed sessions use fallback tool definitions until they migrate to
+  a standard preset.
+- The exact native request-prefix fingerprint is not part of the acceptance
+  tests yet.
 
 ## Development
 
 ```bash
-node --test tests/*.test.mjs
-node --check index.js src/graph.js src/clone.js src/store.js src/discovery.js src/manager.js src/http.js src/controls.js client.js
+npm test
+npm run check
 ```
 
-No build step and no runtime dependencies. The graph model is ordinary ESM
-JavaScript and is exported as `@dsh-external/dsh-combinagents/graph` for tests and
-Host code. The storage adapter uses the graph validator as its record schema so
-the bundle needs no `zod` installation; re-verify that assumption when the DSH
-storage contract changes.
+Tests use only Node's built-in test runner. There is no build step and no
+runtime dependency.
 
-## Non-goals
+```text
+index.js                 Host entry and bridge lifecycle
+client.js                Right-sidebar tab, header utility, count chip
+src/graph.js             Pure composition graph
+src/clone.js             Pure clone/bud planner
+src/clone-manager.js     Clone/bud host adapter
+src/store.js             Storage domain, revision reload, mutation lock
+src/discovery.js         Session and native-catalog discovery
+src/manager.js           Serialized mutations and grants
+src/http.js              Loopback JSON bridge
+src/controls.js          Native tool execution interception
+```
 
-- Replacing DSH's subagent runtime, routing, capacity, or authority checks.
-- Merging sessions or moving an existing session to another workspace.
-- Widening a session's sandbox or approval policy.
-- Cross-host or multi-user composition. This is a local-profile feature.
-- A drag-and-drop canvas; narrow widths use the vertical tree.
+More detail:
 
-## Known limitations
-
-- A user-added connection defaults to bidirectional messaging
-  (`allowMessage: true`, `allowInterrupt: false`). Direct reparenting migrates
-  an existing grant or defaults the replacement edge to messaging; detaching
-  drops the grant. Native-mirrored edges and the internal edges of a
-  cross-composition move still start from deny.
-- A large archived 16-node composition can paint slowly while a very large
-  session transcript is loading. The bridge `/state` now reuses the session
-  corpus and a single composition record (warm responses are in the low
-  milliseconds); the remaining delay is in the surrounding session UI.
-- The header chip now reads composition size only; it no longer waits for a
-  cold native `listDescendants` walk.
-- "Open conversation" is offered for every local session node, including saved
-  ones; whether an archived session can actually resume is left to the DSH
-  workspace. External nodes never offer it.
-
-## Compatibility
-
-Verified against DSH `0.2.2-rc.3` on Windows Desktop. DSH subagent contracts are
-release-sensitive; re-read the sources listed in the feasibility analysis
-before claiming compatibility with another release.
+- [Architecture](docs/ARCHITECTURE.md)
+- [Product handoff](docs/HANDOFF.md)
+- [DSH feasibility notes](docs/FEASIBILITY.md)
+- [Standard-profile setup and migration](docs/COMPOSED-PROFILE.md)
+- [Clone/bud spike](docs/CLONE-SPIKE.md)
+- [Working contract for contributors](AGENTS.md)
 
 ## License
 
-MIT.
+MIT. See [LICENSE](LICENSE).

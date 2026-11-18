@@ -21,6 +21,9 @@ export const NODE_KINDS = Object.freeze(['session', 'external'])
 /** Recognized coarse sources. */
 export const NODE_SOURCES = Object.freeze(['top-level', 'subagent', 'external', 'unknown'])
 
+/** Native subagent lifecycle mode, retained for display and filtering. */
+export const NODE_MODES = Object.freeze(['continuable', 'one-shot', 'external', 'unknown'])
+
 /** The only relationship this model currently expresses. */
 export const EDGE_ROLES = Object.freeze(['reports-to'])
 
@@ -49,6 +52,7 @@ export class CompositionError extends Error {
  * @property {string} label - user-facing label.
  * @property {'session'|'external'} kind - whether a local DSH session backs this node.
  * @property {'top-level'|'subagent'|'external'|'unknown'} source - coarse origin.
+ * @property {'continuable'|'one-shot'|'external'|'unknown'} mode - native lifecycle mode.
  * @property {string|null} provider - subagent provider or source adapter, when known.
  * @property {string|null} nativeParentSessionId - DSH's immutable parent, retained for display.
  * @property {string|null} cwd - workspace snapshot at attach time, for display only.
@@ -143,12 +147,16 @@ function normalizeNode(input, now) {
   const sessionId = text(input.sessionId ?? null, 'node.sessionId', { nullable: true, max: 128 })
   const kind = oneOf(input.kind ?? (sessionId === null ? 'external' : 'session'), NODE_KINDS, 'node.kind')
   const source = oneOf(input.source ?? 'unknown', NODE_SOURCES, 'node.source')
+  const mode = oneOf(input.mode ?? (kind === 'external'
+    ? 'external'
+    : source === 'subagent' ? 'unknown' : 'continuable'), NODE_MODES, 'node.mode')
   const node = {
     id: text(input.id ?? randomUUID(), 'node.id', { max: 128 }),
     sessionId,
     label: text(input.label ?? (sessionId === null ? 'External agent' : sessionId), 'node.label', { max: 120 }),
     kind,
     source,
+    mode,
     provider: text(input.provider ?? null, 'node.provider', { nullable: true, max: 80 }),
     nativeParentSessionId: text(input.nativeParentSessionId ?? null, 'node.nativeParentSessionId', {
       nullable: true,
@@ -172,6 +180,9 @@ function normalizeNode(input, now) {
   }
   if (node.kind === 'session' && node.sessionId === null) {
     fail('INVALID_FIELD', 'a session node requires a sessionId')
+  }
+  if (node.kind === 'session' && node.mode === 'external') {
+    fail('INVALID_FIELD', 'a session node cannot have mode external')
   }
   return node
 }
@@ -264,6 +275,9 @@ export function validateComposition(composition) {
     }
     if (!NODE_SOURCES.includes(node.source)) {
       add('INVALID_NODE', `node.source must be one of ${NODE_SOURCES.join(', ')}`, { nodeId: node.id })
+    }
+    if (node.mode !== undefined && !NODE_MODES.includes(node.mode)) {
+      add('INVALID_NODE', `node.mode must be one of ${NODE_MODES.join(', ')}`, { nodeId: node.id })
     }
     if (node.kind === 'external' && node.sessionId !== null) {
       add('INVALID_NODE', 'an external node cannot carry a local sessionId', { nodeId: node.id })

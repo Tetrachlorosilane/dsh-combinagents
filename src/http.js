@@ -7,6 +7,8 @@
  * returns stable error codes instead of generic 500s for graph rejections.
  */
 
+import { timingSafeEqual } from 'node:crypto'
+
 import { CompositionError } from './graph.js'
 
 /** Prefix registered on the Web server. */
@@ -64,6 +66,8 @@ function json(status, payload) {
     headers: {
       'content-type': 'application/json; charset=utf-8',
       'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'cross-origin-resource-policy': 'same-origin',
     },
     body: JSON.stringify(payload),
   }
@@ -80,6 +84,20 @@ export function isLoopback(address) {
 }
 
 const TRUSTED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+
+/**
+ * Compare a supplied bridge token without leaking length/content through an
+ * early-exit string comparison.
+ * @param {unknown} supplied - request header value.
+ * @param {string} token - expected capability token.
+ * @returns {boolean}
+ */
+function tokenMatches(supplied, token) {
+  if (typeof supplied !== 'string' || typeof token !== 'string') return false
+  const left = Buffer.from(supplied, 'utf8')
+  const right = Buffer.from(token, 'utf8')
+  return left.length === right.length && timingSafeEqual(left, right)
+}
 
 /**
  * Parse a Host/Origin authority without accepting userinfo, paths, or queries.
@@ -253,7 +271,7 @@ export function createApi({
       }
 
       const supplied = headerValue(headers, TOKEN_HEADER)
-      if (supplied !== token) {
+      if (!tokenMatches(supplied, token)) {
         return json(401, { error: { code: 'UNAUTHORIZED', message: `missing or invalid ${TOKEN_HEADER}` } })
       }
 
@@ -264,6 +282,10 @@ export function createApi({
       if (method === 'GET') return await readRoute(route, parsed)
       if (method !== 'POST') {
         return json(405, { error: { code: 'METHOD_NOT_ALLOWED', message: 'use GET or POST' } })
+      }
+      const contentType = headerValue(headers, 'content-type') ?? ''
+      if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
+        return json(415, { error: { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Content-Type must be application/json' } })
       }
       const parsedBody = parseJsonBody(body)
       return await writeRoute(route, parsedBody, signal)
@@ -484,7 +506,7 @@ export function createApi({
     return json(405, { error: { code: 'METHOD_NOT_ALLOWED', message: 'use GET' } })
   }
 
-  return { handle }
+  return { handle, token }
 }
 
 /**
@@ -534,6 +556,23 @@ export function createNodeHandler(api, options = {}) {
             message: `request body exceeds ${MAX_BODY_BYTES} bytes`,
           },
         }))
+        return
+      }
+      let route = null
+      try {
+        const pathname = new URL(req.url, 'http://localhost').pathname
+        if (pathname.startsWith(ROUTE_PREFIX)) route = pathname.slice(ROUTE_PREFIX.length) || '/'
+      } catch {
+        route = null
+      }
+      const bootstrapGet = req.method === 'GET' && route === '/bootstrap'
+      if (route !== null && ROUTES.has(route) && !bootstrapGet
+        && !tokenMatches(headerValue(req.headers, TOKEN_HEADER), api.token)) {
+        res.statusCode = 401
+        res.setHeader('content-type', 'application/json; charset=utf-8')
+        res.setHeader('cache-control', 'no-store')
+        res.setHeader('connection', 'close')
+        res.end(JSON.stringify({ error: { code: 'UNAUTHORIZED', message: `missing or invalid ${TOKEN_HEADER}` } }))
         return
       }
       const body = await readBody(req)

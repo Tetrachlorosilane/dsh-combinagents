@@ -14,11 +14,13 @@
 > 原生 `subagent-catalog` 入口保留，非根会话仍可从原生树查看/打开；三工具已注册并实测
 > （list / send / interrupt），逐边授权、审计行与原生 relay source 已落盘；会话状态区分
 > live / saved / 真正 archived（`workspaceRegistry.archivedSessionIds`），选择器先返回
-> 元数据、标题按 `/titles` 延迟批量折叠，不再为打开选择器扫描全部会话日志。Host 重启后
-> `mode: 'composed'` 的旧 preset 已在当前 desktop 会话加载；镜像 `standard` 的新
-> preset 已写入 profile，需下次 Host 重启后对新建 composed 会话生效，工具面含原生同名
-> 工具与未遮蔽的 `composition_*` 别名）；跨树消息（产品中的 Bridge 能力）已以组合控制
-> 工具 + 逐边授权 + approval + 审计实现，不是独立一层；克隆/出芽已实现
+> 元数据、标题按 `/titles` 延迟批量折叠，不再为打开选择器扫描全部会话日志。2026-11-18 起
+> `mode` 已移除：插件在标准 profile 上为每个 Agent 安装六个原生同名的 **scoped
+> wrapper**，复制原生 schema/description/output，仅替换 `execute`；禁用插件即恢复原生
+> 路径。`composition_*` 别名已删除，`composition_task` 是唯一全局新增工具。旧
+> composed preset 仅保留给历史会话，新会话默认 `standard`；需重启 Host 后新建会话验证。
+> 跨树消息（产品中的 Bridge 能力）由同名 `send_message` / `interrupt_agent` + 逐边授权
+> + approval + 审计实现，不是独立一层；克隆/出芽已实现
 > （`src/clone.js` + `src/clone-manager.js`），GUI 复验待做。
 
 ## 0. 给接手代理的摘要
@@ -640,12 +642,13 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 - 已实现：组合标题编辑（`/set-title` + tab 头部）；
 - 已实现：插件自有任务板（`tasks` 表 + tab UI + `/tasks`、`/create-task`、
   `/update-task`，revision 冲突保护）；不写 DSH Team；
-- 已实现并在 desktop profile 启用/加载：`mode: 'composed'` 注册七个工具（三控制 +
-  `subagent`/`subagent_fork`/`wait_agent` + `composition_task`）；其中
-  `subagent`/`subagent_fork` 通过 `startActivation` 创建、挂入组合、用原生名
-  标记并自动授权该边；`send_message` 对原生后代优先走原生 relay（含冷恢复），
-  `wait_agent` 复制原生 inbox 等待语义；clean headless profile 已实测
-  subagent → child → wait → send → wait → interrupt 全链路；
+- 已实现（2026-11-18 合并模式）：标准 profile 保留原生 delegation 插件；插件为每个
+  live Agent 在 `agent.ctx` 安装六个同名 **scoped wrapper**，复制原生
+  schema/description/output，只替换 `execute`；卸载即恢复原生。`composition_*` 别名
+  删除，`composition_task` 是唯一全局新增工具。`subagent`/`subagent_fork` 通过
+  `startActivation` 创建、挂入组合、用原生名标记并自动授权该边；`send_message` 对
+  原生后代优先走原生 relay（含冷恢复），live 跨树目标走组合 relay；`wait_agent`
+  复制原生 inbox 等待语义。scoped wrapper 与 fallback/升级已有单测；
 - 2026-11-17 事件：composed preset 曾因手工子集漏掉 `compaction` 组，导致 `/compact`
   缺失（desktop bundle 在 host 层禁用了该组）。现改为复制 `standard` 插件列表，仅去掉
   `tool-subagent-control`、`tool-subagent`、`tool-subagent-fork`，保留 planning、
@@ -726,7 +729,7 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 | 逐边授权 | 消息 `allowMessage`、中断 `allowInterrupt`；原生镜像边默认 deny；用户手动添加的连接默认 `allowMessage: true`、`allowInterrupt: false`，因此双向可发消息；按组合路径逐边检查 |
 | 改父授权 | 直接改父（含同组合 `add-node` 移动）把已有授权迁移到新边；没有旧授权时新边默认允许消息；detach 删除授权；跨组合移动的新父连接默认允许消息，子树内部边仍从 deny 开始 |
 | 组合标题 | 可编辑：`/set-title` + tab 头部内联编辑 |
-| 模型工具 | 三个静态 `composition_*` 工具；参数/返回对齐原生；原生工具 schema 不改；`mode: 'composed'` 已在 desktop profile 启用并验证，注册七个原生同名工具 + 三个不遮蔽的 `composition_*` 别名；仍需与真实原生请求比对工具顺序/前缀指纹 |
+| 模型工具 | 标准 profile 保留原生 delegation 插件；插件为每个 Agent 安装六个同名 scoped wrapper，复制原生 name/description/parameters/output，仅替换 execute；`composition_task` 全局新增；`composition_*` 别名已删除；禁用插件恢复原生；仍需真实标准会话核对工具列表/顺序/前缀 |
 | 消息 source | 复用原生 `{ kind: 'agent-message', form: 'relay', senderSessionId }` 与 relay 前缀 |
 | 敏感确认 | 仅跨工作区且调用方非完全权限时走 `approval.request`；`allowed-once` 才继续 |
 | Team | 插件自有任务板已实现（`tasks` 表、创建/开始/完成/重开/删除、revision 冲突）；不写 DSH Team；模型任务工具 `composition_task` 已实现 |

@@ -615,3 +615,39 @@ test('the Node handler rejects an oversized declared body before authentication'
     await new Promise((resolve) => server.close(resolve))
   }
 })
+
+test('the Node handler requires the token before reading an authorized-size body', async () => {
+  const api = createApi({ manager: {}, discovery: {}, token: TOKEN })
+  const server = http.createServer(createNodeHandler(api))
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/dsh-combinagents/create`, {
+      method: 'POST',
+      headers: {
+        host: `127.0.0.1:${port}`,
+        'content-type': 'application/json',
+      },
+      body: 'x'.repeat(100_000),
+    })
+    assert.equal(response.status, 401)
+  } finally {
+    server.closeAllConnections?.()
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
+test('rejects a non-JSON POST content type', async () => {
+  const { api } = makeHarness()
+  const response = await call(api, {
+    method: 'POST',
+    url: '/dsh-combinagents/create',
+    headers: {
+      [TOKEN_HEADER]: TOKEN,
+      'content-type': 'text/plain',
+    },
+    body: JSON.stringify({ rootSessionId: 's-a' }),
+  })
+  assert.equal(response.status, 415)
+  assert.equal(response.data.error.code, 'UNSUPPORTED_MEDIA_TYPE')
+})

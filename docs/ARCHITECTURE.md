@@ -4,8 +4,11 @@
 verified on 2026-11-17 in dark/light themes and at 420 px width. The Host
 bridge, durable domain write, root protection, shared membership resolution,
 busy-branch guard, native-subagent mirror, client slot occupants, and the
-rendered tab are verified. Composed mode's mirrored preset is on disk and takes
-effect for new sessions after the next Host restart.
+rendered tab are verified. The model surface is merged into the standard
+profile: a `tools/execute` interceptor replaces the execution path for six
+native tools while their model-facing contracts stay byte-for-byte native. The
+legacy composed preset remains on disk only for old sessions; `standard` is the
+default for new sessions.
 
 **Scope update:** the authoritative product brief is
 [`HANDOFF.md`](HANDOFF.md). It adds **snapshot/clone** (branch a team, bud a
@@ -31,9 +34,12 @@ Read [HANDOFF.md](HANDOFF.md) and [FEASIBILITY.md](FEASIBILITY.md) first. In
 particular:
 
 - Native re-parenting is not a plugin feature.
-- Overlay edges do not change `send_message` authority.
-- The overlay adds three static composition control tools; composed mode adds the
-  native-name surface. Native tool schemas stay unchanged.
+- Overlay edges do not by themselves change native `send_message` authority;
+  the merged execution interceptor for `send_message` / `interrupt_agent`
+  implements the composition bridge, gated by per-edge grants plus approval.
+- Six native names keep their native definitions; a `tools/execute` interceptor
+  supplies composition values. `composition_task` is the only globally
+  registered extra tool. Native tool schemas are unchanged.
 - External/one-shot agents can be visible leaves but cannot receive follow-ups.
 - Cache-friendly behavior is a design constraint, not an optimization detail.
 
@@ -112,6 +118,7 @@ Node
   label
   kind                     'session' | 'external'
   source                   'top-level' | 'subagent' | 'external' | 'unknown'
+  mode                     'continuable' | 'one-shot' | 'external' | 'unknown'
   provider | null          spawn / fork / acp / codex / ...
   nativeParentSessionId    DSH's immutable parent, for display
   cwd | null               workspace snapshot at attach time
@@ -169,6 +176,32 @@ The domain should use the same conservative pattern as `dsh-extraworkspace`:
 - open failure falls back to an in-memory store and shows a persistence warning;
 - never make graph availability depend on the storage backend;
 - keep records after a session is archived; they are small.
+
+### Cross-profile coherence
+
+The DSH domain runtime is authoritative **in memory per open domain**. Two Host
+profiles that share `$DSH_HOME/storages/combinagents` therefore hold separate
+snapshots; a write in one is invisible to the other until it reopens the
+domain. The plugin adds three coherence mechanisms:
+
+- **Revision marker:** after every durable composition or policy
+  write, the writer atomically replaces `storages/combinagents/.revision` with a
+  token. Every store read checks the marker; when it differs, the domain is
+  closed and reopened from the backend snapshot. The store generation changes,
+  and the manager rebuilds its session→composition membership index.
+- **Mutation lock:** composition mutations take a process-shared
+  `storages/combinagents/.mutation.lock` (stale after 30 s) around the
+  read-modify-write. The lock is re-entrant within one process via
+  `AsyncLocalStorage`, so nested per-root locks reuse the outer lock and
+  cross-profile moves serialize.
+- **UI convergence:** the tab re-fetches `/state` every 3 s while visible and
+  the header chip re-fetches `/summary` every 5 s. A poll never overwrites an
+  in-flight local mutation.
+
+The store still uses the DSH storage domain as the only data owner; the marker
+and lock are tiny sidecars under the same directory, not a parallel record
+format. A custom storage backend outside the default directory needs the
+`storageDir` option for these sidecars.
 
 Potential future tables:
 
@@ -280,8 +313,8 @@ Rules:
 - loopback peers only, with an exact loopback `Host` (`127.0.0.1:<port>`,
   `localhost:<port>`, or `[::1]:<port>`) and, when present, a same-origin
   loopback `Origin`; `/bootstrap` is authenticated by the same checks;
-- per-Host random token in `x-dsh-combinagents-token`;
-- no CORS headers;
+- per-Host random token in `x-dsh-combinagents-token`, compared with `timingSafeEqual`;
+- no CORS headers; JSON-only POST bodies; `nosniff`/same-origin resource policy;
 - validate every session id against the discovered corpus before attaching;
 - reject graph mutations with stable typed errors, not generic 500s;
 - `remove-node` rejects a node whose `sessionId` equals `rootSessionId` with
@@ -387,60 +420,55 @@ Interaction:
 
 ## 7. Model surface
 
-Three static composition control tools:
+The model surface is merged into the standard profile. The plugin keeps the
+native tool definitions intact and registers one `tools/execute` interceptor:
 
-| Tool | Parameters | Output |
-|---|---|---|
-| `composition_list_agents` | `{}` | `{ agents: [...] }` |
-| `composition_send_message` | `{ agent, message }` | `{ messageId }` |
-| `composition_interrupt_agent` | `{ agent }` | `{ accepted }` |
+- for `list_agents`, `send_message`, `interrupt_agent`, `subagent`,
+  `subagent_fork`, `wait_agent`, it returns `{ isError: false, value }` from the
+  composition handler instead of calling `next()`;
+- the native definition, schema, description, output renderer, presentation,
+  prompt identity/guidance, restrictions, concurrency metadata, and timeout are
+  unchanged;
+- the DSH pipeline validates the canonical value against the native output
+  schema and renders it through the native output declaration;
+- non-intercepted names call `next()` unchanged.
 
-- `agent` accepts a composition node id, session id, or unique label.
-- Native `send_message` / `interrupt_agent` / `list_agents` are untouched.
-- No system-prompt section and no runtime-context injection.
-- Tool definitions are static: composition membership and grants never change the
-  schema or description. The install is a one-time tool-prefix change.
-- Message delivery builds the native relay envelope:
-  `{ kind: 'agent-message', form: 'relay', senderSessionId }` and the
-  `Agent <name> sent a message:` prefix.
-- Per-edge grants are required along the composition path. Cross-workspace
-  delivery without a full-permission session calls `ctx.approval.request`; only
-  `allowed-once` proceeds.
-- Interrupt is allowed only from a composition ancestor to a descendant and uses
-  `subagents.interrupt(target, { kind: 'user' })` after the grant/approval gate.
-- Every delivered/denied/approval-denied action writes an audit row; graph state
-  is never stored in session events.
+`composition_task` is the only globally registered extra tool. The old
+`composition_*` aliases are removed. `list_subagent_models` and every other
+unique native tool are untouched.
 
-Composed mode replaces these names with the native tool names and copies the
-native descriptions; the overlay mode keeps the distinct names above.
-`Config.mode: 'composed'` registers six native-name tools plus the plugin-owned
-`composition_task`: the three control tools, `subagent`, `subagent_fork`,
-`wait_agent`, and the task board tool, plus unshadowed
-`composition_list_agents` / `composition_send_message` /
-`composition_interrupt_agent` aliases for roots on a native preset. `subagent` /
-`subagent_fork` call `ctx.subagents.startActivation` with the caller as parent,
-mirror the started child into the composition with its native name, and
-auto-grant the created edge (configurable with `autoGrantDelegatedEdges: false`).
-`send_message` prefers `ctx.subagents.sendMessage`
-for native descendants, so cold resume and the native relay source are reused;
-live cross-tree targets fall back to `followup`/`steer`. `wait_agent` mirrors the
-native caller-inbox wait. Composed mode also restores the native
-`subagent:identity` context and `tool:subagent` delegation guidance. Explicit
-child LLM selection is validated through the live LLM route and forwarded as
-child agent options. Composed mode is enabled in the desktop profile; the
-mirrored preset takes effect for new sessions after the next Host restart. Its
-agent preset mirrors the installed `standard` plugin list and omits only
-`tool-subagent-control`, `tool-subagent`, and `tool-subagent-fork`, so planning,
-compaction, workflow, skills, schedule, goals, office, and plugin-manager tools
-remain and `/compact` stays available; a hand-written subset once lost the
-compaction group and is recorded as the 2026-11-17 incident in
-[`COMPOSED-PROFILE.md`](COMPOSED-PROFILE.md). A clean headless profile also
-verified the real chain: tool list, subagent creation and attachment, wait,
-follow-up send with cold resume, second wait, and interrupt. The remaining
-parity work is comparing tool order and the prefix fingerprint against a live
-native request, enforcing the model-selection
-allowlist, and preventing `standard`/`ptc` sessions from shadowing the composed
-names.
+Semantics:
+
+- `list_agents` returns the native-shaped `{ name, status, description? }` array;
+  `name` is the composition label and `status` is `running` / `inactive`. Rows
+  carry `mode=<continuable|one-shot|external|unknown>` in `description`;
+  one-shot and external rows are omitted, matching native continuable listing.
+- `send_message` rejects a one-shot target (no follow-up), matching native
+  lifecycle; `interrupt_agent` may still interrupt a live one-shot target.
+- `send_message` / `interrupt_agent` resolve composition labels, node ids, or
+  session ids; the path must have the corresponding per-edge grant. Native-tree
+  targets still prefer the native relay. Live cross-tree targets use the
+  composition relay. Cross-workspace delivery without a full-permission caller
+  asks through `ctx.approval.request`; only `allowed-once` proceeds.
+- `subagent` / `subagent_fork` call `ctx.subagents.startActivation`, mirror the
+  started child with its native name, and auto-grant the delegation edge
+  (configurable with `autoGrantDelegatedEdges: false`). The native `agent_preset`
+  field is forwarded when the native schema exposes it; a plugin `agentPreset`
+  config can supply the deployment default.
+- `wait_agent` mirrors native caller-inbox wait semantics and de-duplicates
+  already-reported input within one root call.
+- `composition_task` lists/creates/updates the plugin-owned board; it never
+  writes DSH Team state.
+- No plugin prompt section is added; the native `subagent:identity` and
+  `tool:subagent` sections remain in place.
+- Tool definitions are static; composition membership and grants never change a
+  schema or description. Installation is an execution listener, not a global
+  tool-prefix change.
+
+The native delegation rows (`tool-subagent-control`, `tool-subagent`,
+`tool-subagent-fork`) must stay mounted. Do not use the legacy composed preset
+that removes them; it has no native definitions to intercept and only receives
+the plugin's static fallback definitions.
 
 ## 8. Cache-friendly constraints
 
@@ -570,7 +598,7 @@ Walking skeleton:
 - [x] clean up partial clones;
 - [x] never mutate the source tree;
 - [x] live GUI re-verification of the clone badge/details, a two-node clone, and
-      the 16-node mahjong clone; clone roots appear in the source workspace and
+      a larger multi-agent clone; clone roots appear in the source workspace and
       stay idle while cloned children are cataloged and saved;
 - [x] build wide trees depth-first so the Host's eight-active-child limit cannot
       be exceeded, and use `delivery: 'caller'` so disposing a cloned child does
@@ -617,18 +645,18 @@ the archived/cold-resume boundary and consider an audit viewer.
 6. Open conversation is offered for local session nodes (including persisted
    ones) and never writes to that session; external nodes are disabled.
 7. The UI clearly states that the overlay does not change native messaging.
-8. Overlay mode registers only the three static composition tools and no prompt
-   text. Composed mode additionally registers the native-name surface and
-   restores the native identity/delegation prompt sections. Native tool schemas
-   are unchanged.
+8. Standard mode keeps the native delegation plugins mounted; one
+   `tools/execute` interceptor replaces execution for six native names while
+   their schemas/descriptions/output/prompt identity/restrictions stay native;
+   `composition_task` is global. Removing the listener restores the native path.
 9. No session header, cwd, sandbox, approval, or permission-preset write occurs.
 10. Unit tests pass; the GUI is checked in light/dark themes and at narrow width.
 11. A DSH-side smoke test verifies the tab opens from the header button and the
     guide.
 
-Verified on 2026-11-18: criteria 1, 3-11 through the 128 unit tests and the real
+Verified on 2026-11-18: criteria 1, 3-11 through the 146 unit tests and the real
 GUI (dark/light/420 px). Criterion 2 was demonstrated by adding a
-mahjong-workspace session to a `dsh-combinagents` composition and by the rich
+a multi-agent workspace session to a `dsh-combinagents` composition and by the rich
 composition with 15 native subagent nodes; the cross-workspace node was removed
 afterward. The live profile had no discovered external child, so the picker's
 external-add click was not exercised; `/external` followed by `/add-external`

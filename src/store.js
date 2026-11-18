@@ -12,6 +12,12 @@
  * this assumption when the DSH storage contract changes.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { randomUUID } from 'node:crypto'
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 import { validateComposition } from './graph.js'
 
 /** Domain name owned by this plugin. */
@@ -197,6 +203,20 @@ export const COMPOSITION_DOMAIN_SPEC = {
 export function createStore(ctx, options = {}) {
   const log = options.logger ?? ctx.logger
   const tableNames = Object.keys(COMPOSITION_DOMAIN_SPEC.tables)
+  const storageDir = options.storageDir ?? (ctx.get?.('storage') === undefined
+    ? null
+    : join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'storages', COMPOSITION_DOMAIN_NAME))
+  const revisionPath = storageDir === null ? null : join(storageDir, '.revision')
+  let revision = null
+  let generation = 0
+  let reloading = null
+  let reloadPending = false
+  let writeDepth = 0
+  let mutationActive = false
+  let revisionDirty = false
+  let mutationTail = Promise.resolve()
+  const mutationScope = new AsyncLocalStorage()
+  let onReload
   /** @type {Map<string, Map<string, object>>} */
   const memory = new Map(tableNames.map((name) => [name, new Map()]))
   /** @type {null | {tables: Map<string, object>, close: Function}} */
@@ -214,7 +234,179 @@ export function createStore(ctx, options = {}) {
     log?.warn?.('dsh-combinagents: storage open failed', error)
   })
 
+  /**
+   * Read the cross-process revision marker. The marker is a tiny sidecar in
+   * the domain directory; it is not part of the domain data and is ignored by
+   * the storage backend. A missing marker means the domain predates this
+   * coherence path, not that there are no records.
+   * @returns {string|null} marker, or null when unavailable.
+   */
+  function readRevision() {
+    if (revisionPath === null) return null
+    try {
+      return readFileSync(revisionPath, 'utf8').trim() || null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Publish a new cross-process revision after a durable domain write.
+   * @returns {void}
+   */
+  function writeRevision() {
+    if (revisionPath === null) return
+    if (mutationActive) {
+      revisionDirty = true
+      return
+    }
+    publishRevision()
+  }
+
+  /**
+   * Publish the deferred revision at the end of one complete mutation. Readers
+   * in other profiles therefore reload a composition+policy pair, never a
+   * half-written intermediate snapshot.
+   * @returns {void}
+   */
+  function publishRevision() {
+    if (revisionPath === null) return
+    const token = `${Date.now().toString(36)}-${process.pid}-${randomUUID()}`
+    try {
+      mkdirSync(storageDir, { recursive: true })
+      const temporary = `${revisionPath}.${process.pid}.${randomUUID()}`
+      writeFileSync(temporary, token, 'utf8')
+      renameSync(temporary, revisionPath)
+      revision = token
+    } catch (error) {
+      log?.warn?.('dsh-combinagents: could not publish a storage revision', error)
+    }
+  }
+
+  /**
+   * Reload the domain when another process published a newer revision.
+   * The domain is reopened rather than patched so the storage-domain snapshot
+   * remains the single source of truth. Reads after this call see the new
+   * snapshot; manager membership is invalidated through `generation`.
+   * @returns {Promise<void>}
+   */
+  async function refresh(force = false) {
+    if (revisionPath === null || mode !== 'durable') return
+    if (!force && (writeDepth > 0 || mutationActive)) {
+      reloadPending = true
+      return
+    }
+    const disk = readRevision()
+    if (disk === null || disk === revision) return
+    if (reloading !== null) return reloading
+    reloading = (async () => {
+      const previous = opened
+      opened = null
+      if (previous !== null) await previous.close()
+      await open()
+      if (mode === 'durable') {
+        revision = readRevision()
+        generation += 1
+        taskIndex.loaded = false
+        taskIndex.byRoot.clear()
+        cloneIndex.loaded = false
+        cloneIndex.byRoot.clear()
+        onReload?.()
+      }
+    })().finally(() => { reloading = null })
+    return reloading
+  }
+
+  /**
+   * Serialize a composition mutation across Host processes that share the
+   * storage domain. The lock is re-entrant within one process: nested
+   * per-root locks reuse the outer global lock. Reads do not take it; they
+   * refresh from the revision marker instead.
+   * @param {() => Promise<unknown>} task - mutation body.
+   * @returns {Promise<unknown>} task result.
+   */
+  async function withMutationLock(task) {
+    if (storageDir === null) return task()
+    if (mutationScope.getStore() === true) return task()
+    const run = async () => {
+      await refresh()
+      mkdirSync(storageDir, { recursive: true })
+      const lockPath = join(storageDir, '.mutation.lock')
+      const deadline = Date.now() + 10_000
+      for (;;) {
+        try {
+          const fd = openSync(lockPath, 'wx')
+          try {
+            writeSync(fd, `${process.pid} ${Date.now()}`)
+          } finally {
+            closeSync(fd)
+          }
+          break
+        } catch (error) {
+          if (error?.code !== 'EEXIST') throw error
+          try {
+            if (Date.now() - statSync(lockPath).mtimeMs > 30_000) {
+              unlinkSync(lockPath)
+              continue
+            }
+          } catch {
+            // The owner may have released it between stat and unlink.
+          }
+          if (Date.now() > deadline) {
+            throw new Error('another DSH profile is changing the composition; retry')
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20))
+        }
+      }
+      mutationActive = true
+      try {
+        // Re-read after the lock: the previous owner may have written while we
+        // waited.
+        await refresh(true)
+        return await mutationScope.run(true, task)
+      } finally {
+        mutationActive = false
+        if (revisionDirty) {
+          revisionDirty = false
+          publishRevision()
+        }
+        try {
+          unlinkSync(lockPath)
+        } catch {
+          // already released by stale-lock recovery
+        }
+        if (reloadPending) {
+          reloadPending = false
+          void refresh()
+        }
+      }
+    }
+    const result = mutationTail.then(run, run)
+    mutationTail = result.then(() => undefined, () => undefined)
+    return result
+  }
+
+  /**
+   * Run one durable write without allowing a concurrent reload to close the
+   * table under it.
+   * @param {() => Promise<unknown>} task - write body.
+   * @returns {Promise<unknown>} body result.
+   */
+  async function durableWrite(task) {
+    writeDepth += 1
+    try {
+      return await task()
+    } finally {
+      writeDepth -= 1
+      if (writeDepth === 0 && reloadPending) {
+        reloadPending = false
+        void refresh()
+      }
+    }
+  }
+
   async function open() {
+    const observedRevision = readRevision()
     const service = ctx.get?.('storageDomain') ?? ctx.storageDomain
     if (service === undefined) {
       log?.warn?.('dsh-combinagents: storageDomain unavailable; using memory storage')
@@ -226,6 +418,9 @@ export function createStore(ctx, options = {}) {
       for (const name of tableNames) tables.set(name, domain.table(name))
       opened = { tables, close: () => domain.close() }
       mode = 'durable'
+      // Keep the marker observed before loadAll: if another Host writes during
+      // the open, the next refresh sees the newer marker and reloads again.
+      revision = observedRevision
       log?.info?.('dsh-combinagents: composition domain open')
     } catch (error) {
       log?.warn?.('dsh-combinagents: composition domain open failed; using memory storage', error)
@@ -365,11 +560,20 @@ export function createStore(ctx, options = {}) {
    */
   async function tableOf(name) {
     await ready
+    await refresh()
     return opened === null ? null : opened.tables.get(name) ?? null
   }
 
   return {
     ready,
+    refresh,
+    withMutationLock,
+    get generation() {
+      return generation
+    },
+    setOnReload(callback) {
+      onReload = typeof callback === 'function' ? callback : undefined
+    },
     get mode() {
       return mode
     },
@@ -381,7 +585,8 @@ export function createStore(ctx, options = {}) {
     async put(key, record) {
       const table = await tableOf(COMPOSITION_TABLE)
       if (table !== null) {
-        await table.put(key, record)
+        await durableWrite(() => table.put(key, record))
+        writeRevision()
         return
       }
       memory.get(COMPOSITION_TABLE).set(key, record)
@@ -389,7 +594,8 @@ export function createStore(ctx, options = {}) {
     async delete(key) {
       const table = await tableOf(COMPOSITION_TABLE)
       if (table !== null) {
-        await table.delete(key)
+        await durableWrite(() => table.delete(key))
+        writeRevision()
         return
       }
       memory.get(COMPOSITION_TABLE).delete(key)
@@ -407,7 +613,8 @@ export function createStore(ctx, options = {}) {
     async putPolicy(rootSessionId, record) {
       const table = await tableOf(POLICY_TABLE)
       if (table !== null) {
-        await table.put(rootSessionId, record)
+        await durableWrite(() => table.put(rootSessionId, record))
+        writeRevision()
         return
       }
       memory.get(POLICY_TABLE).set(rootSessionId, record)
@@ -415,7 +622,8 @@ export function createStore(ctx, options = {}) {
     async deletePolicy(rootSessionId) {
       const table = await tableOf(POLICY_TABLE)
       if (table !== null) {
-        await table.delete(rootSessionId)
+        await durableWrite(() => table.delete(rootSessionId))
+        writeRevision()
         return
       }
       memory.get(POLICY_TABLE).delete(rootSessionId)
@@ -451,7 +659,7 @@ export function createStore(ctx, options = {}) {
     async putTask(taskId, record) {
       const table = await tableOf(TASK_TABLE)
       if (table !== null) {
-        await table.put(taskId, record)
+        await durableWrite(() => table.put(taskId, record))
       } else {
         memory.get(TASK_TABLE).set(taskId, record)
       }
@@ -462,7 +670,7 @@ export function createStore(ctx, options = {}) {
       const table = await tableOf(TASK_TABLE)
       const previous = table !== null ? table.get(taskId) : memory.get(TASK_TABLE).get(taskId)
       if (table !== null) {
-        await table.delete(taskId)
+        await durableWrite(() => table.delete(taskId))
       } else {
         memory.get(TASK_TABLE).delete(taskId)
       }
@@ -486,7 +694,7 @@ export function createStore(ctx, options = {}) {
     async putClone(cloneId, record) {
       const table = await tableOf(CLONE_TABLE)
       if (table !== null) {
-        await table.put(cloneId, record)
+        await durableWrite(() => table.put(cloneId, record))
       } else {
         memory.get(CLONE_TABLE).set(cloneId, record)
       }
@@ -496,7 +704,7 @@ export function createStore(ctx, options = {}) {
       const table = await tableOf(CLONE_TABLE)
       const previous = table !== null ? table.get(cloneId) : memory.get(CLONE_TABLE).get(cloneId)
       if (table !== null) {
-        await table.delete(cloneId)
+        await durableWrite(() => table.delete(cloneId))
       } else {
         memory.get(CLONE_TABLE).delete(cloneId)
       }

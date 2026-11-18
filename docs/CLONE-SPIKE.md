@@ -116,7 +116,7 @@ findings they produced are kept below; do not reintroduce the route.
 
 ## 5. Live Host results (2026-11-17)
 
-Source pair: `session-0a6fe925...` (root) and `8f4b1535...` (native child).
+Source pair: `<source-root-session>` (root) and `<native-child-session>` (native child).
 
 - clone root: seeded, `cwd` preserved, permission `workspace-write`, source unchanged;
 - clone child: `parentSession` points at the clone root, `origin: subagent`,
@@ -147,21 +147,21 @@ with explicit permission events.
 
 The product routes `/clone-tree` and `/bud` replaced the debug route.
 
-- Two-node source `session-0a6fe925...`: clone root `session-448e8a4e...` was
+- Two-node source `<source-root-session>`: clone root `<clone-root-session>` was
   live, retained `workspace-write`, and appeared in the source workspace; its
-  cloned child `session-9f3cac9c...` was cataloged, `live: false`,
+  cloned child `<cloned-child-session>` was cataloged, `live: false`,
   `persisted: true`, and pointed at the clone root. The clone root log ended at
   the inherited `turn/end`, with only the new `subagent/catalog` appended; no
   new turn started.
 - The copied task `Clone task acceptance` reappeared on the clone root's board
   as `pending`, owned by the cloned root node, and was visible in the GUI.
-- The 16-node mahjong composition cloned in about 10 seconds: root
-  `session-27534c3a...`, 15 cloned children, 15 edges, zero external nodes, and
+- A larger multi-agent composition cloned in about 10 seconds: root
+  `<clone-root-session>`, 15 cloned children, 15 edges, zero external nodes, and
   15 catalog entries. All 15 children were `live: false`, `persisted: true`.
   The source composition still had 16 nodes/15 edges and no clone markers.
 - `workspaceRegistry.attachSession` adds the clone root to the workspace matched
   by the source's session membership or, when that membership is absent, by the
-  source cwd. The 16-node clone appeared under the `mahjong` workspace.
+  source cwd. The 16-node clone appeared under the source workspace.
 - The Host enforces **8 active children per parent**. Building all children live
   first failed on child 9 with `subagent limit reached (active child limit: 8)`.
   The adapter now builds depth-first and disposes each child after its subtree,
@@ -178,7 +178,7 @@ Permission preservation was checked with an explicit child policy: cloned
 children in the 16-node tree carry `sandbox/mode: workspace-write` and
 `approval/policy: never` with `source: delegation` in their copied prefix,
 matching their source children; a bud of the same source child
-(`session-b4b55f34...`) reported `permissionPreset: custom` and
+(`<source-session>`) reported `permissionPreset: custom` and
 `approvalPolicy: never`. Still open: the canonical request-prefix fingerprint.
 
 ## 7. Risks / open items

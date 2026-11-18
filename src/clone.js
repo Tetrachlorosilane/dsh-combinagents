@@ -108,6 +108,7 @@ export function planClone({
     kind: node.kind,
     label: node.label,
     source: node.source,
+    mode: node.mode,
     provider: node.provider,
     nativeParentSessionId: node.nativeParentSessionId,
     cwd: node.cwd,

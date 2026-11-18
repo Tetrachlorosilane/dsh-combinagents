@@ -13,8 +13,8 @@ Phase 1 **walking skeleton** is implemented in this checkout:
   loopback token bridge (`src/http.js`), wired by `index.js`;
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
-- Graph: `src/graph.js` with 18 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (128 total);
+- Graph: `src/graph.js` with 19 tests, plus store, manager, discovery, HTTP,
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (146 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`) and
@@ -33,45 +33,42 @@ headers without folding titles (`/sessions` ~0.1 s cold, ~3 ms cached) and loads
 titles lazily through `/titles`; observations include cwd, sandbox mode,
 permission preset, agent preset, and native parent; the domain wrote
 `$DSH_HOME/storages/combinagents/compositions/<rootSessionId>.json` and audit
-rows under `storages/combinagents/audit`; three static composition control tools
-are registered and were exercised live (`composition_list_agents`, a delivered
-`composition_send_message`, an accepted `composition_interrupt_agent`). The
-plugin-owned task board (`tasks` table, `/tasks`, `/create-task`, `/update-task`,
-tab UI) is implemented with status transitions and a revision guard. A
-`mode: 'composed'` tool surface (native names/descriptions/parameter schemas) is
-implemented, the desktop profile has the composed overlay applied, and it is
-loaded after the Host restart. It includes `list_agents`, `send_message`,
-`interrupt_agent`, `subagent`, `subagent_fork`, `wait_agent`, and
-`composition_task`; `subagent`/`subagent_fork` start a native activation under the
-caller, mirror the child into the composition, label it with its native name,
-and auto-grant the delegation edge. Explicit child
-`provider`/`model`/`reasoning_effort` selection is validated through the live
-LLM route and forwarded as child agent options. `send_message` prefers the native relay for
-native descendants (including cold resume), falling back to `followup`/`steer`
-for live cross-tree nodes. Composed mode also restores the native
-`subagent:identity` context and `tool:subagent` delegation guidance. A clean
-headless profile verified the real chain: tool list, `subagent` → child node +
-edge, `wait_agent`, child reply, `send_message` follow-up with native resume,
-second `wait_agent`, and `interrupt_agent` + termination notice. The
-plugin-owned `composition_task` tool lists, creates, and updates board tasks
-(never DSH Team). Live desktop check: a composed child delivered three messages
-to the native-root session with correct composition-label attribution, and a
-native-preset root used the unshadowed `composition_send_message` alias to
-instruct the child, which replied `ROOT_ACK` through the composition. Audit rows
-recorded each delivery. Composed mode is configured in the desktop profile and
-was loaded after a Host restart; the current desktop session runs the composed
-preset, exposes the native-name tools plus the unshadowed `composition_*` aliases,
-and includes the compatibility prompt. The composed preset now mirrors the
-installed `standard` plugin list and omits only `tool-subagent-control`,
-`tool-subagent`, and `tool-subagent-fork`; it therefore also carries planning,
-compaction plus the tool-result pruner, workflow, skills, schedule, goals,
-office, and the plugin manager; `/compact` becomes available to new composed
-sessions after the pending Host restart. See
-[`docs/COMPOSED-PROFILE.md`](docs/COMPOSED-PROFILE.md), which also records the
-2026-11-17 missing-`/compact` incident (the old hand-written preset omitted the
-compaction group). Sessions using `standard`/`ptc` still mount the native tools
-and shadow the composed names. Tool ordering and the prefix fingerprint are
-covered by tests, not yet compared against a live native request. The real GUI
+rows under `storages/combinagents/audit`. The model tool surface is merged into
+the standard profile: one `tools/execute` interceptor replaces the execution
+path for six native names (`list_agents`, `send_message`, `interrupt_agent`,
+`subagent`, `subagent_fork`, `wait_agent`) by returning a canonical value for
+the existing native definition. The native name, description, parameter/output
+schemas, presentation callbacks, prompt identity/guidance, concurrency
+metadata, timeout, and restrictions remain untouched. The native delegation
+plugins remain mounted; do not use a preset that removes them. Disabling the
+plugin removes the listener and restores the native executor. The old
+`composition_*` aliases are removed; `composition_task` is the only globally
+registered extra tool. A legacy composed profile with no native rows gets
+static fallback definitions until it migrates. Cross-profile coherence uses a
+`.revision` marker beside the domain: after every durable composition/policy
+write the writer publishes a token, readers reopen the domain when
+the token changes, and manager membership is rebuilt from the new generation.
+Composition mutations also take a process-shared `.mutation.lock`; the UI polls
+`/state` and `/summary` while visible so another profile's edit converges
+without a Host restart. Nodes carry the native lifecycle `mode`
+(`continuable`/`one-shot`/`external`/`unknown`). `list_agents` omits one-shot and
+external rows and includes `mode=` in the remaining descriptions;
+`send_message` rejects one-shot follow-ups. The tab checkbox shows one-shot
+agents only when enabled and defaults off.
+Cross-tree `send_message` / `interrupt_agent` use per-edge grants and the
+approval gate; same-native-tree delivery prefers the native relay, and live
+cross-tree targets use the composition relay. `subagent` / `subagent_fork`
+start a native activation under the caller, mirror the child into the
+composition, label it with its native name, auto-grant the delegation edge, and
+forward the native `agent_preset` field when the schema exposes it. Explicit
+child `provider`/`model`/`reasoning_effort` selection is validated through the
+live LLM route and forwarded as child agent options. `composition_task` lists,
+creates, and updates board tasks (never DSH Team). The native
+`list_subagent_models` and other unique tools are untouched. The native prompt
+sections stay in place; the plugin adds no duplicate identity/delegation prompt.
+A clean headless profile verified the full chain in the earlier composed
+surface, and the interception/fallback behavior is covered by host/controls tests.
+The real GUI
 was visually verified on 2026-11-17 in dark and light themes and at 420 px
 width: both header entries open the tab, the count chip
 coexists with the shipped
@@ -84,7 +81,7 @@ Clone and bud execution is implemented: `src/clone.js` is the pure planner
 `src/clone-manager.js` is the host adapter (seeded root, depth-first native
 children, idle children, task copy, workspace attach, failure cleanup);
 `/clone-tree` and `/bud` are the product routes. Live verification on
-2026-11-18 cloned a two-node tree and the 16-node mahjong team: the clone root
+2026-11-18 cloned a two-node tree and a larger multi-agent team: the clone root
 appears in the source workspace, 15 children are cataloged and saved, the clone
 root stays idle (no new turn), the source composition is unchanged, and the
 copied task owner is remapped. The GUI shows the clone badge/details and the
@@ -118,9 +115,9 @@ Hard invariants:
 - Never append or rewrite `subagent/catalog`.
 - Never call `workingDirectory.set`, `permissionPresets.set`,
   `sandboxPolicy.registerWritableRoot`, or ACL code from a graph mutation.
-- Never route messages across native subagent trees through the native
-  `send_message` tool. Cross-tree delivery is only the composition control tool,
-  gated by per-edge grants and the approval rule below.
+- Cross-tree delivery uses the composition-aware same-name `send_message` /
+  `interrupt_agent` execution interceptors, gated by per-edge grants and the
+  approval rule below. Do not bypass them with an unshadowed native tool.
 - Do not add prompt sections or dynamic tool descriptions. Composition control
   and delegation tools are static; native tool schemas stay unchanged.
 - Never delete a DSH session because a graph node was removed.
@@ -176,13 +173,14 @@ src/clone.js              Pure clone/bud planner: whole-root tree, markers,
                           task-copy owner mapping
 src/clone-manager.js      Whole-tree clone/bud adapter: seeded root, depth-first
                           children, idle children, task copy, failure cleanup
-src/store.js              DSH storage-domain adapter + memory fallback
+src/store.js              DSH storage-domain adapter + memory fallback,
+                          revision reload, cross-profile mutation lock
                           (compositions/policies/audit/audit_archive/tasks/clones)
 src/discovery.js          Live/persisted session discovery and observations
 src/manager.js            Serialized mutations, grants, path authorization
 src/http.js               Loopback, token-authenticated JSON bridge
-src/controls.js           Composition tools (overlay 3, composed 10)
-tests/graph.test.mjs      Graph tests (18)
+src/controls.js           Execution interception (6) + composition_task
+tests/graph.test.mjs      Graph tests (19)
 tests/clone.test.mjs      Clone/bud plan tests
 tests/clone-manager.test.mjs  Clone/bud adapter tests
 tests/store.test.mjs      Domain adapter, fallback, record schema
@@ -190,7 +188,7 @@ tests/manager.test.mjs    Creation, serialization, root protection
 tests/discovery.test.mjs  Read-only discovery and observations
 tests/http.test.mjs       Token, routes, error mapping
 tests/client.test.mjs     Client registration and locale parity
-tests/controls.test.mjs   Relay source, approval, interrupt, composed delegation/wait
+tests/controls.test.mjs   Execution interception, relay, approval, interrupt, delegation/wait
 tests/host.test.mjs       Host wiring and bridge registration
 tests/bundle.test.mjs     Manifest, patch, and referenced-file shape
 tests/perf.test.mjs       Summary/state cache and route budget regressions
@@ -200,14 +198,17 @@ docs/HANDOFF.md           Authoritative product requirements, clone/bridge/bud l
                           cache rules, original-project UI and compatibility notes
 docs/FEASIBILITY.md       DSH source review, options, verdicts
 docs/ARCHITECTURE.md      Phase-1 design, storage, HTTP, UI, acceptance criteria
-docs/COMPOSED-PROFILE.md  How to enable composed mode without duplicate tools
+docs/COMPOSED-PROFILE.md  Standard-mode execution interception and migration
 docs/CLONE-SPIKE.md       DSH seed/catalog/permission findings for clone/bud
 package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
 
-Remaining work: compare composed tool order and the prefix
-fingerprint against a live native request; stop `standard`/`ptc` sessions from
-shadowing the composed names; keep large-session tab latency under observation.
+Remaining work: verify the execution interception, the six native definitions,
+and native-path restoration in a live standard session; compare tool order and
+the prefix fingerprint with the native request; keep large-session tab latency
+under observation. The legacy composed preset is no longer the default; do not
+use it for new sessions because it removes the native definitions the interceptor
+relies on.
 Clone/bud live verification and the temporary `/clone-spike` removal are
 complete (2026-11-18). The 2026-11-18 audit fixed P0 SEC-1 (Host/Origin), SEC-2
 (one-composition membership), SEC-4 (locked/compensated move), plus P1 SEC-3
@@ -220,11 +221,18 @@ ghost rows after a root move, DSH model-selection-policy enforcement in composed
 `subagent`, `wait_agent` reported-input de-duplication and unload lifetime,
 `isConcurrencySafe` for `subagent`/`subagent_fork`/`list_agents`, running-clone
 eviction protection, truthful cached native counts in `/summary`, early
-Host/Origin and oversized-body rejection in the Node adapter, and audit
-rotation to an `audit_archive` table. Remaining audit items: SEC-5..SEC-12,
-R-7/R-8, X-10 (agent_preset/provider capability), X-12 (workspace rollback,
-storageDomain hard inject, DSH version pin) and X-14 (cold title / picker
-cap), plus optional cold-title/seed-streaming improvements. Decisions
+Host/Origin/token and oversized-body rejection in the Node adapter, audit
+rotation to an `audit_archive` table, same-cwd sandbox/permission/approval
+comparison for cross-workspace messages, native-relay error propagation,
+relay-label sanitization, workspace detach on failed clone, moving the
+`autoAttach` title retry outside the root lock, and a picker truncation hint.
+Remaining audit items: SEC-6 (default bidirectional grant, product decision),
+SEC-8 rate limiting, SEC-11 (loopback/proxy trust), SEC-12 (clone permission
+drift), X-10 (agent_preset/provider capability), X-12 (storageDomain hard
+inject, DSH version pin) and X-14 (cold title / `/state` cold), plus optional
+cold-title/seed-streaming improvements. The composed profile now documents the
+native `@deepseek-ai/dsh-tool-subagent/model-selection-settings` row; the
+installed profile must mount it and opt in before non-parent routes work. Decisions
 (2026-11-18): a connection the user adds manually defaults to bidirectional
 messaging (`allowMessage: true`, `allowInterrupt: false`); direct reparenting
 migrates an existing grant, or defaults the replacement edge to messaging when
@@ -300,7 +308,7 @@ registration, and the rendered GUI are verified. Completed on 2026-11-17:
   (`setParent` and same-composition `addNode`), covered by manager tests;
 - composition title editing through `/set-title` and the tab header, covered by
   manager/HTTP tests and exercised live after the Host restart;
-- direct reparenting grant migration exercised live on the B512 composition
+- direct reparenting grant migration exercised live on a sample composition
   (the edge id changed, `allowMessage`/`allowInterrupt` stayed true/false);
 - external placeholder rendering (collapsed, provider/native parent, no open
   conversation); added through `/add-external` because this profile had no
@@ -313,9 +321,10 @@ registration, and the rendered GUI are verified. Completed on 2026-11-17:
 - dark and light themes and 420 px width (no horizontal overflow; action buttons
   no longer split mid-word).
 
-Still open: the composed-surface parity items listed above, the canonical
-request-prefix fingerprint, and large-session tab paint. Clone/bud GUI checks
-passed on 2026-11-18.
+Still open: live standard-session verification of the execution interception,
+the canonical request-prefix fingerprint, and large-session tab paint. The
+legacy composed preset remains on disk only for old sessions; new sessions use
+`standard`. Clone/bud GUI checks passed on 2026-11-18.
 
 
 ## 7. Known pitfalls
@@ -341,6 +350,10 @@ passed on 2026-11-18.
   is plugin-owned data, not a session log concern.
 - **Client bundles are cached in the page.** Refresh after `client.js` changes
   unless the client HMR watcher is running.
+- **Cross-profile domain snapshots are per process.** The `.revision` marker and
+  `.mutation.lock` sidecars make other Hosts reload and serialize writes; an old
+  Host or a custom storage directory without `storageDir` does not participate.
+  The UI converges on its 3 s/5 s poll, not synchronously.
 - **Manual connections default to messaging.** A user-added or reparented
   connection starts with `allowMessage: true` and `allowInterrupt: false`, so
   either endpoint can message the other without a first toggle. A migrated

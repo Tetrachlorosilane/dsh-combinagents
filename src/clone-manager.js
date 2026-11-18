@@ -184,8 +184,9 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
    */
   async function attachWorkspace(sourceSessionId, sourceHeader, newSessionId) {
     const workspace = await workspaceOf(sourceSessionId, sourceHeader)
-    if (workspace?.attachSession === undefined) return
+    if (workspace?.attachSession === undefined) return null
     await workspace.attachSession(newSessionId)
+    return workspace
   }
 
   /**
@@ -332,6 +333,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     }
     const pendingActivations = new Set()
     let root
+    let attachedWorkspace = null
     const cloneNodeBySource = new Map()
     const nodes = []
     const edges = []
@@ -365,7 +367,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
         }
       }
       rootHandles.set(root.id, root.handle)
-      await attachWorkspace(rootSourceNode.sourceSessionId, root.sourceHeader, root.id)
+      attachedWorkspace = await attachWorkspace(rootSourceNode.sourceSessionId, root.sourceHeader, root.id)
       cloneNodeBySource.set(rootSourceNode.sourceNodeId, {
         id: randomUUID(),
         sessionId: root.id,
@@ -377,6 +379,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
         label: rootSourceNode.label,
         kind: 'session',
         source: rootSourceNode.source,
+        mode: 'continuable',
         provider: rootSourceNode.provider,
         nativeParentSessionId: null,
         cwd: rootSourceNode.cwd ?? root.sourceHeader.cwd ?? null,
@@ -416,6 +419,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
               label: sourceNode.label,
               kind: 'external',
               source: 'external',
+              mode: sourceNode.mode ?? 'external',
               provider: sourceNode.provider,
               nativeParentSessionId: parentClone.sessionId ?? null,
               cwd: null,
@@ -443,6 +447,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
             label: sourceNode.label,
             kind: 'session',
             source: sourceNode.source,
+            mode: 'continuable',
             provider: sourceNode.provider,
             nativeParentSessionId: parentClone.sessionId ?? null,
             cwd: sourceNode.cwd ?? child.sourceHeader.cwd ?? null,
@@ -551,6 +556,11 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
       }
       if (root !== undefined) {
         rootHandles.delete(root.id)
+        try {
+          await attachedWorkspace?.detachSession?.(root.id)
+        } catch (error) {
+          ctx.logger?.warn?.('dsh-combinagents: could not detach a failed clone from its workspace', error)
+        }
         try {
           await root.handle.dispose()
         } catch {}

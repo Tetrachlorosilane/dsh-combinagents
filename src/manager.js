@@ -62,6 +62,7 @@ function nodeFromSummary(summary) {
     label: labelOf(summary.title) ?? summary.sessionId,
     kind: 'session',
     source: summary.source,
+    mode: summary.mode ?? (summary.source === 'subagent' ? 'unknown' : 'continuable'),
     provider: null,
     nativeParentSessionId: summary.nativeParentSessionId,
     cwd: summary.cwd,
@@ -88,6 +89,7 @@ export function createManager({
   let mergeTail = Promise.resolve()
   /** @type {Map<string, string>|null} session id -> owning root session id */
   let membership = null
+  let membershipGeneration = -1
 
   /**
    * @param {string} sessionId - live session id.
@@ -109,7 +111,10 @@ export function createManager({
    * @returns {Promise<Map<string, string>>}
    */
   async function ensureMembership() {
-    if (membership !== null) return membership
+    await store.refresh?.()
+    if (membership !== null && membershipGeneration === (store.generation ?? 0)) return membership
+    membership = null
+    const generationAtStart = store.generation ?? 0
     const map = new Map()
     for (const [rootSessionId, record] of await store.list()) {
       const nodes = record?.composition?.nodes
@@ -132,6 +137,11 @@ export function createManager({
       }
     }
     membership = map
+    membershipGeneration = generationAtStart
+    if ((store.generation ?? 0) !== generationAtStart) {
+      membership = null
+      return ensureMembership()
+    }
     return map
   }
 
@@ -194,8 +204,9 @@ export function createManager({
    * @param {string} sessionId - member session.
    * @returns {Promise<{rootSessionId: string, record: object}|null>}
    */
-  async function resolveSession(sessionId) {
+  async function resolveSession(sessionId, retry = 0) {
     if (typeof sessionId !== 'string' || sessionId.length === 0) return null
+    const generation = store.generation ?? 0
     const map = await ensureMembership()
     let current = sessionId
     const seen = new Set()
@@ -205,6 +216,9 @@ export function createManager({
       const rootSessionId = map.get(current)
       if (rootSessionId !== undefined) {
         const record = await store.get(rootSessionId)
+        if ((store.generation ?? 0) !== generation && retry < 2) {
+          return resolveSession(sessionId, retry + 1)
+        }
         if (record === undefined) {
           map.delete(current)
           return null
@@ -253,7 +267,8 @@ export function createManager({
    */
   function withLock(key, task) {
     const previous = tails.get(key) ?? Promise.resolve()
-    const result = previous.then(task, task)
+    const run = () => store.withMutationLock === undefined ? task() : store.withMutationLock(task)
+    const result = previous.then(run, run)
     const tail = result.then(() => undefined, () => undefined)
     tails.set(key, tail)
     void tail.then(() => {
@@ -986,6 +1001,7 @@ export function createManager({
         label,
         kind: 'external',
         source: 'external',
+        mode: 'external',
         provider: textOf(input.provider, 80),
         nativeParentSessionId: textOf(input.nativeParentSessionId, 128),
         cwd: null,
@@ -1070,6 +1086,17 @@ export function createManager({
     if (typeof parentSessionId !== 'string' || typeof info?.childId !== 'string') return null
     const owner = await resolveSession(parentSessionId)
     if (owner === null) return null
+    // The start event can precede the child's durable title projection. Read
+    // (and retry) outside the composition lock so a burst of starts does not
+    // serialize 150 ms waits behind one root.
+    let preparedSummary = null
+    if (info.local === true) {
+      preparedSummary = await discovery.describe(info.childId)
+      if (preparedSummary === null) {
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        preparedSummary = await discovery.describe(info.childId)
+      }
+    }
     return withLock(owner.rootSessionId, async () => {
       const record = await requireRecord(owner.rootSessionId)
       const parent = record.composition.nodes.find((node) => node.sessionId === parentSessionId)
@@ -1095,15 +1122,9 @@ export function createManager({
       }
       let node
       if (info.local === true) {
-        let summary = await discovery.describe(info.childId)
-        if (summary === null) {
-          // The subagent/start event can precede the child's durable title
-          // projection; retry once after the session publishes.
-          await new Promise((resolve) => setTimeout(resolve, 150))
-          summary = await discovery.describe(info.childId)
-        }
+        const summary = preparedSummary
         if (summary !== null) {
-          node = nodeFromSummary(summary)
+          node = { ...nodeFromSummary(summary), mode: 'continuable' }
           if (typeof info.label === 'string' && info.label.length > 0) {
             node = { ...node, label: info.label }
           }
@@ -1115,6 +1136,7 @@ export function createManager({
             label: info.label,
             kind: 'session',
             source: 'subagent',
+            mode: 'continuable',
             provider: textOf(info.provider, 80),
             nativeParentSessionId: textOf(parentSessionId, 128),
             cwd: textOf(info.cwd, 1024),
@@ -1129,6 +1151,7 @@ export function createManager({
           label: textOf(info.provider, 120) ?? 'External subagent',
           kind: 'external',
           source: 'external',
+          mode: 'external',
           provider: textOf(info.provider, 80),
           nativeParentSessionId: textOf(parentSessionId, 128),
           cwd: null,
@@ -1170,6 +1193,7 @@ export function createManager({
           label: textOf(entry.name ?? entry.label, 120) ?? entry.id,
           kind: 'external',
           source: 'external',
+          mode: entry.mode,
           provider: textOf(entry.mode, 80),
           nativeParentSessionId: textOf(entry.parentId, 128),
           cwd: null,
@@ -1178,13 +1202,14 @@ export function createManager({
       } else {
         const summary = await discovery.describe(entry.id)
         if (summary !== null) {
-          nodeInput = nodeFromSummary(summary)
+          nodeInput = { ...nodeFromSummary(summary), mode: entry.mode }
         } else if (entry.mode === 'one-shot') {
           nodeInput = {
             sessionId: null,
             label: textOf(entry.name ?? entry.label, 120) ?? entry.id,
             kind: 'external',
             source: 'external',
+            mode: entry.mode,
             provider: textOf(entry.mode, 80),
             nativeParentSessionId: textOf(entry.parentId, 128),
             cwd: null,
@@ -1199,7 +1224,17 @@ export function createManager({
       let composition = record.composition
       let changed = false
       for (const { entry, nodeInput } of prepared) {
-        if (composition.nodes.some((node) => node.sessionId === entry.id)) continue
+        const existing = composition.nodes.find((node) => node.sessionId === entry.id)
+        if (existing !== undefined) {
+          if (existing.mode !== entry.mode) {
+            composition = {
+              ...composition,
+              nodes: composition.nodes.map((node) => node.id === existing.id ? { ...node, mode: entry.mode } : node),
+            }
+            changed = true
+          }
+          continue
+        }
         const childOwner = await directOwner(entry.id)
         if (childOwner !== null) {
           if (childOwner !== root) {

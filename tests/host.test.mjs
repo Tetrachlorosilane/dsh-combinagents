@@ -50,7 +50,6 @@ test('host entry registers the composition bridge and injects its hard services'
       return dispose
     },
     on(event, listener) {
-      assert.equal(event, 'subagent/start')
       assert.equal(typeof listener, 'function')
       return () => {}
     },
@@ -78,6 +77,7 @@ test('host entry registers the composition bridge and injects its hard services'
               return () => {}
             },
           },
+          agents: { list: () => [] },
         }
         const dispose = callback(scope)
         effects.push(dispose)
@@ -91,11 +91,7 @@ test('host entry registers the composition bridge and injects its hard services'
   await new Promise((resolve) => setTimeout(resolve, 0))
 
   assert.equal(routes.length, 1)
-  assert.deepEqual(tools.map((tool) => tool.name).sort(), [
-    'composition_interrupt_agent',
-    'composition_list_agents',
-    'composition_send_message',
-  ])
+  assert.deepEqual(tools.map((tool) => tool.name), ['composition_task'])
   assert.equal(routes[0].kind, 'prefix')
   assert.equal(routes[0].path, '/dsh-combinagents')
   assert.equal(typeof routes[0].handler, 'function')
@@ -105,15 +101,39 @@ test('host entry registers the composition bridge and injects its hard services'
   }
 })
 
-test('composed config mounts the native-name tool surface', async () => {
-  const tools = []
-  const table = fakeTable()
+test('host installs execution interception without duplicate tool registrations', async () => {
+  const globalTools = []
+  const scopedTools = []
+  const listeners = new Map()
+  const native = Object.fromEntries(['list_agents', 'send_message', 'interrupt_agent', 'subagent', 'subagent_fork', 'wait_agent'].map((name) => [name, {
+    name,
+    description: `native ${name}`,
+    parameters: {},
+    output: { schema: {}, render: () => [] },
+    async execute() { return null },
+  }]))
+  const agent = {
+    id: 's-a',
+    ctx: {
+      tools: {
+        get(name) { return native[name] },
+        register(definition) {
+          scopedTools.push(definition)
+          return () => {
+            const index = scopedTools.indexOf(definition)
+            if (index !== -1) scopedTools.splice(index, 1)
+          }
+        },
+      },
+    },
+  }
   const ctx = {
     logger: { info() {}, warn() {} },
     get(service) {
       if (service === 'storageDomain') {
         return {
           async open() {
+            const table = fakeTable()
             return { table: () => table, close: async () => {} }
           },
         }
@@ -122,32 +142,28 @@ test('composed config mounts the native-name tool surface', async () => {
       return undefined
     },
     effect(callback) {
-      return callback()
-    },
-    on() {
+      callback()
       return () => {}
+    },
+    on(event, listener) {
+      listeners.set(event, listener)
+      return () => listeners.delete(event)
     },
     inject(deps, callback) {
       if (deps[0] === 'webServer') return callback({ logger: { info() {}, warn() {} }, webServer: { register() { return () => {} } } })
-      if (deps[0] === 'tools') {
+      if (deps[0] === 'tools' && deps.includes('agents')) {
         return callback({
           logger: { info() {}, warn() {} },
-          tools: {
-            register(definition) {
-              tools.push(definition)
-              return () => {}
-            },
-          },
+          tools: { register(definition) { globalTools.push(definition.name); return () => {} } },
+          agents: { list: () => [agent] },
         })
       }
       throw new Error(`unexpected inject: ${deps.join(',')}`)
     },
   }
-
-  apply(ctx, { mode: 'composed' })
+  apply(ctx)
   await new Promise((resolve) => setTimeout(resolve, 0))
-  assert.deepEqual(tools.map((tool) => tool.name).sort(), [
-    'composition_interrupt_agent', 'composition_list_agents', 'composition_send_message', 'composition_task',
-    'interrupt_agent', 'list_agents', 'send_message', 'subagent', 'subagent_fork', 'wait_agent',
-  ])
+  assert.deepEqual(globalTools, ['composition_task'])
+  assert.deepEqual(scopedTools, [])
+  assert.equal(typeof listeners.get('tools/execute'), 'function')
 })

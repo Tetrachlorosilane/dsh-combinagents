@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { createComposition } from '../src/graph.js'
@@ -64,6 +67,56 @@ test('reads and writes through the storage domain', async () => {
   assert.deepEqual([...(await store.list())], [['s-root', record]])
   await store.close()
   assert.equal(closed, true)
+})
+
+test('reloads the domain when another process publishes a revision', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-combinagents-store-'))
+  const disk = new Map()
+  let opens = 0
+  const service = {
+    async open() {
+      opens += 1
+      const snapshot = new Map(disk)
+      const tables = new Map(Object.keys(COMPOSITION_DOMAIN_SPEC.tables).map((name) => [name, snapshot]))
+      return {
+        table(name) {
+          if (!tables.has(name)) tables.set(name, new Map())
+          return {
+            get: (key) => tables.get(name).get(key),
+            entries: () => tables.get(name).entries(),
+            async put(key, value) {
+              tables.get(name).set(key, value)
+              disk.set(key, value)
+            },
+            async delete(key) {
+              tables.get(name).delete(key)
+              return disk.delete(key)
+            },
+          }
+        },
+        async close() {},
+      }
+    },
+  }
+  try {
+    const store = createStore(fakeContext(service), { storageDir: root })
+    await store.ready
+    const first = { composition: createComposition({ title: 'First' }), updatedAt: 1 }
+    await store.put('s-root', first)
+    assert.equal((await store.get('s-root')).composition.title, 'First')
+    const before = store.generation
+
+    const external = { composition: createComposition({ title: 'External' }), updatedAt: 2 }
+    disk.set('s-root', external)
+    writeFileSync(join(root, '.revision'), 'external-token', 'utf8')
+    await store.refresh()
+    assert.equal(store.generation, before + 1)
+    assert.equal(opens, 2)
+    assert.equal((await store.get('s-root')).composition.title, 'External')
+    await store.close()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('falls back to memory when the domain cannot open', async () => {

@@ -154,6 +154,10 @@ export function createDiscovery(ctx, options = {}) {
       title: typeof title === 'string' && title.length > 0 ? title : header.id,
       cwd: cwdOf(header, live),
       source: sourceOf(header),
+      // The header carries no catalog mode. A top-level session is the native
+      // root (continuable); a subagent's exact mode comes from the native
+      // catalog walk and is filled by sync/auto-attach when available.
+      mode: sourceOf(header) === 'subagent' ? 'unknown' : 'continuable',
       nativeParentSessionId: header.parentSession ?? null,
       agentPreset: header.agentPreset ?? null,
       ...policyOf(live),
@@ -429,7 +433,9 @@ export function createDiscovery(ctx, options = {}) {
     }
     const stillMissing = unresolved.filter((sessionId) => result[sessionId] === undefined)
     if (stillMissing.length > 0 && stillMissing.length <= 20) {
-      const fallback = await Promise.all(stillMissing.map(async (sessionId) => [sessionId, await describe(sessionId)]))
+      // Observations need metadata, not a log-backed title. Do not fall back to
+      // the expensive title fold for a few stale nodes in /state.
+      const fallback = await Promise.all(stillMissing.map(async (sessionId) => [sessionId, await describeHeader(sessionId)]))
       for (const [sessionId, summary] of fallback) {
         if (summary !== null) result[sessionId] = summary
       }

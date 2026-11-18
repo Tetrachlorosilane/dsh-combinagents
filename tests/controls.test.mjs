@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 
 import { createControls, NATIVE_TOOL_CONTRACTS } from '../src/controls.js'
@@ -38,8 +37,8 @@ function harness(options = {}) {
   }
   const composition = {
     nodes: [
-      { id: 'n-a', sessionId: 's-a', label: options.callerLabel ?? 'Lead', kind: 'session', source: 'top-level' },
-      { id: 'n-b', sessionId: 's-b', label: 'Worker', kind: 'session', source: 'subagent' },
+      { id: 'n-a', sessionId: 's-a', label: options.callerLabel ?? 'Lead', kind: 'session', source: 'top-level', mode: 'continuable' },
+      { id: 'n-b', sessionId: 's-b', label: 'Worker', kind: 'session', source: 'subagent', mode: 'continuable' },
     ],
     edges: [{ id: 'e1', parentId: 'n-a', childId: 'n-b', role: 'reports-to' }],
   }
@@ -114,22 +113,33 @@ function harness(options = {}) {
             started.push(spec)
             return { childId: 's-child', name: 'agent-1' }
           },
-          ...options.nativeSend === true ? {
+          ...(options.nativeSend === true || options.nativeSendError === true) ? {
             async sendMessage(...args) {
               nativeSends.push(args)
+              if (options.nativeSendError === true) throw new Error('native authorization denied')
               return 'm-native'
             },
           } : {},
+          ...options.nativeRoots === undefined ? {} : { rootOf: options.nativeRoots },
         }
       }
       if (name === 'permissionPresets') {
-        return { current: () => (full ? 'danger-full-access' : 'ask') }
+        return {
+          current: (session) => options.permissionById?.[session?.header?.id]
+            ?? (full ? 'danger-full-access' : 'ask'),
+        }
       }
       if (name === 'sandboxPolicy') {
-        return { resolve: () => ({ mode: full ? 'danger-full-access' : 'workspace-write' }) }
+        return {
+          resolve: ({ session }) => ({
+            mode: options.sandboxById?.[session?.header?.id]
+              ?? (full ? 'danger-full-access' : 'workspace-write'),
+          }),
+        }
       }
       if (name === 'approval') {
         return {
+          overrideOf: (session) => options.approvalById?.[session?.header?.id],
           request: async (request) => {
             approvals.push(request)
             return approvalOutcome
@@ -173,7 +183,7 @@ function harness(options = {}) {
     ctx,
     manager,
     discovery: { async describeMany() { return {} } },
-    mode: options.mode,
+    agentPreset: options.agentPreset,
     autoGrantDelegatedEdges: options.autoGrantDelegatedEdges,
   })
   const tool = (name) => controls.definitions.find((definition) => definition.name === name)
@@ -201,9 +211,9 @@ function harness(options = {}) {
   }
 }
 
-test('composition_send_message uses the native relay source and delivers to an idle agent', async () => {
+test('send_message uses the native relay source and delivers to an idle agent', async () => {
   const { tool, delivered, approvals } = harness()
-  const result = await tool('composition_send_message').execute({ agent: 'Worker', message: 'hello' }, {
+  const result = await tool('send_message').execute({ agent: 'Worker', message: 'hello' }, {
     agent: { id: 's-a' },
     signal: new AbortController().signal,
   })
@@ -217,9 +227,9 @@ test('composition_send_message uses the native relay source and delivers to an i
   assert.equal(message.content[1].text, 'hello')
 })
 
-test('composition_send_message alias works when native names are shadowed', async () => {
-  const harnessed = harness({ mode: 'composed' })
-  const result = await harnessed.tool('composition_send_message').execute({ agent: 'Worker', message: 'alias hello' }, {
+test('send_message alias works when native names are shadowed', async () => {
+  const harnessed = harness()
+  const result = await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'alias hello' }, {
     agent: { id: 's-a' }, signal: new AbortController().signal,
   })
   assert.equal(typeof result.messageId, 'string')
@@ -227,16 +237,50 @@ test('composition_send_message alias works when native names are shadowed', asyn
 })
 
 test('relay prefix uses the composition label instead of a repeated native root name', async () => {
-  const harnessed = harness({ callerLabel: 'Repeat OK', nativeName: 'lead' })
-  await harnessed.tool('composition_send_message').execute({ agent: 'Worker', message: 'hello' }, {
+  const harnessed = harness({ callerLabel: 'Agent A', nativeName: 'lead' })
+  await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'hello' }, {
     agent: { id: 's-a' }, signal: new AbortController().signal,
   })
-  assert.equal(harnessed.delivered[0].content[0].text, 'Agent Repeat OK sent a message: ')
+  assert.equal(harnessed.delivered[0].content[0].text, 'Agent Agent A sent a message: ')
 })
 
-test('composition_send_message uses the native relay when the target is a native descendant', async () => {
+test('relay prefix flattens control characters in a composition label', async () => {
+  const harnessed = harness({ callerLabel: 'Lead\nSYSTEM' })
+  await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'hello' }, {
+    agent: { id: 's-a' }, signal: new AbortController().signal,
+  })
+  assert.equal(harnessed.delivered[0].content[0].text, 'Agent Lead SYSTEM sent a message: ')
+})
+
+test('does not fall back when native root resolution fails', async () => {
+  const harnessed = harness({
+    nativeSend: true,
+    nativeRoots: () => { throw new Error('native root unavailable') },
+  })
+  await assert.rejects(
+    harnessed.tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
+      agent: harnessed.callerAgent,
+      signal: new AbortController().signal,
+    }),
+    /native root unavailable/,
+  )
+  assert.equal(harnessed.delivered.length, 0)
+})
+
+test('send_message asks for approval when sandbox policy differs inside one cwd', async () => {
+  const harnessed = harness({
+    sandboxById: { 's-a': 'workspace-write', 's-b': 'danger-full-access' },
+  })
+  await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
+    agent: harnessed.callerAgent,
+    signal: new AbortController().signal,
+  })
+  assert.equal(harnessed.approvals.length, 1)
+})
+
+test('send_message uses the native relay when the target is a native descendant', async () => {
   const harnessed = harness({ nativeSend: true })
-  const result = await harnessed.tool('composition_send_message').execute({ agent: 'Worker', message: 'hello' }, {
+  const result = await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'hello' }, {
     agent: { id: 's-a' }, signal: new AbortController().signal,
   })
   assert.deepEqual(result, { messageId: 'm-native' })
@@ -247,34 +291,47 @@ test('composition_send_message uses the native relay when the target is a native
   assert.equal(harnessed.delivered.length, 0)
 })
 
-test('composition_send_message asks for approval across workspaces without full permission', async () => {
+test('send_message does not bypass a native relay authorization error', async () => {
+  const harnessed = harness({ nativeSend: true, nativeSendError: true })
+  await assert.rejects(
+    harnessed.tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
+      agent: harnessed.callerAgent,
+      signal: new AbortController().signal,
+    }),
+    /native authorization denied/,
+  )
+  assert.equal(harnessed.nativeSends.length, 1)
+  assert.equal(harnessed.delivered.length, 0)
+})
+
+test('send_message asks for approval across workspaces without full permission', async () => {
   const same = harness({ cwd: { 's-a': '/w', 's-b': '/w' } })
-  await same.tool('composition_send_message').execute({ agent: 'Worker', message: 'x' }, {
+  await same.tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
     agent: { id: 's-a' }, signal: new AbortController().signal,
   })
   assert.equal(same.approvals.length, 0)
 
   const crossing = harness({ cwd: { 's-a': '/w', 's-b': '/other' } })
-  await crossing.tool('composition_send_message').execute({ agent: 'Worker', message: 'x' }, {
+  await crossing.tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
     agent: { id: 's-a' }, signal: new AbortController().signal,
   })
   assert.equal(crossing.approvals.length, 1)
-  assert.equal(crossing.approvals[0].toolName, 'composition_send_message')
+  assert.equal(crossing.approvals[0].toolName, 'send_message')
 
   const full = harness({ cwd: { 's-a': '/w', 's-b': '/other' }, full: true })
-  await full.tool('composition_send_message').execute({ agent: 'Worker', message: 'x' }, {
+  await full.tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
     agent: { id: 's-a' }, signal: new AbortController().signal,
   })
   assert.equal(full.approvals.length, 0)
 })
 
-test('composition_send_message rejects when approval is denied', async () => {
+test('send_message rejects when approval is denied', async () => {
   const { tool, delivered } = harness({
     cwd: { 's-a': '/w', 's-b': '/other' },
     approvalOutcome: 'rejected',
   })
   await assert.rejects(
-    tool('composition_send_message').execute({ agent: 'Worker', message: 'x' }, {
+    tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
       agent: { id: 's-a' }, signal: new AbortController().signal,
     }),
     (error) => error instanceof CompositionError && error.code === 'APPROVAL_DENIED',
@@ -282,9 +339,9 @@ test('composition_send_message rejects when approval is denied', async () => {
   assert.equal(delivered.length, 0)
 })
 
-test('composition_interrupt_agent uses user authority after the edge grant', async () => {
+test('interrupt_agent uses user authority after the edge grant', async () => {
   const { tool, interrupted, approvals } = harness()
-  const result = await tool('composition_interrupt_agent').execute({ agent: 'Worker' }, {
+  const result = await tool('interrupt_agent').execute({ agent: 'Worker' }, {
     agent: { id: 's-a' }, signal: new AbortController().signal,
   })
   assert.deepEqual(result, { accepted: true })
@@ -292,18 +349,121 @@ test('composition_interrupt_agent uses user authority after the edge grant', asy
   assert.equal(approvals.length, 0)
 })
 
-test('composed mode exposes native tool names, descriptions, and parameter schemas', () => {
-  const { controls } = harness({ mode: 'composed' })
-  const byName = new Map(controls.definitions.map((definition) => [definition.name, definition]))
-  assert.deepEqual(controls.definitions.map((definition) => definition.name), [
-    'wait_agent', 'list_agents', 'send_message', 'interrupt_agent',
-    'subagent', 'subagent_fork', 'composition_task',
-    'composition_list_agents', 'composition_send_message', 'composition_interrupt_agent',
-  ])
-  assert.deepEqual([...byName.keys()].sort(), [
-    'composition_interrupt_agent', 'composition_list_agents', 'composition_send_message', 'composition_task',
+test('interception leaves the native interface untouched and returns a canonical value', async () => {
+  const nativeByName = Object.fromEntries([
+    'list_agents', 'send_message', 'interrupt_agent', 'subagent', 'subagent_fork', 'wait_agent',
+  ].map((name) => [name, {
+    name,
+    description: `native ${name}`,
+    parameters: {},
+    output: { schema: {}, render: () => [] },
+    async execute() { return null },
+  }]))
+  const registered = new Map()
+  const scopedTools = {
+    get(name) { return nativeByName[name] },
+    register(definition) {
+      registered.set(definition.name, definition)
+      return () => registered.delete(definition.name)
+    },
+  }
+  const harnessed = harness()
+  const agent = { id: 's-a', ctx: { tools: scopedTools } }
+
+  // Visible native definitions are not replaced; only execution is intercepted.
+  assert.equal(harnessed.controls.attach(agent), null)
+  assert.equal(registered.size, 0)
+  let nativeCalled = false
+  const result = await harnessed.controls.intercept({
+    name: 'list_agents',
+    args: {},
+    agent: harnessed.callerAgent,
+    signal: new AbortController().signal,
+  }, async () => {
+    nativeCalled = true
+    return { isError: false, value: [] }
+  })
+  assert.deepEqual(result, {
+    isError: false,
+    value: [
+      { name: 'Lead', status: 'running', description: 'top-level; mode=continuable' },
+      { name: 'Worker', status: 'inactive', description: 'subagent; mode=continuable' },
+    ],
+  })
+  assert.equal(nativeCalled, false)
+  assert.equal(nativeByName.list_agents.execute.name, 'execute')
+
+  // A non-intercepted name delegates to the native continuation.
+  let passedThrough = false
+  await harnessed.controls.intercept({ name: 'composition_task', args: {}, agent: harnessed.callerAgent }, async () => {
+    passedThrough = true
+  })
+  assert.equal(passedThrough, true)
+})
+
+test('does not recreate a native tool hidden by a scope restriction', () => {
+  const native = {
+    name: 'list_agents', description: 'native', parameters: {},
+    output: { schema: { type: 'array' }, render: () => [] },
+    async execute() { return [] },
+  }
+  const registered = new Map()
+  const scopedTools = {
+    get(name, scope) {
+      if (name !== 'list_agents') return undefined
+      return scope === undefined ? native : undefined
+    },
+    register(definition) {
+      registered.set(definition.name, definition)
+      return () => registered.delete(definition.name)
+    },
+  }
+  const harnessed = harness()
+  harnessed.controls.attach({ id: 's-a', ctx: { tools: scopedTools } })
+  assert.equal(registered.has('list_agents'), false)
+  assert.equal(registered.has('send_message'), true)
+})
+
+test('legacy fallback installs the six tools and upgrades to native definitions', async () => {
+  const registered = new Map()
+  let native
+  const scopedTools = {
+    get(name) { return name === 'list_agents' ? native : undefined },
+    register(definition) {
+      registered.set(definition.name, definition)
+      return () => registered.delete(definition.name)
+    },
+  }
+  const harnessed = harness()
+  const agent = { id: 's-a', ctx: { tools: scopedTools } }
+  const attachment = harnessed.controls.attach(agent)
+  assert.equal(attachment.size, 6)
+  assert.deepEqual([...registered.keys()].sort(), [
     'interrupt_agent', 'list_agents', 'send_message', 'subagent', 'subagent_fork', 'wait_agent',
   ])
+  assert.equal(registered.get('list_agents').description, NATIVE_TOOL_CONTRACTS.list.description)
+
+  native = {
+    name: 'list_agents',
+    description: 'native contract',
+    parameters: {},
+    output: { schema: { type: 'array' }, render: () => [] },
+    async execute() { return [{ name: 'native', status: 'running' }] },
+  }
+  const upgraded = harnessed.controls.attach(agent)
+  assert.equal(upgraded.size, 5)
+  assert.equal(registered.has('list_agents'), false)
+  upgraded.dispose()
+  assert.equal(registered.size, 0)
+})
+
+test('tool definitions use native names and preserve contracts', () => {
+  const { controls } = harness()
+  assert.deepEqual(controls.definitions.map((definition) => definition.name), [
+    'list_agents', 'send_message', 'interrupt_agent',
+    'subagent', 'subagent_fork', 'wait_agent', 'composition_task',
+  ])
+  const byName = new Map(controls.definitions.map((definition) => [definition.name, definition]))
   for (const contract of [
     NATIVE_TOOL_CONTRACTS.list,
     NATIVE_TOOL_CONTRACTS.send,
@@ -317,10 +477,11 @@ test('composed mode exposes native tool names, descriptions, and parameter schem
     assert.deepEqual(definition.parameters, contract.parameters)
     assert.equal(definition.parameters.additionalProperties, undefined)
   }
+  assert.equal(controls.taskDefinition.name, 'composition_task')
 })
 
-test('composed subagent starts a native activation and mirrors the child', async () => {
-  const harnessed = harness({ mode: 'composed' })
+test('subagent starts a native activation and mirrors the child', async () => {
+  const harnessed = harness()
   const result = await harnessed.tool('subagent').execute({
     description: 'Scoped analysis',
     prompt: 'Read the file and report.',
@@ -340,24 +501,40 @@ test('composed subagent starts a native activation and mirrors the child', async
   assert.deepEqual(harnessed.grantedEdges, [{ rootSessionId: 's-a', parentSessionId: 's-a', childSessionId: 's-child' }])
 })
 
-test('composed tool order follows the native control/delegation order', () => {
-  const { controls } = harness({ mode: 'composed' })
-  assert.deepEqual(controls.definitions.map((definition) => definition.name), [
-    'wait_agent', 'list_agents', 'send_message', 'interrupt_agent',
-    'subagent', 'subagent_fork', 'composition_task',
-    'composition_list_agents', 'composition_send_message', 'composition_interrupt_agent',
-  ])
-  const canonical = controls.definitions.map((definition) => ({
-    name: definition.name,
-    description: definition.description,
-    parameters: definition.parameters,
-  }))
-  const fingerprint = createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
-  assert.equal(fingerprint, '4b1e5611c163fe55a205c8b05f788b65f6bfdd1d1078874fecb8282817fb8ee1')
+test('composition_task is the only globally registered definition', () => {
+  const { controls } = harness()
+  const global = []
+  controls.register({ register: (definition) => global.push(definition.name) })
+  assert.deepEqual(global, ['composition_task'])
 })
 
-test('composed subagent validates and forwards explicit model selection', async () => {
-  const harnessed = harness({ mode: 'composed', llm: true })
+test('subagent falls back to the configured agentPreset default', async () => {
+  const harnessed = harness({ agentPreset: 'reviewer' })
+  await harnessed.tool('subagent').execute({
+    description: 'Scoped analysis',
+    prompt: 'Read the file and report.',
+  }, {
+    agent: harnessed.callerAgent,
+    signal: new AbortController().signal,
+  })
+  assert.equal(harnessed.started[0].agentPreset, 'reviewer')
+})
+
+test('subagent forwards an allowed agent_preset selection', async () => {
+  const harnessed = harness()
+  await harnessed.tool('subagent').execute({
+    description: 'Scoped analysis',
+    prompt: 'Read the file and report.',
+    agent_preset: 'reviewer',
+  }, {
+    agent: harnessed.callerAgent,
+    signal: new AbortController().signal,
+  })
+  assert.equal(harnessed.started[0].agentPreset, 'reviewer')
+})
+
+test('subagent validates and forwards explicit model selection', async () => {
+  const harnessed = harness({ llm: true })
   const result = await harnessed.tool('subagent').execute({
     description: 'Scoped analysis',
     prompt: 'Read the file and report.',
@@ -375,8 +552,8 @@ test('composed subagent validates and forwards explicit model selection', async 
   })
 })
 
-test('composed subagent rejects an explicit non-parent route without a recorded policy', async () => {
-  const harnessed = harness({ mode: 'composed', llm: true })
+test('subagent rejects an explicit non-parent route without a recorded policy', async () => {
+  const harnessed = harness({ llm: true })
   await assert.rejects(
     harnessed.tool('subagent').execute({
       description: 'Scoped analysis',
@@ -393,9 +570,8 @@ test('composed subagent rejects an explicit non-parent route without a recorded 
   assert.equal(harnessed.resolvedModels.length, 0)
 })
 
-test('composed subagent honors a recorded model-selection policy', async () => {
+test('subagent honors a recorded model-selection policy', async () => {
   const harnessed = harness({
-    mode: 'composed',
     llm: true,
     modelSelectionEvents: [{
       type: 'subagent/model-selection-policy',
@@ -416,8 +592,8 @@ test('composed subagent honors a recorded model-selection policy', async () => {
   assert.deepEqual(harnessed.started[0].agentOptions, { provider: 'other', model: 'other-chat' })
 })
 
-test('composed subagent requires provider and model together', async () => {
-  const harnessed = harness({ mode: 'composed', llm: true })
+test('subagent requires provider and model together', async () => {
+  const harnessed = harness({ llm: true })
   await assert.rejects(
     harnessed.tool('subagent').execute({
       description: 'Scoped analysis',
@@ -432,15 +608,17 @@ test('composed subagent requires provider and model together', async () => {
   assert.equal(harnessed.started.length, 0)
 })
 
-test('composed list_agents reports running/inactive status', async () => {
-  const harnessed = harness({ mode: 'composed' })
+test('list_agents reports running/inactive status', async () => {
+  const harnessed = harness()
   const listed = await harnessed.tool('list_agents').execute({}, { agent: harnessed.callerAgent })
-  assert.equal(listed.agents.find((entry) => entry.nodeId === 'n-a').status, 'running')
-  assert.equal(listed.agents.find((entry) => entry.nodeId === 'n-b').status, 'inactive')
+  assert.deepEqual(listed, [
+    { name: 'Lead', status: 'running', description: 'top-level; mode=continuable' },
+    { name: 'Worker', status: 'inactive', description: 'subagent; mode=continuable' },
+  ])
 })
 
-test('composed wait_agent resolves when fresh input reaches the caller inbox', async () => {
-  const harnessed = harness({ mode: 'composed' })
+test('wait_agent resolves when fresh input reaches the caller inbox', async () => {
+  const harnessed = harness()
   const waiting = harnessed.tool('wait_agent').execute({ timeout_ms: 10_000 }, {
     agent: harnessed.callerAgent,
     signal: new AbortController().signal,
@@ -450,8 +628,8 @@ test('composed wait_agent resolves when fresh input reaches the caller inbox', a
   assert.deepEqual(await waiting, { timedOut: false })
 })
 
-test('composed wait_agent returns immediately for pending input', async () => {
-  const harnessed = harness({ mode: 'composed' })
+test('wait_agent returns immediately for pending input', async () => {
+  const harnessed = harness()
   harnessed.callerAgent.inbox.nextStep.push({ id: 'pending-message' })
   assert.deepEqual(await harnessed.tool('wait_agent').execute({ timeout_ms: 10_000 }, {
     agent: harnessed.callerAgent,
@@ -459,8 +637,8 @@ test('composed wait_agent returns immediately for pending input', async () => {
   }), { timedOut: false })
 })
 
-test('composed wait_agent does not spin on input already reported in the same root call', async () => {
-  const harnessed = harness({ mode: 'composed' })
+test('wait_agent does not spin on input already reported in the same root call', async () => {
+  const harnessed = harness()
   harnessed.callerAgent.inbox.nextStep.push({ id: 'pending-message' })
   const controller = new AbortController()
   const signal = controller.signal
@@ -485,15 +663,15 @@ test('composed wait_agent does not spin on input already reported in the same ro
   await assert.rejects(second, (error) => error?.code === 'WAIT_UNAVAILABLE')
 })
 
-test('composed delegation/list tools declare their concurrency safety', () => {
-  const harnessed = harness({ mode: 'composed' })
+test('delegation/list tools declare their concurrency safety', () => {
+  const harnessed = harness()
   assert.equal(harnessed.tool('subagent').isConcurrencySafe(), true)
   assert.equal(harnessed.tool('subagent_fork').isConcurrencySafe(), true)
   assert.equal(harnessed.tool('list_agents').isConcurrencySafe(), true)
 })
 
-test('composed subagent can leave the delegation edge ungranted by config', async () => {
-  const harnessed = harness({ mode: 'composed', autoGrantDelegatedEdges: false })
+test('subagent can leave the delegation edge ungranted by config', async () => {
+  const harnessed = harness({ autoGrantDelegatedEdges: false })
   await harnessed.tool('subagent').execute({
     description: 'Scoped analysis',
     prompt: 'Read the file and report.',
@@ -504,8 +682,8 @@ test('composed subagent can leave the delegation edge ungranted by config', asyn
   assert.deepEqual(harnessed.grantedEdges, [])
 })
 
-test('composed subagent_fork uses the fork provider and mirrors the child', async () => {
-  const harnessed = harness({ mode: 'composed' })
+test('subagent_fork uses the fork provider and mirrors the child', async () => {
+  const harnessed = harness()
   const result = await harnessed.tool('subagent_fork').execute({
     description: 'Continue the review',
     prompt: 'Review the latest diff.',
@@ -521,8 +699,8 @@ test('composed subagent_fork uses the fork provider and mirrors the child', asyn
   assert.deepEqual(harnessed.grantedEdges, [{ rootSessionId: 's-a', parentSessionId: 's-a', childSessionId: 's-child' }])
 })
 
-test('composed task tool lists, creates, and updates the plugin board', async () => {
-  const harnessed = harness({ mode: 'composed' })
+test('task tool lists, creates, and updates the plugin board', async () => {
+  const harnessed = harness()
   const exec = { agent: harnessed.callerAgent, signal: new AbortController().signal }
   const listed = await harnessed.tool('composition_task').execute({ action: 'list' }, exec)
   assert.equal(listed.tasks[0].id, 't1')
@@ -558,19 +736,29 @@ test('composed task tool lists, creates, and updates the plugin board', async ()
   ])
 })
 
-test('composed prompt restores native identity and delegation guidance', () => {
-  const harnessed = harness({ mode: 'composed' })
-  harnessed.toolsService.get = (name) => harnessed.controls.definitions.find((definition) => definition.name === name)
-  const identity = harnessed.promptContexts.find((context) => context.name === 'subagent:identity')
-  assert.ok(identity)
-  const text = identity.text({ agent: { id: 's-a' }, scope: {}, toolSet: {} })
-  assert.match(text, /^You are the root agent\. Your name is "Lead"\./)
-  assert.match(text, /To message other agents, use send_message/)
-  assert.match(text, /Use list_agents\(\{\}\) to find your collaborator agents/)
+test('hides one-shot nodes from list_agents and rejects follow-ups', async () => {
+  const harnessed = harness()
+  harnessed.composition.nodes.find((node) => node.id === 'n-b').mode = 'one-shot'
+  const listed = await harnessed.tool('list_agents').execute({}, { agent: harnessed.callerAgent })
+  assert.deepEqual(listed, [
+    { name: 'Lead', status: 'running', description: 'top-level; mode=continuable' },
+  ])
+  await assert.rejects(
+    harnessed.tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
+      agent: harnessed.callerAgent,
+      signal: new AbortController().signal,
+    }),
+    (error) => error?.code === 'NOT_CONTINUABLE',
+  )
+  const interrupted = await harnessed.tool('interrupt_agent').execute({ agent: 'Worker' }, {
+    agent: harnessed.callerAgent,
+    signal: new AbortController().signal,
+  })
+  assert.deepEqual(interrupted, { accepted: true })
+})
 
-  const section = harnessed.promptSections.find((candidate) => candidate.name === 'tool:subagent')
-  assert.ok(section)
-  const guidance = section.text({ scope: {}, toolSet: {} })
-  assert.match(guidance, /`subagent` or `subagent_fork`/)
-  assert.match(guidance, /Start independent delegations/)
+test('does not add duplicate prompt sections when native plugins remain mounted', () => {
+  const harnessed = harness()
+  assert.deepEqual(harnessed.promptContexts, [])
+  assert.deepEqual(harnessed.promptSections, [])
 })
