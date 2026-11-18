@@ -1,5 +1,7 @@
 # dsh-combinagents
 
+**English** | [简体中文](README.zh.md)
+
 [![dsh-plugin topic](https://img.shields.io/badge/topic-dsh--plugin-blue)](https://github.com/topics/dsh-plugin)
 
 A user-owned **reporting composition** for DSH (DeepSeek Harness) agents and
