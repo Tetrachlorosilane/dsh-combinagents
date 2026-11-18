@@ -6,6 +6,8 @@ test('the bundle manifest points at existing runtime files', () => {
   const root = new URL('../', import.meta.url)
   const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
 
+  assert.equal(pkg.version, '0.2.0')
+  assert.equal(pkg.engines.dsh, '>=0.2.2-rc.5 <0.3.0')
   assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(pkg.dsh.client.platform, 'web')
   assert.ok(Array.isArray(pkg.dsh.client.inject))

@@ -13,7 +13,7 @@ of the native subagent tree. The composition is an overlay. The plugin does not
 move a session, rewrite its native parent, change its workspace, or change its
 sandbox or permission policy.
 
-> **Compatibility:** DSH `0.2.2-rc.3` on the desktop/web profile. This is an
+> **Compatibility:** DSH `0.2.2-rc.5` on the desktop/web profile. This is an
 > unpublished local plugin bundle, not an npm package to install from a
 > registry. Node.js 22 or newer is required.
 
@@ -48,7 +48,7 @@ not a replacement for that tree.
 
 ## Requirements
 
-- DSH `0.2.2-rc.3` with the desktop/web UI.
+- DSH `0.2.2-rc.5` with the desktop/web UI.
 - Node.js 22 or newer.
 - A **standard** DSH profile (or another preset that keeps the native
   delegation plugins mounted):

@@ -15,7 +15,8 @@ Phase 1 **walking skeleton** is implemented in this checkout:
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 19 tests, plus store, manager, discovery, HTTP,
   client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (146 total);
-- Bundle metadata: `locale/{en,zh}.json` and `icon.svg`.
+- Bundle metadata: `locale/{en,zh}.json` and `icon.svg`; current target is DSH
+  `0.2.2-rc.5`, with `engines.dsh` and plugin version `0.2.0`.
 
 Installed in the `desktop` profile on 2026-11-16 (`application: applied`) and
 visually verified on 2026-11-17. Live checks: the tab body, header utility, and
@@ -139,7 +140,7 @@ remaining source forest is re-keyed to another local root. Native `subagent/star
 mirrored into the owning composition as new nodes/edges, without changing any
 tool schema or routing authority.
 
-## 3. Verified DSH facts (0.2.2-rc.3)
+## 3. Verified DSH facts (0.2.2-rc.5)
 
 Re-verify these before claiming compatibility with another release.
 
@@ -229,7 +230,7 @@ relay-label sanitization, workspace detach on failed clone, moving the
 Remaining audit items: SEC-6 (default bidirectional grant, product decision),
 SEC-8 rate limiting, SEC-11 (loopback/proxy trust), SEC-12 (clone permission
 drift), X-10 (agent_preset/provider capability), X-12 (storageDomain hard
-inject, DSH version pin) and X-14 (cold title / `/state` cold), plus optional
+inject) and X-14 (cold title / `/state` cold), plus optional
 cold-title/seed-streaming improvements. The composed profile now documents the
 native `@deepseek-ai/dsh-tool-subagent/model-selection-settings` row; the
 installed profile must mount it and opt in before non-parent routes work. Decisions

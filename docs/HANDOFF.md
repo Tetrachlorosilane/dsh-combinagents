@@ -576,7 +576,7 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 7. **worktree 所有权**：Forge 根 worktree、extraworkspace 额外 worktree 已有归属；
    新插件如果要显示/克隆，先确认归谁管理，不要重复创建/清理。
 8. **存储/路由**：独立 storage domain、`/dsh-combinagents` 路由、token、locale、CSS 前缀。
-9. **DSH 版本**：都按 `0.2.2-rc.3` 核对；升级后重新检查 sidebar/header/subagent 契约。
+9. **DSH 版本**：原始设计按 `0.2.2-rc.3` 核对，当前兼容目标为 `0.2.2-rc.5`；升级后重新检查 sidebar/header/subagent 契约。
 10. **客户端缓存**：两个插件都需刷新页面才能加载新 bundle；HMR 只在 watcher 运行时生效。
 11. **模型工具**：`dsh-extraworkspace` 零新增工具；新插件 phase 1 也应默认零新增工具，避免工具
     schema 改变缓存前缀。

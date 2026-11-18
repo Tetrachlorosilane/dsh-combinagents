@@ -1,7 +1,7 @@
 # Clone / Bud spike — DSH API findings
 
 **Status:** source-level and live two-node Host spike complete against DSH
-`0.2.2-rc.3`. Root clone, seeded child, native catalog entry, and the
+`0.2.2-rc.3`; the current compatibility target is `0.2.2-rc.5`. Root clone, seeded child, native catalog entry, and the
 persisted-idle child strategy all passed. The formal whole-tree adapter is
 implemented in `src/clone-manager.js` with the `/clone-tree` and `/bud` routes.
 The temporary `/clone-spike` route and provider were removed on 2026-11-18;

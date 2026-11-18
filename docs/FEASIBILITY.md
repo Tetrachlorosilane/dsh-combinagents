@@ -1,6 +1,6 @@
 # Feasibility: recombining DSH agents without changing their workspaces or permissions
 
-**Reviewed against:** DSH `0.2.2-rc.3` (Windows Desktop, packaged `app.asar`).
+**Reviewed against:** DSH `0.2.2-rc.3`; **compatibility rechecked on `0.2.2-rc.5`** (Windows Desktop, packaged `app.asar`).
 **Scope of this document:** whether a DSH plugin can give multiple agents and
 subagents a new reporting composition while preserving each one's own
 workspace, sandbox mode, approval policy, and tool composition.
@@ -128,7 +128,7 @@ is not a cosmetic edit. If DSH ever supports it, it needs an explicit,
 auditable core operation with user consent, not a plugin writing log events.
 
 **Verdict:** true re-parenting of existing sessions is **not feasible** as a
-third-party plugin on `0.2.2-rc.3`.
+third-party plugin on `0.2.2-rc.5`.
 
 ## 4. What is feasible
 

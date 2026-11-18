@@ -8,7 +8,7 @@
 
 DSH 原生已经为每个 subagent 固定了 parent。本插件在此基础上增加一层可编辑的组合关系：由你决定谁向谁汇报，而不改变原生 subagent tree。组合只是 overlay，不会移动会话、重写 native parent，也不会改变会话的 workspace、sandbox 或权限策略。
 
-> **兼容性：** 适用于 desktop/web profile 的 DSH `0.2.2-rc.3`。这是一个未发布到 npm 的本地插件 bundle，不是从 registry 安装的 npm 包。需要 Node.js 22 或更新版本。
+> **兼容性：** 适用于 desktop/web profile 的 DSH `0.2.2-rc.5`。这是一个未发布到 npm 的本地插件 bundle，不是从 registry 安装的 npm 包。需要 Node.js 22 或更新版本。
 
 本项目属于 [dsh-plugin](https://github.com/topics/dsh-plugin) 话题。
 
@@ -37,7 +37,7 @@ DSH 原生已经为每个 subagent 固定了 parent。本插件在此基础上�
 
 ## 环境要求
 
-- DSH `0.2.2-rc.3`，desktop/web UI。
+- DSH `0.2.2-rc.5`，desktop/web UI。
 - Node.js 22 或更新版本。
 - 使用 **standard** preset（或任何保留以下 native delegation 插件的 preset）：
   - `tool-subagent-control`
