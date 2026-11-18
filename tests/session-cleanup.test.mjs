@@ -105,6 +105,18 @@ function harness() {
       if (name === 'workspaceRegistry') {
         return { list: () => [workspace], async unarchiveSession() {}, async unpinSession() {} }
       }
+      if (name === 'sessionQuery') {
+        return {
+          async readSession() {
+            return {
+              events: [
+                { type: 'user/message', data: { content: [{ type: 'text', text: 'Please review the patch.' }] } },
+                { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'The patch looks safe.' }] } } },
+              ],
+            }
+          },
+        }
+      }
       return undefined
     },
     logger: { info() {}, warn() {} },
@@ -138,6 +150,9 @@ test('previews tracked, legacy, and one-shot candidates without exposing protect
     const estimate = await cleanup.estimateClone('session-root', null)
     assert.equal(estimate.sessions, 3)
     assert.equal(estimate.bytes, 300)
+    const content = await cleanup.previewSession('session-wild')
+    assert.equal(content.firstUser, 'Please review the patch.')
+    assert.equal(content.lastMessage, 'The patch looks safe.')
     store.mode = 'memory'
     assert.equal((await cleanup.preview()).available, false)
   } finally {

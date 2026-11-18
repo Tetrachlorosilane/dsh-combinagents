@@ -97,10 +97,10 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 | Bud as new root | 把某节点及其子树克隆为新的 root |
 | Show one-shot agents | 显示默认隐藏的一次性节点 |
 | Composition tasks | 创建、开始、完成、重开、删除插件任务 |
-| Session cleanup | 检查并删除孤儿克隆会话和一次性占位 |
+| Session cleanup | 预览孤儿克隆会话和一次性占位，可展开首条用户消息/最后消息摘要；删除是独立的确认步骤 |
 | Open conversation | 打开本地会话；外部节点不提供 |
 
-节点会显示 `live`、`saved`、`archived` 状态，以及 native parent、workspace、sandbox、permission preset、agent preset 和 lifecycle mode（如果可用）。
+节点会显示 `live`、`saved`、`archived` 状态，以及 native parent、workspace、sandbox、permission preset、agent preset 和 lifecycle mode（如果可用）。Tab 支持上下滚动；**添加会话** 和 **添加任务** 使用相同的就地展开面板，均提供 **取消**；会话选择器也支持 Escape 关闭。
 
 页面默认过滤 **one-shot** 节点；打开 **Show one-shot agents** 后才会显示。External 节点是占位符，不一定是 one-shot，因此默认仍显示。
 

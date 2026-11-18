@@ -438,6 +438,50 @@ export function createSessionCleanup({
   }
 
   /**
+   * Read a short, human-checkable excerpt from one eligible candidate. This is
+   * deliberately on demand: reading a cold Session log is much more expensive
+   * than the metadata-only candidate list, so the client opens one at a time.
+   * @param {string} sessionId - candidate session id.
+   * @returns {Promise<object>} brief first-user/last-message preview.
+   */
+  async function previewSession(sessionId) {
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw new CompositionError('INVALID_FIELD', 'sessionId must be a non-empty string')
+    }
+    const current = await preview()
+    if (!current.available) {
+      throw new CompositionError('CLEANUP_UNAVAILABLE', current.reason ?? 'session cleanup is unavailable')
+    }
+    const candidate = current.wild.find((entry) => entry.sessionId === sessionId)
+      ?? current.legacy.find((entry) => entry.sessionId === sessionId)
+      ?? current.oneShot.find((entry) => entry.sessionId === sessionId)
+    if (candidate === undefined) {
+      throw new CompositionError('NOT_ELIGIBLE', 'the session is not a current cleanup candidate')
+    }
+    const query = ctx.get?.('sessionQuery')
+    if (typeof query?.readSession !== 'function') {
+      throw new CompositionError('CLEANUP_UNAVAILABLE', 'session reading is unavailable')
+    }
+    const snapshot = await query.readSession(sessionId)
+    const events = Array.isArray(snapshot?.events) ? snapshot.events : []
+    let firstUser = null
+    let lastMessage = null
+    for (const event of events) {
+      const text = previewEventText(event)
+      if (text.length === 0) continue
+      if (event.type === 'user/message' && firstUser === null) firstUser = clipPreviewText(text)
+      lastMessage = clipPreviewText(text)
+    }
+    return {
+      sessionId,
+      title: candidate.title,
+      eventCount: events.length,
+      firstUser,
+      lastMessage,
+    }
+  }
+
+  /**
    * Delete the requested candidates. The preview is recomputed inside the
    * process-wide composition mutation lock so another profile cannot attach a
    * candidate between verification and removal.
@@ -585,12 +629,49 @@ export function createSessionCleanup({
 
   return {
     preview,
+    previewSession,
     clean,
     estimateClone,
     get available() {
       return scan().then((value) => value.rootReal !== null)
     },
   }
+}
+
+
+/** Maximum characters shown for one excerpt. */
+const PREVIEW_TEXT_MAX = 500
+
+/**
+ * @param {unknown} content - session content blocks.
+ * @returns {string} text blocks only.
+ */
+function previewContentText(content) {
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * @param {object} event - one session event.
+ * @returns {string} searchable text for a preview, never tool payloads.
+ */
+function previewEventText(event) {
+  if (event?.type === 'user/message') return previewContentText(event.data?.content)
+  if (event?.type === 'assistant/message') return previewContentText(event.data?.message?.content)
+  return ''
+}
+
+/**
+ * @param {string} text - non-empty preview text.
+ * @returns {string} clipped text.
+ */
+function clipPreviewText(text) {
+  return text.length > PREVIEW_TEXT_MAX ? `${text.slice(0, PREVIEW_TEXT_MAX).trimEnd()}…` : text
 }
 
 /** @returns {{wild: {count: number, bytes: number}, legacy: {count: number, bytes: number}, oneShot: {count: number, bytes: number}}} */

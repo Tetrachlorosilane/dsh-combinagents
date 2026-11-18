@@ -130,12 +130,14 @@ composition membership from its `parentSession` header.
 | Bud as new root | Clone one node and its subtree as a new root |
 | Show one-shot agents | Show one-shot nodes that are hidden by default |
 | Composition tasks | Create, start, complete, reopen, and delete plugin tasks |
-| Session cleanup | Check and delete orphaned clone sessions and one-shot placeholders |
+| Session cleanup | Preview orphaned clone sessions and one-shot placeholders, open a brief first-user/last-message excerpt, then delete in a separate confirmed step |
 | Open conversation | Open a local session; external nodes never offer it |
 
 Nodes show `live`, `saved`, or `archived` state, plus the native parent,
 workspace, sandbox, permission preset, agent preset, and lifecycle mode when
-available.
+available. The tab scrolls vertically. **Add a session** and **Add task** use the
+same in-place panel pattern, each with **Cancel**; Escape also closes the session
+picker.
 
 The tab filters **one-shot** nodes by default. Enable **Show one-shot agents**
 to see them. External nodes remain visible because they are placeholders, not

@@ -118,10 +118,10 @@ window.__ModuleLoader__.load({
         'taskDeleteTitle': 'Delete task',
         'taskDeleteConfirm': 'Delete this task? It exists only in the plugin task board.',
         'cleanup': 'Session cleanup',
-        'cleanupHint': 'Check and delete orphaned clone sessions and one-shot placeholders that are no longer part of any composition. Only inactive, unowned sessions can be removed.',
-        'cleanupCheck': 'Check and clean up',
+        'cleanupHint': 'Preview orphaned clone sessions and one-shot placeholders that are no longer part of any composition. Deletion is a separate, confirmed step; only inactive, unowned sessions can be removed.',
+        'cleanupCheck': 'Preview',
         'cleanupDelete': 'Delete selected',
-        'cleanupChecking': 'Checking sessions…',
+        'cleanupChecking': 'Loading preview…',
         'cleanupDeleting': 'Deleting sessions…',
         'cleanupNone': 'No orphaned or one-shot sessions found.',
         'cleanupSummary': 'Wild: {wild} · historical suspects: {legacy} · one-shot nodes: {oneShot} · {size}',
@@ -129,6 +129,12 @@ window.__ModuleLoader__.load({
         'cleanupLegacy': 'Historical suspects',
         'cleanupOneShot': 'One-shot',
         'cleanupMore': '+{count} more',
+        'cleanupPreviewContent': 'Preview content',
+        'cleanupLoadingContent': 'Loading…',
+        'cleanupFirstUser': 'First user message',
+        'cleanupLastMessage': 'Last message',
+        'cleanupNoContent': 'No previewable text.',
+        'cleanupContentFailed': 'Could not load preview.',
         'cleanupLegacyOption': 'Include historical suspects (seeded, no composition)',
         'cleanupConfirm': 'Permanently delete {count} item(s), about {size}? This cannot be undone.',
         'cleanupDone': 'Deleted {count} item(s), freed {size}.',
@@ -230,10 +236,10 @@ window.__ModuleLoader__.load({
         'taskDeleteTitle': '删除任务',
         'taskDeleteConfirm': '删除这个任务？它只存在于插件任务板，不是 DSH Team。',
         'cleanup': '会话清理',
-        'cleanupHint': '检查并删除已脱离组合的克隆会话和一次性占位；只能删除非 live、无组合归属的会话。',
-        'cleanupCheck': '检查并清理',
+        'cleanupHint': '预览已脱离组合的克隆会话和一次性占位。删除是独立的确认步骤；只能删除非 live、无组合归属的会话。',
+        'cleanupCheck': '预览',
         'cleanupDelete': '删除选中',
-        'cleanupChecking': '正在检查会话…',
+        'cleanupChecking': '正在加载预览…',
         'cleanupDeleting': '正在删除会话…',
         'cleanupNone': '没有发现野会话或一次性会话。',
         'cleanupSummary': '野会话：{wild} · 历史疑似：{legacy} · 一次性节点：{oneShot} · {size}',
@@ -241,6 +247,12 @@ window.__ModuleLoader__.load({
         'cleanupLegacy': '历史疑似',
         'cleanupOneShot': '一次性',
         'cleanupMore': '还有 {count} 项',
+        'cleanupPreviewContent': '预览内容',
+        'cleanupLoadingContent': '加载中…',
+        'cleanupFirstUser': '首条用户消息',
+        'cleanupLastMessage': '最后消息',
+        'cleanupNoContent': '没有可预览的文本。',
+        'cleanupContentFailed': '无法加载预览。',
         'cleanupLegacyOption': '包含历史疑似项（seeded、无组合归属）',
         'cleanupConfirm': '永久删除 {count} 项，约 {size}？此操作不可撤销。',
         'cleanupDone': '已删除 {count} 项，释放 {size}。',
@@ -263,7 +275,14 @@ window.__ModuleLoader__.load({
         color: 'var(--dsw-alias-label-primary)',
         fontSize: '13px',
         lineHeight: '1.45',
-        minHeight: '100%',
+        flex: '1 1 auto',
+        height: '100%',
+        maxHeight: '100%',
+        minHeight: 0,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        overscrollBehavior: 'contain',
+        scrollbarGutter: 'stable',
         boxSizing: 'border-box',
       },
       header: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' },
@@ -917,7 +936,7 @@ window.__ModuleLoader__.load({
     function SessionPicker(props) {
       const {
         sessions, query, setQuery, parentId, setParentId, nodes, busy, onAdd, t,
-        external, externalAvailable, onAddExternal, titles, onNeedTitles,
+        external, externalAvailable, onAddExternal, titles, onNeedTitles, onClose,
       } = props
       const text = query.trim().toLowerCase()
       const labelOf = (session) => titles[session.sessionId] ?? session.title
@@ -930,7 +949,19 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (visible.length > 0) onNeedTitles(visible.slice(0, 20).map((session) => session.sessionId))
       }, [visibleKey, onNeedTitles])
-      return h('div', { style: styles.picker }, [
+      return h('div', {
+        style: styles.picker,
+        onKeyDown: (event) => {
+          if (event.key !== 'Escape') return
+          event.preventDefault()
+          event.stopPropagation()
+          onClose()
+        },
+      }, [
+        h('div', { key: 'header', style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
+          h('div', { key: 'title', style: { ...styles.sectionTitle, flex: '1 1 auto' } }, t('addSession')),
+          h('button', { key: 'cancel', type: 'button', style: styles.linkButton, onClick: onClose }, t('cancel')),
+        ]),
         h('div', { key: 'parent', style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } }, [
           h('label', { key: 'label', style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '11px' } }, t('parent')),
           h('select', {
@@ -1086,6 +1117,7 @@ window.__ModuleLoader__.load({
       const [subject, setSubject] = React.useState('')
       const [description, setDescription] = React.useState('')
       const [owner, setOwner] = React.useState('')
+      const [adding, setAdding] = React.useState(false)
       const [pendingDelete, setPendingDelete] = React.useState(null)
       const owners = nodes.filter((node) => node.kind === 'session')
       const statusKey = {
@@ -1093,46 +1125,74 @@ window.__ModuleLoader__.load({
         in_progress: 'statusInProgress',
         completed: 'statusCompleted',
       }
-      const add = () => {
-        onCreate(subject, description, owner.length > 0 ? owner : null)
+      const closeForm = () => {
+        setAdding(false)
         setSubject('')
         setDescription('')
         setOwner('')
       }
+      const add = async () => {
+        const created = await onCreate(subject, description, owner.length > 0 ? owner : null)
+        if (created === false) return
+        closeForm()
+      }
       return h('div', { style: styles.board }, [
         h('div', { key: 'title', style: styles.sectionTitle }, t('tasks')),
-        h('div', { key: 'form', style: styles.taskForm }, [
-          h('input', {
-            key: 'subject',
-            style: styles.input,
-            placeholder: t('taskSubject'),
-            value: subject,
-            onChange: (event) => setSubject(event.target.value),
-          }),
-          h('input', {
-            key: 'description',
-            style: styles.input,
-            placeholder: t('taskDescription'),
-            value: description,
-            onChange: (event) => setDescription(event.target.value),
-          }),
-          h('select', {
-            key: 'owner',
-            style: styles.select,
-            value: owner,
-            onChange: (event) => setOwner(event.target.value),
-          }, [
-            h('option', { key: 'none', value: '' }, t('unowned')),
-            ...owners.map((node) => h('option', { key: node.id, value: node.id }, node.label)),
-          ]),
-          h('button', {
-            key: 'add',
-            type: 'button',
-            style: styles.button,
-            disabled: busy || subject.trim().length === 0,
-            onClick: add,
-          }, t('addTask')),
-        ]),
+        adding === false
+          ? h('button', {
+              key: 'open-form',
+              type: 'button',
+              style: styles.button,
+              disabled: busy,
+              onClick: () => setAdding(true),
+            }, t('addTask'))
+          : h('div', {
+              key: 'form',
+              style: styles.picker,
+              onKeyDown: (event) => {
+                if (event.key !== 'Escape') return
+                event.preventDefault()
+                event.stopPropagation()
+                closeForm()
+              },
+            }, [
+              h('div', { key: 'form-header', style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
+                h('div', { key: 'title', style: { ...styles.sectionTitle, flex: '1 1 auto' } }, t('addTask')),
+                h('button', { key: 'cancel', type: 'button', style: styles.linkButton, onClick: closeForm }, t('cancel')),
+              ]),
+              h('div', { key: 'fields', style: styles.taskForm }, [
+                h('input', {
+                  key: 'subject',
+                  style: styles.input,
+                  placeholder: t('taskSubject'),
+                  value: subject,
+                  onChange: (event) => setSubject(event.target.value),
+                }),
+                h('input', {
+                  key: 'description',
+                  style: styles.input,
+                  placeholder: t('taskDescription'),
+                  value: description,
+                  onChange: (event) => setDescription(event.target.value),
+                }),
+                h('select', {
+                  key: 'owner',
+                  style: styles.select,
+                  value: owner,
+                  onChange: (event) => setOwner(event.target.value),
+                }, [
+                  h('option', { key: 'none', value: '' }, t('unowned')),
+                  ...owners.map((node) => h('option', { key: node.id, value: node.id }, node.label)),
+                ]),
+                h('button', {
+                  key: 'add',
+                  type: 'button',
+                  style: styles.button,
+                  disabled: busy || subject.trim().length === 0,
+                  onClick: () => void add(),
+                }, t('addTask')),
+              ]),
+            ]),
         tasks.length === 0
           ? h('div', { key: 'none', style: styles.sessionMeta }, t('noTasks'))
           : tasks.map((task) => {
@@ -1204,6 +1264,8 @@ window.__ModuleLoader__.load({
         loading: false, busy: false, data: null, error: null, notice: null, includeLegacy: false,
       })
       const [cleanupConfirm, setCleanupConfirm] = React.useState(false)
+      const [cleanupContent, setCleanupContent] = React.useState({})
+      const [cleanupContentBusy, setCleanupContentBusy] = React.useState(null)
       const [editingTitle, setEditingTitle] = React.useState(false)
       const [titleDraft, setTitleDraft] = React.useState('')
       const requestedTitles = React.useRef(new Set())
@@ -1264,8 +1326,10 @@ window.__ModuleLoader__.load({
           await load({ silent: true })
           setNotice(successMessage ?? null)
           window.dispatchEvent(new CustomEvent(COMPOSITION_CHANGED, { detail: { sessionId } }))
+          return true
         } catch (error) {
           setNotice(error.code === 'AGENT_BUSY' ? t('agentBusy') : error.message)
+          return false
         } finally {
           setBusy(false)
         }
@@ -1299,6 +1363,10 @@ window.__ModuleLoader__.load({
         null,
       )
 
+      const closePicker = () => setPicker((previous) => ({
+        ...previous, open: false, query: '', parentId: '',
+      }))
+
       const openPicker = async () => {
         setPicker((previous) => ({ ...previous, open: true }))
         try {
@@ -1322,32 +1390,38 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const addSession = (session) => mutate(
-        () => callApi('/add-node', {
-          method: 'POST',
-          body: {
-            rootSessionId: activeRoot,
-            sessionId: session.sessionId,
-            parentId: picker.parentId.length > 0 ? picker.parentId : null,
-          },
-        }),
-        null,
-      )
+      const addSession = async (session) => {
+        const added = await mutate(
+          () => callApi('/add-node', {
+            method: 'POST',
+            body: {
+              rootSessionId: activeRoot,
+              sessionId: session.sessionId,
+              parentId: picker.parentId.length > 0 ? picker.parentId : null,
+            },
+          }),
+          null,
+        )
+        if (added) closePicker()
+      }
 
-      const addExternal = (leaf) => mutate(
-        () => callApi('/add-external', {
-          method: 'POST',
-          body: {
-            rootSessionId: activeRoot,
-            label: leaf.label,
-            provider: leaf.mode,
-            nativeParentSessionId: leaf.nativeParentSessionId,
-            externalId: leaf.externalId,
-            parentId: picker.parentId.length > 0 ? picker.parentId : null,
-          },
-        }),
-        null,
-      )
+      const addExternal = async (leaf) => {
+        const added = await mutate(
+          () => callApi('/add-external', {
+            method: 'POST',
+            body: {
+              rootSessionId: activeRoot,
+              label: leaf.label,
+              provider: leaf.mode,
+              nativeParentSessionId: leaf.nativeParentSessionId,
+              externalId: leaf.externalId,
+              parentId: picker.parentId.length > 0 ? picker.parentId : null,
+            },
+          }),
+          null,
+        )
+        if (added) closePicker()
+      }
 
       const renameNode = (nodeId, label) => mutate(
         () => callApi('/rename-node', {
@@ -1467,18 +1541,31 @@ window.__ModuleLoader__.load({
         )
       }
 
-      const checkCleanup = async (requestDelete = false) => {
+      const checkCleanup = async () => {
         setCleanup((previous) => ({ ...previous, loading: true, error: null, notice: null }))
         try {
           const data = await callApi('/session-cleanup')
+          setCleanupContent({})
+          setCleanupContentBusy(null)
           setCleanup((previous) => ({ ...previous, loading: false, data }))
-          if (requestDelete && data.available === true) {
-            const pending = data.totals.wild.count + data.totals.oneShot.count
-              + (cleanup.includeLegacy ? data.totals.legacy.count : 0)
-            if (pending > 0) setCleanupConfirm(true)
-          }
         } catch (error) {
           setCleanup((previous) => ({ ...previous, loading: false, error: error.message }))
+        }
+      }
+
+      const previewCleanupSession = async (sessionId) => {
+        if (typeof sessionId !== 'string' || sessionId.length === 0) return
+        setCleanupContentBusy(sessionId)
+        try {
+          const data = await callApi(`/session-cleanup/session?sessionId=${encodeURIComponent(sessionId)}`)
+          setCleanupContent((previous) => ({ ...previous, [sessionId]: data }))
+        } catch (error) {
+          setCleanupContent((previous) => ({
+            ...previous,
+            [sessionId]: { error: error.message },
+          }))
+        } finally {
+          setCleanupContentBusy(null)
         }
       }
 
@@ -1499,6 +1586,8 @@ window.__ModuleLoader__.load({
           })
           await load({ silent: true })
           const fresh = await callApi('/session-cleanup')
+          setCleanupContent({})
+          setCleanupContentBusy(null)
           const removed = result.deleted.length + result.oneShotRemoved
           const done = format(t, 'cleanupDone', {
             count: String(removed),
@@ -1539,13 +1628,39 @@ window.__ModuleLoader__.load({
         + (cleanupTotals?.oneShot.count ?? 0)) > 0
       const cleanupList = (key, labelKey, entries) => entries.length === 0 ? null : h('div', {
         key,
-        style: { display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' },
+        style: { display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '4px' },
       }, [
         h('div', { key: 'label', style: styles.sessionMeta }, t(labelKey)),
-        ...entries.slice(0, 5).map((entry) => h('div', {
-          key: entry.sessionId ?? entry.nodeId,
-          style: { ...styles.sessionMeta, overflowWrap: 'anywhere' },
-        }, `${entry.title} · ${formatBytes(entry.size)}`)),
+        ...entries.slice(0, 5).map((entry) => {
+          const content = entry.sessionId === undefined ? undefined : cleanupContent[entry.sessionId]
+          return h('div', {
+            key: entry.sessionId ?? entry.nodeId,
+            style: { display: 'flex', flexDirection: 'column', gap: '2px' },
+          }, [
+            h('div', { key: 'line', style: { display: 'flex', alignItems: 'center', gap: '4px', ...styles.sessionMeta, overflowWrap: 'anywhere' } }, [
+              h('span', { key: 'text' }, `${entry.title} · ${formatBytes(entry.size)}`),
+              entry.sessionId === undefined
+                ? null
+                : h('button', {
+                    key: 'preview',
+                    type: 'button',
+                    style: styles.linkButton,
+                    disabled: cleanupContentBusy === entry.sessionId,
+                    onClick: () => void previewCleanupSession(entry.sessionId),
+                  }, cleanupContentBusy === entry.sessionId ? t('cleanupLoadingContent') : t('cleanupPreviewContent')),
+            ]),
+            content === undefined
+              ? null
+              : content.error !== undefined
+                ? h('div', { key: 'content-error', style: styles.error }, `${t('cleanupContentFailed')} ${content.error}`)
+                : content.firstUser === null && content.lastMessage === null
+                  ? h('div', { key: 'content-empty', style: styles.sessionMeta }, t('cleanupNoContent'))
+                  : h('div', { key: 'content', style: { ...styles.sessionMeta, overflowWrap: 'anywhere', whiteSpace: 'normal' } }, [
+                      content.firstUser === null ? null : h('div', { key: 'first' }, `${t('cleanupFirstUser')}: ${content.firstUser}`),
+                      content.lastMessage === null ? null : h('div', { key: 'last' }, `${t('cleanupLastMessage')}: ${content.lastMessage}`),
+                    ]),
+          ])
+        }),
         entries.length > 5
           ? h('div', { key: 'more', style: styles.sessionMeta }, format(t, 'cleanupMore', { count: String(entries.length - 5) }))
           : null,
@@ -1690,6 +1805,7 @@ window.__ModuleLoader__.load({
                     busy,
                     onAdd: addSession,
                     onAddExternal: addExternal,
+                    onClose: closePicker,
                     t,
                   })
                 : h('button', { key: 'open-picker', type: 'button', style: styles.button, disabled: busy, onClick: () => void openPicker() }, t('addSession')),
@@ -1711,7 +1827,7 @@ window.__ModuleLoader__.load({
                     type: 'button',
                     style: styles.button,
                     disabled: busy || cleanup.loading || cleanup.busy,
-                    onClick: () => void checkCleanup(true),
+                    onClick: () => void checkCleanup(),
                   }, cleanup.loading ? t('cleanupChecking') : t('cleanupCheck')),
                   cleanup.data !== null && cleanup.data.available === true && cleanupCount > 0
                     ? h('button', {

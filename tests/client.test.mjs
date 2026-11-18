@@ -9,8 +9,14 @@ test('client confirmations use the DSH-themed dialog instead of browser dialogs'
   assert.match(source, /--dsw-alias-bg-mask-1/)
   assert.match(source, /--dsw-radius-panel/)
   assert.match(source, /\/session-cleanup/)
+  assert.match(source, /\/session-cleanup\/session/)
   assert.match(source, /\/clone-estimate/)
   assert.match(source, /cleanupConfirm/)
+  assert.match(source, /onClick: \(\) => void checkCleanup\(\)/)
+  assert.doesNotMatch(source, /checkCleanup\(true\)/)
+  assert.match(source, /overflowY: 'auto'/)
+  assert.match(source, /onClose: closePicker/)
+  assert.match(source, /adding === false/)
 })
 
 test('client module registers one tab type, its body, and the header utility', async () => {

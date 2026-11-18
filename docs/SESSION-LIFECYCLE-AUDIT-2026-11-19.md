@@ -179,8 +179,10 @@ composition 是三条会产生无 overlay 归属 Session 的路径。**
 3. **用户确认的会话清理**：组合 tab 新增 “Session cleanup”：
    - 预览 tracked `failed`/`orphaned` clone sessions、可选的 historical seeded
      suspects、one-shot 占位/叶子节点；
-   - 显示数量、体积和前 5 项标题；
-   - 只有用户显式勾选 historical suspects 并再次确认后才删除；
+   - 预览只读，显示数量、体积和前 5 项标题；
+   - 每一项可单独展开首条用户消息/最后消息摘要（`/session-cleanup/session`），
+     按需读取，不批量加载全部冷日志；
+   - 删除是独立按钮；只有用户显式勾选 historical suspects 并再次确认后才删除；
    - 不删除 live session、composition member 或其 native ancestor；
    - 删除后 detach workspace、unarchive/unpin，并移除已完成清理的 clone
      record。

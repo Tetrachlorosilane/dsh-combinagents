@@ -298,6 +298,7 @@ POST /create-task                  { subject, description?, ownerNodeId? }
 POST /update-task                  { taskId, expectedRevision, action }
 POST /delete-composition           remove the overlay record; sessions untouched
 GET  /session-cleanup              preview tracked orphan/one-shot cleanup candidates
+GET  /session-cleanup/session?sessionId=...  brief first-user/last-message excerpt
 POST /session-cleanup              { sessionIds?, oneShotNodeIds?, includeLegacy? }
 GET  /clone-estimate?rootSessionId=&nodeId=  new-session count + copied-history bytes
 ```
@@ -352,6 +353,9 @@ after a user-confirmed request:
 - preview tracked `failed`/`orphaned` clone sessions, opt-in historical
   `isSeeded` sessions with no composition (covers clone roots and
   `subagent_fork` mirror misses), and leaf one-shot nodes/placeholders;
+- list preview is metadata-only; a separate `session-cleanup/session` read opens
+  a bounded first-user/last-message excerpt for one eligible candidate on demand,
+  so reviewing content does not read every cold log;
 - never delete a live session, a composition member, a native ancestor of a
   member, or a clone provenance source;
 - require `includeLegacy: true` for historical suspects;

@@ -351,6 +351,9 @@ test('exposes session cleanup preview and deletion through the bridge', async ()
     async estimateClone(rootSessionId, nodeId) {
       return { rootSessionId, nodeId, nodes: 3, sessions: 2, bytes: 2048 }
     },
+    async previewSession(sessionId) {
+      return { sessionId, firstUser: 'hello', lastMessage: 'bye' }
+    },
   }
   const api = createApi({ manager: {}, discovery: {}, sessionCleanup, token: TOKEN })
   const preview = await call(api, authorized('GET', '/dsh-combinagents/session-cleanup'))
@@ -359,6 +362,9 @@ test('exposes session cleanup preview and deletion through the bridge', async ()
   const estimate = await call(api, authorized('GET', '/dsh-combinagents/clone-estimate?rootSessionId=s-a&nodeId=n-1'))
   assert.equal(estimate.status, 200)
   assert.equal(estimate.data.sessions, 2)
+  const content = await call(api, authorized('GET', '/dsh-combinagents/session-cleanup/session?sessionId=session-wild'))
+  assert.equal(content.status, 200)
+  assert.equal(content.data.firstUser, 'hello')
   const cleaned = await call(api, authorized('POST', '/dsh-combinagents/session-cleanup', JSON.stringify({
     sessionIds: ['session-wild'],
     oneShotNodeIds: ['node-one'],

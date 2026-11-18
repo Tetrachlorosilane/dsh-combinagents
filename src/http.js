@@ -45,6 +45,7 @@ const ROUTES = new Set([
   '/clone-tree',
   '/bud',
   '/session-cleanup',
+  '/session-cleanup/session',
   '/clone-estimate',
 ])
 
@@ -325,6 +326,14 @@ export function createApi({
         throw new HttpError(503, 'CLEANUP_UNAVAILABLE', 'session cleanup is unavailable')
       }
       return json(200, await sessionCleanup.preview())
+    }
+    if (route === '/session-cleanup/session') {
+      if (sessionCleanup === undefined) {
+        throw new HttpError(503, 'CLEANUP_UNAVAILABLE', 'session cleanup is unavailable')
+      }
+      const sessionId = url.searchParams.get('sessionId') ?? ''
+      if (sessionId === '') throw new HttpError(400, 'INVALID_REQUEST', 'sessionId is required')
+      return json(200, await sessionCleanup.previewSession(sessionId))
     }
     if (route === '/clone-estimate') {
       if (sessionCleanup === undefined) {

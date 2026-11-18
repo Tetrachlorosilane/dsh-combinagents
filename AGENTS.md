@@ -243,9 +243,11 @@ wait_agent now pass). The session-lifecycle audit is in
 failed clones and deleted clone compositions leave persisted sessions; the live
 snapshot showed 20 likely orphan clone roots plus 43 children (166 MB).
 The user-facing cleanup tool is implemented in `src/session-cleanup.js` and the
-composition tab: it previews tracked failed/orphaned clone sessions, opt-in
-historical seeded suspects, and one-shot placeholders, then deletes only
-inactive, unowned sessions after a DSH-styled confirmation. It refuses to run
+composition tab: its preview is read-only and shows tracked failed/orphaned
+clone sessions, opt-in historical seeded suspects, and one-shot placeholders;
+each listed candidate can open a bounded first-user/last-message excerpt; deletion
+is a separate action that requires a DSH-styled confirmation and only touches
+inactive, unowned sessions. It refuses to run
 when composition storage is memory-backed or degraded, operates on the default
 `$DSH_HOME/sessions` JSONL root (configurable with `sessionRoot`), detaches
 workspace/archive/pin state, and never touches live sessions or composition
