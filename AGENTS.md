@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 19 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (185 total);
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (186 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`; current target is DSH
   `0.2.2-rc.5`, with `engines.dsh` and plugin version `0.2.0`.
 
@@ -84,6 +84,9 @@ native Team state), and `team_list` exposes Team ids/labels/members. The native
 sections stay in place; the plugin adds no duplicate identity/delegation prompt.
 A clean headless profile verified the full chain in the earlier composed
 surface, and the interception/fallback behavior is covered by host/controls tests.
+The interceptor also seeds the native contract from the scoped definition when a
+legacy/HMR session executes before `attach` observed it, so a native
+`send_message` cannot silently bypass the composition handler in that window.
 The real GUI
 was visually verified on 2026-11-17 in dark and light themes and at 420 px
 width: both header entries open the tab, the count chip
@@ -250,7 +253,7 @@ relay-label sanitization, workspace detach on failed clone, moving the
 The 2026-11-19 follow-up audit fixed ordinary-fork membership inheritance,
 cross-composition grant migration, external-placeholder idempotency, create/add
 membership races, the store reload-revision skip and reload-failure fallback,
-effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 185 tests pass. The
+effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 186 tests pass. The
 findings and remaining accepted risks are in
 [`docs/AUDIT-2026-11-19.md`](docs/AUDIT-2026-11-19.md). The live composition/bridge
 probe is in [`docs/BRIDGE-TEST-2026-11-19.md`](docs/BRIDGE-TEST-2026-11-19.md):

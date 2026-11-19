@@ -29,7 +29,7 @@ function harness(options = {}) {
   const listeners = new Map()
   const promptContexts = []
   const promptSections = []
-  const toolsService = { get: () => undefined }
+  const toolsService = { get: (name) => options.globalTools?.[name] }
   const parentOptions = options.parentOptions ?? { provider: 'deepseek', model: 'deepseek-chat' }
   const callerAgent = {
     id: 's-a',
@@ -490,6 +490,30 @@ test('interception leaves the native interface untouched and returns a canonical
     passedThrough = true
   })
   assert.equal(passedThrough, true)
+})
+
+test('interception seeds the native contract before attach observes it', async () => {
+  const native = {
+    name: 'list_agents',
+    description: NATIVE_TOOL_CONTRACTS.list.description,
+    parameters: {},
+    output: { schema: { type: 'array' }, render: () => [] },
+    async execute() { return [] },
+  }
+  const harnessed = harness({ globalTools: { list_agents: native } })
+  const agent = { id: 's-a', ctx: { tools: { get: () => native } } }
+  let nativeCalled = false
+  const result = await harnessed.controls.intercept({
+    name: 'list_agents',
+    arguments: {},
+    agent,
+    signal: new AbortController().signal,
+  }, async () => {
+    nativeCalled = true
+    return { isError: false, value: [] }
+  })
+  assert.equal(nativeCalled, false)
+  assert.equal(result.value[0].name, 'Lead')
 })
 
 test('interception forwards the live exec.arguments shape to tool bodies', async () => {

@@ -126,7 +126,7 @@ All routes require the loopback token and exact Host/Origin checks.
 
 ## 9. Verification
 
-- Automated: `node --test tests/*.test.mjs` — 185 pass / 0 fail.
+- Automated: `node --test tests/*.test.mjs` — 186 pass / 0 fail.
 - Live 2026-11-20: `team_list`, explicit `team` scope, Team Lead owner
   resolution, revision changes, duplicate-label rejection, and Team task
   isolation passed. A `composition_task` create/update output leak was found,

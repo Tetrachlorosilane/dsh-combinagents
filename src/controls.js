@@ -1644,7 +1644,16 @@ export function createControls({
     const definition = handlers.get(exec?.name)
     if (definition === undefined) return next()
     const current = ctx.get?.('tools')?.get?.(exec.name, exec.agent)
-    const known = nativeDefinitions.get(exec.name)
+    let known = nativeDefinitions.get(exec.name)
+    if (known === undefined && current !== undefined && current !== definition
+      && current.description === definition.description) {
+      // HMR/legacy sessions can execute before attach() observed the native
+      // definition. Seed the exact native contract here; a same-name tool with
+      // a different description still belongs to another plugin and is left
+      // alone by the check below.
+      known = current
+      nativeDefinitions.set(exec.name, current)
+    }
     // Never steal a same-name tool installed by another plugin. Intercept the
     // observed native definition or this plugin's own static fallback.
     if (current !== undefined && current !== definition && current !== known) return next()
