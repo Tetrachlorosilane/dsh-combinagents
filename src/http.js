@@ -30,6 +30,9 @@ const ROUTES = new Set([
   '/state',
   '/grants',
   '/tasks',
+  '/teams',
+  '/create-team',
+  '/delete-team',
   '/create-task',
   '/update-task',
   '/create',
@@ -375,7 +378,15 @@ export function createApi({
     if (route === '/tasks') {
       const rootSessionId = url.searchParams.get('rootSessionId') ?? ''
       if (rootSessionId === '') throw new HttpError(400, 'INVALID_REQUEST', 'rootSessionId is required')
-      return json(200, { tasks: await manager.getTasks(rootSessionId) })
+      const teamId = url.searchParams.get('teamId')
+      return json(200, {
+        tasks: await manager.getTasks(rootSessionId, undefined, teamId === null || teamId === '' ? undefined : teamId),
+      })
+    }
+    if (route === '/teams') {
+      const rootSessionId = url.searchParams.get('rootSessionId') ?? ''
+      if (rootSessionId === '') throw new HttpError(400, 'INVALID_REQUEST', 'rootSessionId is required')
+      return json(200, { teams: await manager.listTeams(rootSessionId) })
     }
     if (route === '/state') {
       const rootSessionId = url.searchParams.get('rootSessionId')
@@ -404,6 +415,7 @@ export function createApi({
           observations: {},
           grants: {},
           tasks: [],
+          teams: [],
           storage: manager.storageMode,
         })
       }
@@ -418,6 +430,7 @@ export function createApi({
         observations,
         grants: await manager.getGrants(record.composition.rootSessionId, record),
         tasks: await manager.getTasks(record.composition.rootSessionId, record),
+        teams: await manager.listTeams(record.composition.rootSessionId, record),
         storage: manager.storageMode,
       })
     }
@@ -494,11 +507,25 @@ export function createApi({
       })
       return json(200, { grants })
     }
+    if (route === '/create-team') {
+      const teams = await manager.createTeam(body.rootSessionId, {
+        rootNodeId: body.rootNodeId,
+        nodeIds: body.nodeIds,
+        label: body.label,
+        createdBy: body.createdBy,
+      })
+      return json(200, { teams })
+    }
+    if (route === '/delete-team') {
+      const teams = await manager.deleteTeam(body.rootSessionId, body.teamId)
+      return json(200, { teams })
+    }
     if (route === '/create-task') {
       const tasks = await manager.createTask(body.rootSessionId, {
         subject: body.subject,
         description: body.description,
         ownerNodeId: body.ownerNodeId,
+        teamId: body.teamId,
         blockedBy: body.blockedBy,
         writeScopes: body.writeScopes,
         createdBy: 'user',
@@ -511,6 +538,7 @@ export function createApi({
         taskId: body.taskId,
         expectedRevision: body.expectedRevision,
         action: body.action,
+        teamId: body.teamId,
         actor: 'user',
       })
       return json(200, { tasks })

@@ -23,6 +23,7 @@ function fakeStore(initial = new Map()) {
   const policies = new Map()
   const tasks = new Map()
   const clones = new Map()
+  const teams = new Map()
   return {
     mode: 'memory',
     async get(key) {
@@ -61,6 +62,12 @@ function fakeStore(initial = new Map()) {
     },
     async listTasks(rootSessionId) {
       return [...tasks.entries()].filter(([, task]) => task.rootSessionId === rootSessionId)
+    },
+    async getTeam(key) { return teams.get(key) },
+    async putTeam(key, value) { teams.set(key, value) },
+    async deleteTeam(key) { teams.delete(key) },
+    async listTeams(rootSessionId) {
+      return [...teams.values()].filter((team) => team.rootSessionId === rootSessionId)
     },
     async getClone(key) { return clones.get(key) },
     async putClone(key, value) { clones.set(key, value) },
@@ -677,6 +684,155 @@ test('creates and transitions plugin-owned tasks with a revision guard', async (
   await rejectsWithCode(manager.createTask('s-a', { subject: 'Bad owner', ownerNodeId: 'missing' }), 'UNKNOWN_NODE')
 })
 
+test('supports claim, release, dependencies, reassign, and dependent-safe delete', async () => {
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(['s-a', 's-b']) })
+  await manager.create('s-a')
+  const root = (await manager.state('s-a')).composition.nodes[0]
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: root.id })
+  const b = (await manager.state('s-a')).composition.nodes.find((node) => node.sessionId === 's-b')
+  await rejectsWithCode(manager.createTask('s-a', { subject: 'Bad dependency', blockedBy: ['missing'] }), 'TASK_NOT_FOUND')
+
+  let tasks = await manager.createTask('s-a', { subject: 'First', description: 'One', ownerNodeId: b.id })
+  let first = tasks[0]
+  const secondBoard = await manager.createTask('s-a', { subject: 'Second', description: 'Two', blockedBy: [first.id] })
+  let second = secondBoard.find((task) => task.id !== first.id)
+  await rejectsWithCode(
+    manager.updateTask('s-a', { taskId: second.id, expectedRevision: 1, action: 'claim', actor: 's-b' }),
+    'TASK_BLOCKED',
+  )
+
+  tasks = await manager.updateTask('s-a', { taskId: first.id, expectedRevision: 1, action: 'claim', actor: 's-b' })
+  first = tasks.find((task) => task.id === first.id)
+  assert.equal(first.status, 'in_progress')
+  assert.equal(first.ownerNodeId, b.id)
+  tasks = await manager.updateTask('s-a', { taskId: first.id, expectedRevision: 2, action: 'release', actor: 's-b' })
+  first = tasks.find((task) => task.id === first.id)
+  assert.equal(first.status, 'pending')
+  assert.equal(first.ownerNodeId, null)
+  tasks = await manager.updateTask('s-a', { taskId: first.id, expectedRevision: 3, action: 'claim', actor: 's-b' })
+  first = tasks.find((task) => task.id === first.id)
+  tasks = await manager.updateTask('s-a', { taskId: first.id, expectedRevision: 4, action: 'complete', actor: 's-b' })
+  first = tasks.find((task) => task.id === first.id)
+  assert.equal(first.status, 'completed')
+  tasks = await manager.updateTask('s-a', { taskId: second.id, expectedRevision: 1, action: 'claim', actor: 's-b' })
+  second = tasks.find((task) => task.id === second.id)
+  assert.equal(second.status, 'in_progress')
+  await rejectsWithCode(
+    manager.updateTask('s-a', { taskId: first.id, expectedRevision: 5, action: 'delete', actor: 's-b' }),
+    'TASK_HAS_DEPENDENTS',
+  )
+  tasks = await manager.updateTask('s-a', {
+    taskId: second.id,
+    expectedRevision: 2,
+    action: 'edit',
+    subject: 'Second edited',
+    writeScopes: ['src/'],
+    actor: 's-b',
+  })
+  second = tasks.find((task) => task.id === second.id)
+  assert.equal(second.subject, 'Second edited')
+  assert.deepEqual(second.writeScopes, ['src/'])
+
+  tasks = await manager.createTask('s-a', { subject: 'Third', description: 'Three' })
+  let third = tasks.find((task) => task.subject === 'Third')
+  tasks = await manager.updateTask('s-a', {
+    taskId: third.id,
+    expectedRevision: 1,
+    action: 'reassign',
+    ownerNodeId: b.id,
+    actor: 's-a',
+  })
+  third = tasks.find((task) => task.id === third.id)
+  assert.equal(third.ownerNodeId, b.id)
+  assert.equal(third.status, 'in_progress')
+  tasks = await manager.createTask('s-a', { subject: 'Fourth', description: 'Four' })
+  const fourth = tasks.find((task) => task.subject === 'Fourth')
+  await manager.updateTask('s-a', {
+    taskId: third.id,
+    expectedRevision: 2,
+    action: 'set_dependencies',
+    blockedBy: [fourth.id],
+    actor: 's-b',
+  })
+  await rejectsWithCode(
+    manager.updateTask('s-a', {
+      taskId: fourth.id,
+      expectedRevision: 1,
+      action: 'set_dependencies',
+      blockedBy: [third.id],
+      actor: 's-a',
+    }),
+    'TASK_DEPENDENCY_CYCLE',
+  )
+  await manager.updateTask('s-a', { taskId: second.id, expectedRevision: 3, action: 'delete', actor: 's-b' })
+  await manager.updateTask('s-a', { taskId: first.id, expectedRevision: 5, action: 'delete', actor: 's-b' })
+  assert.equal((await manager.getTasks('s-a')).some((task) => task.id === first.id), false)
+})
+
+test('creates connected Team subtrees and scopes tasks to them', async () => {
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(['s-a', 's-b', 's-c', 's-d']) })
+  await manager.create('s-a')
+  const root = (await manager.state('s-a')).composition.nodes[0]
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: root.id })
+  await manager.addNode('s-a', { sessionId: 's-c', parentId: root.id })
+  let state = await manager.state('s-a')
+  const b = state.composition.nodes.find((node) => node.sessionId === 's-b')
+  const c = state.composition.nodes.find((node) => node.sessionId === 's-c')
+  const teams = await manager.createTeam('s-a', { rootNodeId: b.id, label: 'B team' })
+  assert.equal(teams.length, 1)
+  assert.equal(teams[0].label, 'B team')
+  await rejectsWithCode(manager.createTeam('s-a', { rootNodeId: root.id, label: 'overlap' }), 'TEAM_OVERLAP')
+  await rejectsWithCode(manager.createTeam('s-a', { rootNodeId: 'missing' }), 'UNKNOWN_NODE')
+  const teamId = teams[0].id
+  await rejectsWithCode(
+    manager.createTask('s-a', { subject: 'Outside', teamId, ownerNodeId: c.id }),
+    'TEAM_MEMBER_REQUIRED',
+  )
+  const created = await manager.createTask('s-a', {
+    subject: 'Team task',
+    description: 'Scoped',
+    teamId,
+    ownerNodeId: b.id,
+  })
+  const task = created.find((candidate) => candidate.subject === 'Team task')
+  assert.equal(task.teamId, teamId)
+  assert.equal((await manager.getTasks('s-a', undefined, teamId)).length, 1)
+  assert.equal((await manager.getTasks('s-a', undefined, null)).length, 0)
+  await rejectsWithCode(
+    manager.updateTask('s-a', {
+      taskId: task.id,
+      expectedRevision: 1,
+      action: 'reassign',
+      ownerNodeId: c.id,
+      teamId,
+      actor: 's-b',
+    }),
+    'TEAM_MEMBER_REQUIRED',
+  )
+  await manager.updateTask('s-a', {
+    taskId: task.id,
+    expectedRevision: 1,
+    action: 'claim',
+    teamId,
+    actor: 's-b',
+  })
+  await manager.deleteTeam('s-a', teamId)
+  assert.deepEqual(await manager.listTeams('s-a'), [])
+  assert.equal((await manager.getTasks('s-a', undefined, teamId)).length, 0)
+  await rejectsWithCode(manager.createTeam('s-a', {
+    rootNodeId: b.id,
+    nodeIds: [b.id, c.id],
+    label: 'disconnected',
+  }), 'TEAM_NOT_CONNECTED')
+  const connected = await manager.createTeam('s-a', {
+    rootNodeId: root.id,
+    nodeIds: [root.id, b.id],
+    label: 'connected subset',
+  })
+  assert.equal(connected.length, 1)
+  assert.deepEqual(connected[0].nodeIds, [root.id, b.id])
+})
+
 test('sync-native refuses a child already owned by another composition', async () => {
   const warnings = []
   const tree = [
@@ -779,15 +935,11 @@ test('records task provenance and limits updates to the owner or an ancestor', a
   const userTask = (await manager.createTask('s-a', { subject: 'Unowned task' }))
     .find((entry) => entry.subject === 'Unowned task')
   assert.equal(userTask.createdBy, 'user')
-  await rejectsWithCode(
-    manager.updateTask('s-a', { taskId: userTask.id, expectedRevision: 1, action: 'delete', actor: 's-a' }),
-    'TASK_FORBIDDEN',
-  )
   const remaining = await manager.updateTask('s-a', {
     taskId: userTask.id,
     expectedRevision: 1,
     action: 'delete',
-    actor: 'user',
+    actor: 's-a',
   })
   assert.equal(remaining.some((entry) => entry.id === userTask.id), false)
 })

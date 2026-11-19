@@ -17,6 +17,9 @@ test('client confirmations use the DSH-themed dialog instead of browser dialogs'
   assert.match(source, /overflowY: 'auto'/)
   assert.match(source, /onClose: closePicker/)
   assert.match(source, /adding === false/)
+  assert.match(source, /\/create-team/)
+  assert.match(source, /activeTeamId/)
+  assert.match(source, /teamMembers/)
 })
 
 test('client module registers one tab type, its body, and the header utility', async () => {

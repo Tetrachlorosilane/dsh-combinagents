@@ -38,8 +38,9 @@ particular:
   the merged execution interceptor for `send_message` / `interrupt_agent`
   implements the composition bridge, gated by per-edge grants plus approval.
 - Six native names keep their native definitions; a `tools/execute` interceptor
-  supplies composition values. `composition_task` is the only globally
-  registered extra tool. Native tool schemas are unchanged.
+  supplies composition values. `composition_task` is the legacy aggregate; when
+  native Agent Teams is absent the plugin also registers four Team-shaped task
+  tools over the composition-owned board. Native tool schemas are unchanged.
 - External/one-shot agents can be visible leaves but cannot receive follow-ups.
 - Cache-friendly behavior is a design constraint, not an optimization detail.
 
@@ -161,7 +162,7 @@ Implemented DSH storage domain:
 domain: combinagents
 version: 1
 layout: per-record
-tables: compositions, policies, audit, audit_archive, tasks, clones
+tables: compositions, policies, audit, audit_archive, tasks, clones, teams
 ```
 
 Record id: `rootSessionId`. Record payload: the composition (including its
@@ -281,7 +282,7 @@ GET  /sessions?query=...           discoverable sessions + metadata
 GET  /titles?ids=...               lazy title batch for the picker
 GET  /external?rootSessionId=...   external/one-shot native leaves
 GET  /summary?sessionId=...        resolved root + composition size + cached native count
-GET  /state?rootSessionId=...      composition + observed nodes
+GET  /state?rootSessionId=...      composition + observed nodes + Teams
 GET  /state?sessionId=...          same, resolved from a member session
 GET  /grants?rootSessionId=...     per-edge message/interrupt grants
 POST /create                       create empty composition for a root
@@ -294,8 +295,11 @@ POST /rename-node
 POST /set-title                    { title }
 POST /set-grant                    { edgeId, allowMessage?, allowInterrupt? }
 GET  /tasks?rootSessionId=...      plugin-owned composition tasks
-POST /create-task                  { subject, description?, ownerNodeId? }
-POST /update-task                  { taskId, expectedRevision, action }
+GET  /teams?rootSessionId=...      composition-scoped Teams
+POST /create-team                  { rootSessionId, rootNodeId, label? }
+POST /delete-team                  { rootSessionId, teamId }
+POST /create-task                  { subject, description?, ownerNodeId?, teamId? }
+POST /update-task                  { taskId, expectedRevision, action, teamId? }
 POST /delete-composition           remove the overlay record; sessions untouched
 GET  /session-cleanup              preview tracked orphan/one-shot cleanup candidates
 GET  /session-cleanup/session?sessionId=...  brief first-user/last-message excerpt
@@ -406,7 +410,12 @@ Header
 
 Notice
   "Composition edges are advisory. Native messaging and task authority still
-  follow DSH's original subagent tree."
+  follow DSH's original subagent tree.
+
+Teams
+  Team selector (composition board or a connected subtree)
+  Create team / delete team; task board follows the selected scope
+
 
 Tree
   [source badge] label          native parent: ...
@@ -465,8 +474,9 @@ native tool definitions intact and registers one `tools/execute` interceptor:
   schema and renders it through the native output declaration;
 - non-intercepted names call `next()` unchanged.
 
-`composition_task` is the only globally registered extra tool. The old
-`composition_*` aliases are removed. `list_subagent_models` and every other
+`composition_task` and, when native Agent Teams is absent, the four
+Team-shaped task tools are globally registered extras. Native Team wins when
+mounted. The old `composition_*` aliases are removed. `list_subagent_models` and every other
 unique native tool are untouched.
 
 Semantics:
@@ -489,8 +499,9 @@ Semantics:
   config can supply the deployment default.
 - `wait_agent` mirrors native caller-inbox wait semantics and de-duplicates
   already-reported input within one root call.
-- `composition_task` lists/creates/updates the plugin-owned board; it never
-  writes DSH Team state.
+- `composition_task` lists/creates/updates the plugin-owned board; the four
+  Team-shaped tools expose it with native Team field names/actions and never
+  write DSH Team state.
 - No plugin prompt section is added; the native `subagent:identity` and
   `tool:subagent` sections remain in place.
 - Tool definitions are static; composition membership and grants never change a
@@ -680,7 +691,8 @@ the archived/cold-resume boundary and consider an audit viewer.
 8. Standard mode keeps the native delegation plugins mounted; one
    `tools/execute` interceptor replaces execution for six native names while
    their schemas/descriptions/output/prompt identity/restrictions stay native;
-   `composition_task` is global. Removing the listener restores the native path.
+   `composition_task` and the Team-shaped task tools are global (unless native
+   Team is mounted). Removing the listener restores the native path.
 9. No session header, cwd, sandbox, approval, or permission-preset write occurs.
 10. Unit tests pass; the GUI is checked in light/dark themes and at narrow width.
 11. A DSH-side smoke test verifies the tab opens from the header button and the

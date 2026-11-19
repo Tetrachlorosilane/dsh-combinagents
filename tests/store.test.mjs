@@ -295,6 +295,29 @@ test('moves a task between roots without leaving a source ghost', async () => {
   assert.deepEqual(await store.listTasks('root-b'), [])
 })
 
+test('stores Teams by composition root and deletes them independently', async () => {
+  const store = createStore({ get: () => undefined, logger: { info() {}, warn() {} } })
+  await store.ready
+  await store.putTeam('team-a', {
+    id: 'team-a', rootSessionId: 'root-a', rootNodeId: 'node-a', label: 'A',
+    createdAt: 1, updatedAt: 1,
+  })
+  await store.putTeam('team-b', {
+    id: 'team-b', rootSessionId: 'root-a', rootNodeId: 'node-b', label: 'B',
+    createdAt: 2, updatedAt: 2,
+  })
+  await store.putTeam('team-c', {
+    id: 'team-c', rootSessionId: 'root-b', rootNodeId: 'node-c', label: 'C',
+    createdAt: 3, updatedAt: 3,
+  })
+  assert.deepEqual((await store.listTeams('root-a')).map((team) => team.id), ['team-a', 'team-b'])
+  assert.deepEqual((await store.listTeams('root-b')).map((team) => team.id), ['team-c'])
+  assert.equal((await store.getTeam('team-a')).label, 'A')
+  await store.deleteTeam('team-a')
+  assert.equal(await store.getTeam('team-a'), undefined)
+  assert.deepEqual((await store.listTeams('root-a')).map((team) => team.id), ['team-b'])
+})
+
 test('indexes clones by new root and prunes old audit rows', async () => {
   const store = createStore({ get: () => undefined, logger: { info() {}, warn() {} } })
   await store.ready

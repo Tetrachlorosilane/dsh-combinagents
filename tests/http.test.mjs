@@ -26,6 +26,7 @@ function makeHarness({ running = new Set(), cloneManager = undefined } = {}) {
   const data = new Map()
   const policies = new Map()
   const tasks = new Map()
+  const teams = new Map()
   const store = {
     mode: 'memory',
     async get(key) {
@@ -61,6 +62,12 @@ function makeHarness({ running = new Set(), cloneManager = undefined } = {}) {
     },
     async listTasks(rootSessionId) {
       return [...tasks.entries()].filter(([, task]) => task.rootSessionId === rootSessionId)
+    },
+    async getTeam(key) { return teams.get(key) },
+    async putTeam(key, value) { teams.set(key, value) },
+    async deleteTeam(key) { teams.delete(key) },
+    async listTeams(rootSessionId) {
+      return [...teams.values()].filter((team) => team.rootSessionId === rootSessionId)
     },
   }
   const summaries = new Map([
@@ -533,6 +540,35 @@ test('stores per-edge grants and exposes them on state', async () => {
   assert.equal(state.data.grants[edge.id].allowInterrupt, true)
   const grants = await call(api, authorized('GET', '/dsh-combinagents/grants?rootSessionId=s-a'))
   assert.equal(grants.data.grants[edge.id].allowMessage, true)
+})
+
+test('creates a Team subtree and scopes its task board through the bridge', async () => {
+  const { api } = makeHarness()
+  const created = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  const root = created.data.composition.nodes[0]
+  const added = await call(api, authorized('POST', '/dsh-combinagents/add-node', JSON.stringify({
+    rootSessionId: 's-a', sessionId: 's-b', parentId: root.id,
+  })))
+  const b = added.data.composition.nodes.find((node) => node.sessionId === 's-b')
+  const teamResponse = await call(api, authorized('POST', '/dsh-combinagents/create-team', JSON.stringify({
+    rootSessionId: 's-a', rootNodeId: b.id, label: 'B team',
+  })))
+  assert.equal(teamResponse.status, 200)
+  assert.equal(teamResponse.data.teams.length, 1)
+  const team = teamResponse.data.teams[0]
+  const task = await call(api, authorized('POST', '/dsh-combinagents/create-task', JSON.stringify({
+    rootSessionId: 's-a', subject: 'Scoped', description: 'Team work', teamId: team.id, ownerNodeId: b.id,
+  })))
+  assert.equal(task.status, 200)
+  assert.equal(task.data.tasks[0].teamId, team.id)
+  const state = await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))
+  assert.equal(state.data.teams[0].id, team.id)
+  const removed = await call(api, authorized('POST', '/dsh-combinagents/delete-team', JSON.stringify({
+    rootSessionId: 's-a', teamId: team.id,
+  })))
+  assert.equal(removed.status, 200)
+  assert.equal(removed.data.teams.length, 0)
+  assert.equal((await call(api, authorized('GET', '/dsh-combinagents/state?rootSessionId=s-a'))).data.tasks.length, 0)
 })
 
 test('moves another composition root under a target node through add-node', async () => {

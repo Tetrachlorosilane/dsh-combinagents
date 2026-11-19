@@ -57,10 +57,11 @@ export function apply(ctx, config = {}) {
   })
 
   ctx.effect(() => ctx.inject(['tools', 'agents'], (toolCtx) => {
-    // `composition_task` is the only globally unique tool. The six
+    // `composition_task` and the four Team-shaped task tools are global;
+    // native Team names win when that profile already mounts them. The six
     // native-name tools are installed per Agent so they shadow the native
     // definitions without changing the global registry other plugins read.
-    const disposeTask = toolCtx.tools.register(controls.taskDefinition)
+    const disposeTasks = controls.register(toolCtx.tools)
     const attached = new Map()
     const attach = (agent) => {
       if (agent === undefined || attached.has(agent.id)) return
@@ -87,7 +88,7 @@ export function apply(ctx, config = {}) {
       offCreated?.()
       for (const attachment of attached.values()) attachment.dispose()
       attached.clear()
-      disposeTask()
+      disposeTasks()
     }
   }), 'dsh-combinagents: control tools')
 

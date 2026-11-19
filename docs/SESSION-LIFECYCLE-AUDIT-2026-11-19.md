@@ -224,7 +224,7 @@ composition 是三条会产生无 overlay 归属 Session 的路径。**
 - `client.js`：组合 tab 的 Session cleanup 面板、候选列表、DSH 风格确认框，
   以及 clone/bud 的节点数/体积提示。
 - `README.md` / `README.zh.md` / `AGENTS.md`：同步更新。
-- 全量测试 **165 pass / 0 fail**，覆盖 cleanup 分类/删除/保护、failed clone
+- 全量测试 **171 pass / 0 fail**，覆盖 cleanup 分类/删除/保护、failed clone
   journal、orphaned clone record、fork mirror 重试和新增 HTTP 路由。
 
 **仍然不做**：不自动删除任何真实 Session；不对 live Session 做后台清理；不把

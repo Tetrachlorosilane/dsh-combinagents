@@ -6,8 +6,8 @@ separate composed preset and it does not remove native delegation rows.
 
 ## How replacement works
 
-The plugin owns one global tool (`composition_task`) and one execution
-interceptor:
+The plugin owns `composition_task`, the four Team-shaped task tools (when native
+Agent Teams is absent), and one execution interceptor:
 
 ```js
 ctx.on('tools/execute', async (exec, next) => {
@@ -29,9 +29,10 @@ the plugin removes the listener and restores the native executor without any
 tool-registry mutation.
 
 The old `composition_list_agents` / `composition_send_message` /
-`composition_interrupt_agent` aliases are removed. `composition_task` is the
-only globally registered extra tool. Native `list_subagent_models` and all
-other unique tools are untouched.
+`composition_interrupt_agent` aliases are removed. `composition_task` remains a
+legacy aggregate; `team_task_create/list/get/update` are also registered when
+native Agent Teams is absent. Native Team tools win when that service is
+mounted. Native `list_subagent_models` and all other unique tools are untouched.
 
 ## Fallback for legacy composed profiles
 
@@ -84,7 +85,8 @@ under the old composed preset keep that preset; they get fallback definitions.
   with `agentPreset`.
 - `wait_agent` keeps the native timeout/output contract and adds same-call input
   de-duplication.
-- `composition_task` remains the plugin-owned task board; it is not DSH Team.
+- `composition_task` remains the plugin-owned task board; the four Team-shaped
+  tools expose the same board and never write native Team state.
 - The tab has a "show one-shot agents" checkbox, off by default; one-shot nodes
   are filtered from the tree, with any continuable descendants promoted.
 
@@ -100,16 +102,18 @@ under the old composed preset keep that preset; they get fallback definitions.
 - The composition-aware tools still return `NOT_IN_COMPOSITION` when the caller
   has no composition; `subagent` creates one for a top-level caller.
 - Labels are the model-facing `name`; duplicate labels are ambiguous.
-- `composition_task` is an extra global tool and therefore changes the tool
+- `composition_task` plus the Team-shaped task tools are extra global tools and
+  therefore change the tool
   catalog relative to a pure native session; the six delegated tools do not.
 
 ## Verification
 
 Open a new standard session and confirm:
 
-1. the tool list contains the six native names plus `composition_task`;
+1. the tool list contains the six native names plus `composition_task` and the
+   Team-shaped task tools when native Team is absent;
 2. the six descriptions/parameters are the native ones;
 3. `subagent` creates a composition child and an auto-granted edge;
 4. `list_agents` returns the composition names/status;
-5. disabling the plugin leaves the native tools and removes `composition_task`;
+5. disabling the plugin leaves the native tools and removes the plugin task tools;
 6. the legacy composed session still gets fallback tools and no aliases.

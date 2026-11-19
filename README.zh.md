@@ -96,7 +96,8 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 | Clone whole tree | 创建独立的新树，源树不变 |
 | Bud as new root | 把某节点及其子树克隆为新的 root |
 | Show one-shot agents | 显示默认隐藏的一次性节点 |
-| Composition tasks | 创建、开始、完成、重开、删除插件任务 |
+| Teams | 选择 lead 与连通成员创建 Team；任务板和任务工具限定在这组节点内 |
+| Shared tasks | 原生形状的任务板：创建、列表、读取、认领/释放、编辑、依赖、重派、完成、重开、删除 |
 | Session cleanup | 预览孤儿克隆会话和一次性占位，可展开首条用户消息/最后消息摘要；删除是独立的确认步骤 |
 | Open conversation | 打开本地会话；外部节点不提供 |
 
@@ -117,7 +118,7 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 | `subagent_fork` | 同上，使用 fork provider |
 | `wait_agent` | 原生 caller-inbox 等待语义 |
 
-`composition_task` 是唯一全局注册的额外工具。旧的 `composition_list_agents`、`composition_send_message`、`composition_interrupt_agent` 别名已删除。Native `list_subagent_models` 和其他 unique tool 不受影响。
+插件还在组合自有任务板上提供 **Team 形状的任务 API**。当 profile 未挂载原生 Team 服务/工具时，注册 `team_task_create`、`team_task_list`、`team_task_get`、`team_task_update`，字段、动作、CAS revision、依赖、ready 和 write-scope warning 与原生 Team 任务工具一致。Team 是一组连通的组合节点；选择 lead 会预选其子树，成员可继续取消。调用者属于某个 Team 时，这些工具限定在该 Team 的任务板与成员内。它们只写插件任务板，不写原生 Team 状态；挂载 Agent Teams 时原生工具优先，不注册这些别名。`composition_task` 保留为旧版单工具聚合入口。Native `list_subagent_models` 和其他 unique tool 不受影响。
 
 `list_agents` 默认不列出 **one-shot** 和 **external** 行，与 native 的 continuable 列表一致。One-shot 目标不能接收 follow-up。由于 native output schema 没有单独的 `mode` 字段，lifecycle mode 被写进行 description。
 

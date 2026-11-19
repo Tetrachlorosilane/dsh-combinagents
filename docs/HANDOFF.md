@@ -17,8 +17,9 @@
 > 元数据、标题按 `/titles` 延迟批量折叠，不再为打开选择器扫描全部会话日志。2026-11-18 起
 > `mode` 已移除：插件在标准 profile 上为每个 Agent 安装六个原生同名的 **scoped
 > wrapper**，复制原生 schema/description/output，仅替换 `execute`；禁用插件即恢复原生
-> 路径。`composition_*` 别名已删除，`composition_task` 是唯一全局新增工具。旧
-> composed preset 仅保留给历史会话，新会话默认 `standard`；需重启 Host 后新建会话验证。
+> 路径。`composition_*` 别名已删除；`composition_task` 保留为旧聚合入口，未挂载
+> 原生 Agent Teams 时另注册四个 Team 形状任务工具（`team_task_create/list/get/update`）
+> 到组合任务板，原生 Team 优先。旧 composed preset 仅保留给历史会话，新会话默认 `standard`；需重启 Host 后新建会话验证。
 > 跨树消息（产品中的 Bridge 能力）由同名 `send_message` / `interrupt_agent` + 逐边授权
 > + approval + 审计实现，不是独立一层；克隆/出芽已实现
 > （`src/clone.js` + `src/clone-manager.js`），GUI 复验待做。
@@ -641,11 +642,14 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
   迁移授权，detach 删除授权；
 - 已实现：组合标题编辑（`/set-title` + tab 头部）；
 - 已实现：插件自有任务板（`tasks` 表 + tab UI + `/tasks`、`/create-task`、
-  `/update-task`，revision 冲突保护）；不写 DSH Team；
+  `/update-task`，revision 冲突保护）；另支持把组合树中一组连通节点
+  创建为 Team（选择 lead 会预选其子树）（`teams` 表、`/create-team`、`/delete-team`），Team 任务按子树
+  作用域隔离，并提供原生 Team 形状的 `team_task_*` 工具；不写 DSH Team；
 - 已实现（2026-11-18 合并模式）：标准 profile 保留原生 delegation 插件；插件为每个
   live Agent 在 `agent.ctx` 安装六个同名 **scoped wrapper**，复制原生
   schema/description/output，只替换 `execute`；卸载即恢复原生。`composition_*` 别名
-  删除，`composition_task` 是唯一全局新增工具。`subagent`/`subagent_fork` 通过
+  删除；`composition_task` 保留，另有四个 Team 形状任务工具在无原生 Team 时注册。
+  `subagent`/`subagent_fork` 通过
   `startActivation` 创建、挂入组合、用原生名标记并自动授权该边；`send_message` 对
   原生后代优先走原生 relay（含冷恢复），live 跨树目标走组合 relay；`wait_agent`
   复制原生 inbox 等待语义。scoped wrapper 与 fallback/升级已有单测；

@@ -44,6 +44,9 @@ export const TASK_TABLE = 'tasks'
 /** Table holding clone/bud provenance records. */
 export const CLONE_TABLE = 'clones'
 
+/** Table holding composition-scoped Team definitions. */
+export const TEAM_TABLE = 'teams'
+
 /**
  * Validate one durable composition record.
  * @param {unknown} raw - stored value.
@@ -150,6 +153,33 @@ export const cloneRecordSchema = {
   },
 }
 
+/** Runtime-compatible schema for one composition-scoped Team. */
+export const teamRecordSchema = {
+  parse(raw) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new TypeError('team record must be an object')
+    }
+    if (typeof raw.id !== 'string' || raw.id.length === 0
+      || typeof raw.rootSessionId !== 'string' || raw.rootSessionId.length === 0
+      || typeof raw.rootNodeId !== 'string' || raw.rootNodeId.length === 0
+      || typeof raw.label !== 'string'
+      || !Number.isSafeInteger(raw.createdAt) || raw.createdAt < 0
+      || !Number.isSafeInteger(raw.updatedAt) || raw.updatedAt < 0
+      || (raw.nodeIds !== undefined
+        && (!Array.isArray(raw.nodeIds) || raw.nodeIds.some((id) => typeof id !== 'string')))) {
+      throw new TypeError('team record is malformed')
+    }
+    return raw
+  },
+  safeParse(raw) {
+    try {
+      return { success: true, data: teamRecordSchema.parse(raw) }
+    } catch (error) {
+      return { success: false, error }
+    }
+  },
+}
+
 /** Runtime-compatible schema for one plugin-owned task. */
 export const taskRecordSchema = {
   parse(raw) {
@@ -187,6 +217,7 @@ export const COMPOSITION_DOMAIN_SPEC = {
     [AUDIT_ARCHIVE_TABLE]: { valueSchema: auditRecordSchema },
     [TASK_TABLE]: { valueSchema: taskRecordSchema },
     [CLONE_TABLE]: { valueSchema: cloneRecordSchema },
+    [TEAM_TABLE]: { valueSchema: teamRecordSchema },
   },
 }
 
@@ -767,6 +798,31 @@ export function createStore(ctx, options = {}) {
       await loadTaskIndex()
       return [...(taskIndex.byRoot.get(rootSessionId)?.entries() ?? [])]
         .filter(([, record]) => record?.rootSessionId === rootSessionId)
+    },
+    async getTeam(teamId) {
+      const table = await tableOf(TEAM_TABLE)
+      if (table !== null) return table.get(teamId)
+      return memory.get(TEAM_TABLE).get(teamId)
+    },
+    async putTeam(teamId, record) {
+      assertWritable()
+      const table = await tableOf(TEAM_TABLE)
+      if (table !== null) await durableWrite(() => table.put(teamId, record))
+      else memory.get(TEAM_TABLE).set(teamId, record)
+    },
+    async deleteTeam(teamId) {
+      assertWritable()
+      const table = await tableOf(TEAM_TABLE)
+      if (table !== null) await durableWrite(() => table.delete(teamId))
+      else memory.get(TEAM_TABLE).delete(teamId)
+    },
+    async listTeams(rootSessionId) {
+      const table = await tableOf(TEAM_TABLE)
+      const entries = table !== null ? [...table.entries()] : [...memory.get(TEAM_TABLE).entries()]
+      return entries
+        .map(([, record]) => record)
+        .filter((record) => record?.rootSessionId === rootSessionId)
+        .sort((left, right) => left.createdAt - right.createdAt)
     },
     async getClone(cloneId) {
       const table = await tableOf(CLONE_TABLE)

@@ -497,6 +497,7 @@ test('tool definitions use native names and preserve contracts', () => {
   assert.deepEqual(controls.definitions.map((definition) => definition.name), [
     'list_agents', 'send_message', 'interrupt_agent',
     'subagent', 'subagent_fork', 'wait_agent', 'composition_task',
+    'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
   ])
   const byName = new Map(controls.definitions.map((definition) => [definition.name, definition]))
   for (const contract of [
@@ -556,11 +557,13 @@ test('subagent starts a native activation and mirrors the child', async () => {
   assert.deepEqual(harnessed.grantedEdges, [{ rootSessionId: 's-a', parentSessionId: 's-a', childSessionId: 's-child' }])
 })
 
-test('composition_task is the only globally registered definition', () => {
+test('composition_task and the four Team-shaped task tools are globally registered', () => {
   const { controls } = harness()
   const global = []
   controls.register({ register: (definition) => global.push(definition.name) })
-  assert.deepEqual(global, ['composition_task'])
+  assert.deepEqual(global, [
+    'composition_task', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
+  ])
 })
 
 test('subagent falls back to the configured agentPreset default', async () => {
@@ -789,6 +792,49 @@ test('task tool lists, creates, and updates the plugin board', async () => {
     },
     { kind: 'update', rootSessionId: 's-a', taskId: 't2', expectedRevision: 1, action: 'start', actor: 's-a' },
   ])
+})
+
+test('Team-shaped task tools expose the native view and owner filters', async () => {
+  const harnessed = harness()
+  const exec = { agent: harnessed.callerAgent, signal: new AbortController().signal }
+  const listed = await harnessed.tool('team_task_list').execute({ owner: 'Worker' }, exec)
+  assert.equal(listed.tasks.length, 1)
+  assert.equal(listed.tasks[0].owner, 'Worker')
+  assert.equal(listed.tasks[0].ready, true)
+  const got = await harnessed.tool('team_task_get').execute({ task_id: 't1' }, exec)
+  assert.equal(got.id, 't1')
+  assert.equal(got.owner, 'Worker')
+  const created = await harnessed.tool('team_task_create').execute({
+    subject: 'Native-shaped creation',
+    description: 'Details',
+    blocked_by: ['t1'],
+    write_scopes: ['src/'],
+  }, exec)
+  assert.equal(created.id, 't2')
+  const updated = await harnessed.tool('team_task_update').execute({
+    task_id: 't1',
+    expected_revision: 1,
+    action: 'claim',
+  }, exec)
+  assert.equal(updated.status, 'in_progress')
+  const createCall = harnessed.taskCalls.find((call) => call.kind === 'create')
+  assert.deepEqual(createCall.blockedBy, ['t1'])
+  assert.deepEqual(createCall.writeScopes, ['src/'])
+})
+
+test('does not replace native Team task tools when they are already mounted', () => {
+  const harnessed = harness()
+  const registered = []
+  const native = { name: 'team_task_create' }
+  harnessed.controls.register({
+    get: (name) => name === 'team_task_create' ? native : undefined,
+    register: (definition) => {
+      registered.push(definition.name)
+      return () => {}
+    },
+  })
+  assert.equal(registered.includes('team_task_create'), false)
+  assert.equal(registered.includes('team_task_list'), true)
 })
 
 test('hides one-shot nodes from list_agents and rejects follow-ups', async () => {

@@ -128,6 +128,7 @@ export function planClone({
       description: task.description,
       status: task.status,
       ownerSourceNodeId: task.ownerNodeId,
+      teamId: task.teamId ?? null,
       blockedBy: Array.isArray(task.blockedBy) ? [...task.blockedBy] : [],
       writeScopes: Array.isArray(task.writeScopes) ? [...task.writeScopes] : [],
     }))

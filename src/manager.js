@@ -632,10 +632,14 @@ export function createManager({
    * @param {object} [record] - already-read record for this root.
    * @returns {Promise<object[]>}
    */
-  async function getTasks(rootSessionId, record = undefined) {
+  async function getTasks(rootSessionId, record = undefined, teamId = undefined) {
     if (record === undefined) await requireRecord(rootSessionId)
     const entries = await store.listTasks(rootSessionId)
-    return entries.map(([, task]) => task).sort((left, right) => left.createdAt - right.createdAt)
+    return entries
+      .map(([, task]) => task)
+      .filter((task) => teamId === undefined
+        || (teamId === null ? task.teamId === null || task.teamId === undefined : task.teamId === teamId))
+      .sort((left, right) => left.createdAt - right.createdAt)
   }
 
   /**
@@ -649,6 +653,40 @@ export function createManager({
   }
 
   /**
+   * Resolve one Team's current members from the composition tree. A Team is a
+   * connected subtree rooted at `rootNodeId`; graph edits therefore change
+   * membership without rewriting the Team record.
+   * @param {object} composition - current graph.
+   * @param {object} team - team record.
+   * @returns {object[]} member nodes.
+   */
+  function teamNodes(composition, team) {
+    if (Array.isArray(team?.nodeIds) && team.nodeIds.length > 0) {
+      return team.nodeIds
+        .map((id) => composition.nodes.find((node) => node.id === id))
+        .filter((node) => node !== undefined)
+    }
+    const root = composition.nodes.find((node) => node.id === team?.rootNodeId)
+    if (root === undefined) return []
+    try {
+      return [root, ...descendantsOf(composition, root.id)]
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * @param {object} composition - current graph.
+   * @param {readonly object[]} teams - current teams.
+   * @param {string} nodeId - composition node.
+   * @returns {object|null} owning team.
+   */
+  function teamContainingNode(composition, teams, nodeId) {
+    return teams.find((team) => teamNodes(composition, team).some((node) => node.id === nodeId)) ?? null
+  }
+
+  /**
+   * A task may be changed by the user, its owner, or one of the owner's  /**
    * A task may be changed by the user, its owner, or one of the owner's
    * composition ancestors. Unowned tasks are user-only. Agents outside the
    * owner line must not complete or delete another member's work.
@@ -657,14 +695,57 @@ export function createManager({
    * @param {string} actor - `user` or a session id.
    * @returns {boolean}
    */
-  function taskActorAllowed(composition, task, actor) {
+  function taskActorAllowed(composition, task, actor, team = null) {
     if (actor === 'user') return true
     if (typeof actor !== 'string' || actor.length === 0) return false
-    if (task.ownerNodeId === null || task.ownerNodeId === undefined) return false
     const node = composition.nodes.find((candidate) => candidate.sessionId === actor)
     if (node === undefined) return false
+    if (team !== null) {
+      const members = teamNodes(composition, team)
+      if (!members.some((candidate) => candidate.id === node.id)) return false
+      if (node.id === team.rootNodeId) return true
+      if (node.id === task.ownerNodeId) return true
+      return false
+    }
+    const root = composition.nodes.find((candidate) => candidate.sessionId === composition.rootSessionId)
+    if (node.id === root?.id) return true
+    if (task.ownerNodeId === null || task.ownerNodeId === undefined) return false
     if (node.id === task.ownerNodeId) return true
     return isAncestor(composition, task.ownerNodeId, node.id)
+  }
+
+  /**
+   * A pending task is ready when every blocker is completed. Non-pending tasks
+   * are never ready to claim; the native list filter mirrors that rule.
+   * @param {object} task - task record.
+   * @param {readonly object[]} tasks - board snapshot.
+   * @returns {boolean}
+   */
+  function taskReady(task, tasks) {
+    if (task.status !== 'pending') return false
+    const byId = new Map(tasks.map((candidate) => [candidate.id, candidate]))
+    return (Array.isArray(task.blockedBy) ? task.blockedBy : [])
+      .every((id) => byId.get(id)?.status === 'completed')
+  }
+
+  /**
+   * @param {readonly object[]} tasks - board snapshot.
+   * @param {string} taskId - task being edited.
+   * @param {readonly string[]} blockedBy - proposed blockers.
+   * @returns {boolean} whether the proposed edge creates a cycle.
+   */
+  function dependencyCycle(tasks, taskId, blockedBy) {
+    const byId = new Map(tasks.map((task) => [task.id, task]))
+    const visit = (id, seen) => {
+      if (id === taskId) return true
+      if (seen.has(id)) return false
+      seen.add(id)
+      for (const next of byId.get(id)?.blockedBy ?? []) {
+        if (visit(next, seen)) return true
+      }
+      return false
+    }
+    return blockedBy.some((id) => visit(id, new Set()))
   }
 
   /**
@@ -681,6 +762,12 @@ export function createManager({
     }
     return withLock(rootSessionId, async () => {
       const record = await requireRecord(rootSessionId)
+      const teamId = typeof input.teamId === 'string' && input.teamId.length > 0 ? input.teamId : null
+      const team = teamId === null ? null : await store.getTeam?.(teamId)
+      if (teamId !== null && (team === undefined || team === null || team.rootSessionId !== rootSessionId)) {
+        throw new CompositionError('TEAM_NOT_FOUND', `team ${JSON.stringify(teamId)} does not exist in this composition`)
+      }
+      const members = team === null ? null : teamNodes(record.composition, team)
       const ownerNodeId = typeof input.ownerNodeId === 'string' && input.ownerNodeId.length > 0
         ? input.ownerNodeId
         : null
@@ -689,25 +776,45 @@ export function createManager({
         if (owner === undefined || owner.kind !== 'session') {
           throw new CompositionError('UNKNOWN_NODE', `owner node ${JSON.stringify(ownerNodeId)} is not a local session node`)
         }
+        if (members !== null && !members.some((node) => node.id === ownerNodeId)) {
+          throw new CompositionError('TEAM_MEMBER_REQUIRED', 'task owner must belong to the selected team')
+        }
       }
       const createdBy = textOf(input.createdBy, 128) ?? 'user'
       const actor = textOf(input.actor, 128) ?? 'user'
+      const existing = await getTasks(rootSessionId, undefined, teamId)
+      const blockedBy = [...new Set(Array.isArray(input.blockedBy)
+        ? input.blockedBy.filter((id) => typeof id === 'string' && id.length > 0)
+        : [])]
+      const known = new Set(existing.map((candidate) => candidate.id))
+      for (const id of blockedBy) {
+        if (!known.has(id)) throw new CompositionError('TASK_NOT_FOUND', `blocked task ${JSON.stringify(id)} does not exist`)
+      }
+      const writeScopes = [...new Set(Array.isArray(input.writeScopes)
+        ? input.writeScopes.map((scope) => textOf(scope, 500)).filter((scope) => scope.length > 0)
+        : [])]
       const task = {
         id: randomUUID(),
         rootSessionId,
+        teamId,
         subject,
         description: taskText(input.description, 8000),
         status: 'pending',
         ownerNodeId,
-        blockedBy: Array.isArray(input.blockedBy) ? input.blockedBy.filter((id) => typeof id === 'string') : [],
-        writeScopes: Array.isArray(input.writeScopes) ? input.writeScopes.filter((scope) => typeof scope === 'string') : [],
+        blockedBy,
+        writeScopes,
         revision: 1,
         createdAt: now(),
         updatedAt: now(),
         createdBy,
       }
       await store.putTask(task.id, task)
-      await recordAudit(rootSessionId, { kind: 'task', toNodeId: ownerNodeId ?? '', outcome: 'created', detail: { taskId: task.id, actor } })
+      await recordAudit(rootSessionId, {
+        kind: 'task',
+        toNodeId: ownerNodeId ?? '',
+        outcome: 'created',
+        detail: { taskId: task.id, actor, ...(teamId === null ? {} : { teamId }) },
+      })
       return getTasks(rootSessionId)
     })
   }
@@ -726,33 +833,325 @@ export function createManager({
       throw new CompositionError('INVALID_FIELD', 'expectedRevision must be a positive integer')
     }
     const action = input.action
-    if (action !== 'start' && action !== 'complete' && action !== 'reopen' && action !== 'delete') {
-      throw new CompositionError('INVALID_FIELD', 'action must be start, complete, reopen, or delete')
+    const actions = new Set([
+      'start', 'complete', 'reopen', 'delete',
+      'claim', 'release', 'edit', 'set_dependencies', 'reassign',
+    ])
+    if (!actions.has(action)) {
+      throw new CompositionError('INVALID_FIELD', 'unsupported task action')
     }
     return withLock(rootSessionId, async () => {
       const record = await requireRecord(rootSessionId)
-      const task = await store.getTask(input.taskId)
-      if (task === undefined || task.rootSessionId !== rootSessionId) {
+      const allTasks = await getTasks(rootSessionId)
+      const task = allTasks.find((candidate) => candidate.id === input.taskId)
+      if (task === undefined) {
         throw new CompositionError('TASK_NOT_FOUND', `task ${JSON.stringify(input.taskId)} does not exist`)
       }
-      const actor = textOf(input.actor, 128) ?? 'user'
-      if (!taskActorAllowed(record.composition, task, actor)) {
-        throw new CompositionError('TASK_FORBIDDEN', 'only the owner or an ancestor may change this task')
+      if (input.teamId !== undefined && (input.teamId ?? null) !== (task.teamId ?? null)) {
+        throw new CompositionError('TASK_NOT_FOUND', 'task is not in the selected team')
       }
+      const team = task.teamId === null || task.teamId === undefined ? null : await store.getTeam?.(task.teamId)
+      if (task.teamId !== null && task.teamId !== undefined && (team === undefined || team === null || team.rootSessionId !== rootSessionId)) {
+        throw new CompositionError('TEAM_NOT_FOUND', 'the task team no longer exists')
+      }
+      const tasks = allTasks.filter((candidate) => team === null
+        ? candidate.teamId === null || candidate.teamId === undefined
+        : candidate.teamId === team.id)
       if (task.revision !== input.expectedRevision) {
         throw new CompositionError('TASK_CONFLICT', 'the task changed; refresh before retrying')
       }
-      if (action === 'delete') {
+      const actor = textOf(input.actor, 128) ?? 'user'
+      const actorNode = actor === 'user'
+        ? undefined
+        : record.composition.nodes.find((node) => node.sessionId === actor)
+      const ownerAllowed = taskActorAllowed(record.composition, task, actor, team)
+      const requireOwner = () => {
+        if (!ownerAllowed) throw new CompositionError('TASK_FORBIDDEN', 'only the owner or an ancestor may change this task')
+      }
+      let next
+      switch (action) {
+        case 'claim': {
+          if (actorNode === undefined) throw new CompositionError('TASK_FORBIDDEN', 'claim requires a composition agent')
+          if (team !== null && !teamNodes(record.composition, team).some((node) => node.id === actorNode.id)) {
+            throw new CompositionError('TASK_FORBIDDEN', 'only a member of this team may claim its tasks')
+          }
+          if (task.ownerNodeId !== null && task.ownerNodeId !== undefined && task.ownerNodeId !== actorNode.id) {
+            throw new CompositionError('TASK_ALREADY_CLAIMED', 'another member already owns this task')
+          }
+          if (task.status !== 'pending' || !taskReady(task, tasks)) {
+            throw new CompositionError('TASK_BLOCKED', 'this task is not ready to claim')
+          }
+          next = {
+            ...task,
+            ownerNodeId: actorNode.id,
+            status: 'in_progress',
+            revision: task.revision + 1,
+            updatedAt: now(),
+          }
+          break
+        }
+        case 'release': {
+          requireOwner()
+          if (task.status !== 'in_progress') throw new CompositionError('TASK_INVALID_TRANSITION', 'only an in-progress task can be released')
+          next = { ...task, ownerNodeId: null, status: 'pending', revision: task.revision + 1, updatedAt: now() }
+          break
+        }
+        case 'edit': {
+          requireOwner()
+          if (input.subject === undefined && input.description === undefined && input.writeScopes === undefined) {
+            throw new CompositionError('INVALID_FIELD', 'edit requires subject, description, or writeScopes')
+          }
+          const subject = input.subject === undefined ? task.subject : taskText(input.subject, 200)
+          if (subject.length === 0) throw new CompositionError('INVALID_FIELD', 'subject must be a non-empty string')
+          next = {
+            ...task,
+            subject,
+            ...input.description === undefined ? {} : { description: taskText(input.description, 8000) },
+            ...input.writeScopes === undefined ? {} : {
+              writeScopes: [...new Set(input.writeScopes.map((scope) => textOf(scope, 500)).filter((scope) => scope.length > 0))],
+            },
+            revision: task.revision + 1,
+            updatedAt: now(),
+          }
+          break
+        }
+        case 'set_dependencies': {
+          requireOwner()
+          if (!Array.isArray(input.blockedBy)) throw new CompositionError('INVALID_FIELD', 'set_dependencies requires blockedBy')
+          const blockedBy = [...new Set(input.blockedBy.filter((id) => typeof id === 'string' && id.length > 0))]
+          const known = new Set(tasks.map((candidate) => candidate.id))
+          for (const id of blockedBy) {
+            if (!known.has(id)) throw new CompositionError('TASK_NOT_FOUND', `blocked task ${JSON.stringify(id)} does not exist`)
+          }
+          if (dependencyCycle(tasks, task.id, blockedBy)) {
+            throw new CompositionError('TASK_DEPENDENCY_CYCLE', 'task dependencies must be acyclic')
+          }
+          next = { ...task, blockedBy, revision: task.revision + 1, updatedAt: now() }
+          break
+        }
+        case 'complete': {
+          requireOwner()
+          if (task.status !== 'in_progress') throw new CompositionError('TASK_INVALID_TRANSITION', 'only an in-progress task can complete')
+          next = { ...task, status: 'completed', revision: task.revision + 1, updatedAt: now() }
+          break
+        }
+        case 'reopen': {
+          requireOwner()
+          if (task.status !== 'completed') throw new CompositionError('TASK_INVALID_TRANSITION', 'only a completed task can reopen')
+          next = { ...task, status: 'pending', ownerNodeId: null, revision: task.revision + 1, updatedAt: now() }
+          break
+        }
+        case 'reassign': {
+          const leadNodeId = team === null ? record.composition.rootSessionId : team.rootNodeId
+          const leadNode = record.composition.nodes.find((node) => node.id === leadNodeId
+            || node.sessionId === leadNodeId)
+          if (actorNode === undefined || actorNode.id !== leadNode?.id) {
+            throw new CompositionError('TASK_FORBIDDEN', 'only the Team Lead may reassign tasks')
+          }
+          if (task.status !== 'pending' && task.status !== 'in_progress') {
+            throw new CompositionError('TASK_INVALID_TRANSITION', 'only a pending or in-progress task can be reassigned')
+          }
+          const ownerNodeId = typeof input.ownerNodeId === 'string' && input.ownerNodeId.length > 0
+            ? input.ownerNodeId
+            : null
+          if (ownerNodeId !== null) {
+            const owner = record.composition.nodes.find((node) => node.id === ownerNodeId && node.kind === 'session')
+            if (owner === undefined) throw new CompositionError('UNKNOWN_NODE', 'reassign target is not a local composition node')
+            if (team !== null && !teamNodes(record.composition, team).some((node) => node.id === ownerNodeId)) {
+              throw new CompositionError('TEAM_MEMBER_REQUIRED', 'reassign target must belong to this team')
+            }
+            if (!taskReady(task, tasks)) throw new CompositionError('TASK_BLOCKED', 'this task is blocked')
+          }
+          next = {
+            ...task,
+            ownerNodeId,
+            status: ownerNodeId === null ? 'pending' : 'in_progress',
+            revision: task.revision + 1,
+            updatedAt: now(),
+          }
+          break
+        }
+        case 'delete': {
+          requireOwner()
+          const dependent = tasks.find((candidate) => candidate.id !== task.id && (candidate.blockedBy ?? []).includes(task.id))
+          if (dependent !== undefined) {
+            throw new CompositionError('TASK_HAS_DEPENDENTS', `task still blocks ${dependent.id}`)
+          }
+          next = null
+          break
+        }
+        case 'start': {
+          requireOwner()
+          if (task.status === 'completed') throw new CompositionError('TASK_INVALID_TRANSITION', 'a completed task must be reopened')
+          next = {
+            ...task,
+            status: 'in_progress',
+            ...task.ownerNodeId === null && actorNode !== undefined ? { ownerNodeId: actorNode.id } : {},
+            revision: task.revision + 1,
+            updatedAt: now(),
+          }
+          break
+        }
+        default:
+          throw new CompositionError('INVALID_FIELD', 'unsupported task action')
+      }
+      if (next === null) {
         await store.deleteTask(task.id)
         await recordAudit(rootSessionId, { kind: 'task', outcome: 'deleted', detail: { taskId: task.id, actor } })
         return getTasks(rootSessionId)
       }
-      const status = action === 'start' ? 'in_progress' : action === 'complete' ? 'completed' : 'pending'
-      const next = { ...task, status, revision: task.revision + 1, updatedAt: now() }
       await store.putTask(task.id, next)
-      await recordAudit(rootSessionId, { kind: 'task', outcome: action, detail: { taskId: task.id, actor } })
+      await recordAudit(rootSessionId, {
+        kind: 'task',
+        outcome: action,
+        detail: { taskId: task.id, actor, ...(team === null ? {} : { teamId: team.id }) },
+      })
       return getTasks(rootSessionId)
     })
+  }
+
+  /**
+   * List Teams owned by one composition.
+   * @param {string} rootSessionId - composition owner.
+   * @returns {Promise<object[]>}
+   */
+  async function listTeams(rootSessionId, record = undefined) {
+    if (record === undefined) await requireRecord(rootSessionId)
+    return await store.listTeams?.(rootSessionId) ?? []
+  }
+
+  /**
+   * Create a Team from a connected composition subtree. The selected node is
+   * the Team Lead; current descendants are members. Teams may not overlap.
+   * @param {string} rootSessionId - composition owner.
+   * @param {{rootNodeId: string, label?: string, createdBy?: string}} input - team fields.
+   * @returns {Promise<object[]>}
+   */
+  async function createTeam(rootSessionId, input = {}) {
+    if (typeof input.rootNodeId !== 'string' || input.rootNodeId.length === 0) {
+      throw new CompositionError('INVALID_FIELD', 'rootNodeId must be a non-empty string')
+    }
+    return withLock(rootSessionId, async () => {
+      const record = await requireRecord(rootSessionId)
+      const rootNode = record.composition.nodes.find((node) => node.id === input.rootNodeId)
+      if (rootNode === undefined) {
+        throw new CompositionError('UNKNOWN_NODE', `node ${JSON.stringify(input.rootNodeId)} does not exist`)
+      }
+      if (rootNode.kind !== 'session') {
+        throw new CompositionError('INVALID_FIELD', 'a Team root must be a local session node')
+      }
+      const requested = Array.isArray(input.nodeIds)
+        ? [...new Set(input.nodeIds.filter((id) => typeof id === 'string' && id.length > 0))]
+        : null
+      const selected = requested === null
+        ? teamNodes(record.composition, { rootNodeId: rootNode.id })
+        : requested.map((id) => record.composition.nodes.find((node) => node.id === id))
+      if (selected.some((node) => node === undefined)) {
+        throw new CompositionError('UNKNOWN_NODE', 'every Team node must exist')
+      }
+      if (selected.length === 0 || !selected.some((node) => node.id === rootNode.id)) {
+        throw new CompositionError('INVALID_FIELD', 'the Team lead must be one of its nodes')
+      }
+      if (selected.some((node) => node.kind !== 'session')) {
+        throw new CompositionError('INVALID_FIELD', 'a Team may contain only local session nodes')
+      }
+      const selectedIds = new Set(selected.map((node) => node.id))
+      const adjacency = new Map()
+      for (const edge of record.composition.edges ?? []) {
+        if (!selectedIds.has(edge.parentId) || !selectedIds.has(edge.childId)) continue
+        const left = adjacency.get(edge.parentId) ?? []
+        left.push(edge.childId)
+        adjacency.set(edge.parentId, left)
+        const right = adjacency.get(edge.childId) ?? []
+        right.push(edge.parentId)
+        adjacency.set(edge.childId, right)
+      }
+      const reached = new Set()
+      const queue = [rootNode.id]
+      while (queue.length > 0) {
+        const id = queue.shift()
+        if (reached.has(id)) continue
+        reached.add(id)
+        for (const next of adjacency.get(id) ?? []) queue.push(next)
+      }
+      if (reached.size !== selectedIds.size) {
+        throw new CompositionError('TEAM_NOT_CONNECTED', 'selected Team nodes must be connected')
+      }
+      const memberIds = selectedIds
+      const teams = await store.listTeams?.(rootSessionId) ?? []
+      for (const team of teams) {
+        if (teamNodes(record.composition, team).some((node) => memberIds.has(node.id))) {
+          throw new CompositionError('TEAM_OVERLAP', 'selected nodes overlap an existing Team')
+        }
+      }
+      const team = {
+        id: randomUUID(),
+        rootSessionId,
+        rootNodeId: rootNode.id,
+        nodeIds: requested === null ? undefined : [...selectedIds],
+        label: textOf(input.label, 120) ?? `Team ${teams.length + 1}`,
+        createdBy: textOf(input.createdBy, 128) ?? 'user',
+        createdAt: now(),
+        updatedAt: now(),
+      }
+      await store.putTeam(team.id, team)
+      await recordAudit(rootSessionId, { kind: 'team', outcome: 'created', detail: { teamId: team.id } })
+      return teams.concat(team)
+    })
+  }
+
+  /**
+   * Delete one Team and its scoped tasks. The composition graph is untouched.
+   * @param {string} rootSessionId - composition owner.
+   * @param {string} teamId - team id.
+   * @returns {Promise<object[]>}
+   */
+  async function deleteTeam(rootSessionId, teamId) {
+    if (typeof teamId !== 'string' || teamId.length === 0) {
+      throw new CompositionError('INVALID_FIELD', 'teamId must be a non-empty string')
+    }
+    return withLock(rootSessionId, async () => {
+      await requireRecord(rootSessionId)
+      const team = await store.getTeam?.(teamId)
+      if (team === undefined || team === null || team.rootSessionId !== rootSessionId) {
+        throw new CompositionError('TEAM_NOT_FOUND', 'Team not found')
+      }
+      for (const [, task] of await store.listTasks?.(rootSessionId) ?? []) {
+        if (task.teamId === teamId) await store.deleteTask?.(task.id)
+      }
+      await store.deleteTeam?.(teamId)
+      await recordAudit(rootSessionId, { kind: 'team', outcome: 'deleted', detail: { teamId } })
+      return await store.listTeams?.(rootSessionId) ?? []
+    })
+  }
+
+  /**
+   * Resolve the Team containing one composition node.
+   * @param {string} rootSessionId - composition owner.
+   * @param {string} nodeId - composition node.
+   * @returns {Promise<object|null>}
+   */
+  async function teamForNode(rootSessionId, nodeId) {
+    const record = await requireRecord(rootSessionId)
+    const teams = await store.listTeams?.(rootSessionId) ?? []
+    return teamContainingNode(record.composition, teams, nodeId)
+  }
+
+  /**
+   * Remove Teams whose root node no longer exists.
+   * @param {string} rootSessionId - composition owner.
+   * @param {object} composition - saved graph.
+   * @returns {Promise<void>}
+   */
+  async function pruneTeams(rootSessionId, composition) {
+    for (const team of await store.listTeams?.(rootSessionId) ?? []) {
+      const members = teamNodes(composition, team)
+      if (members.some((node) => node.id === team.rootNodeId)) continue
+      for (const [, task] of await store.listTasks?.(rootSessionId) ?? []) {
+        if (task.teamId === team.id) await store.deleteTask?.(task.id)
+      }
+      await store.deleteTeam?.(team.id)
+    }
   }
 
   /**
@@ -1087,6 +1486,7 @@ export function createManager({
       for (const node of record.composition.nodes) {
         if (!remaining.has(node.id)) unindexSession(rootSessionId, node.sessionId)
       }
+      await pruneTeams(rootSessionId, composition)
       return saved
     })
   }
@@ -1473,6 +1873,9 @@ export function createManager({
       for (const [taskId, task] of await store.listTasks?.(rootSessionId) ?? []) {
         if (task.rootSessionId === rootSessionId) await store.deleteTask?.(taskId)
       }
+      for (const team of await store.listTeams?.(rootSessionId) ?? []) {
+        await store.deleteTeam?.(team.id)
+      }
       for (const [cloneId, clone] of await store.listClones?.(rootSessionId) ?? []) {
         if (clone.newRootSessionId === rootSessionId && typeof store.putClone === 'function') {
           // Keep the clone mapping so the session cleanup tool can find the
@@ -1510,6 +1913,10 @@ export function createManager({
     getTasks,
     createTask,
     updateTask,
+    listTeams,
+    createTeam,
+    deleteTeam,
+    teamForNode,
     state,
     deleteComposition,
     /** @returns {'durable'|'memory'} storage mode of the backing store. */

@@ -105,7 +105,16 @@ window.__ModuleLoader__.load({
         'syncNative': 'Sync native agents',
         'grantMessage': 'Allow messages across this edge',
         'grantInterrupt': 'Allow parent to interrupt child',
-        'tasks': 'Composition tasks',
+        'tasks': 'Shared tasks',
+        'teams': 'Teams',
+        'createTeam': 'Create team',
+        'teamLabel': 'Team label',
+        'teamLead': 'Team lead (subtree root)',
+        'teamHint': 'A team is a connected set of nodes; its lead seeds the subtree, then uncheck members. Tasks use the native Team board shape.',
+        'teamMembers': 'members',
+        'deleteTeam': 'Delete team',
+        'teamDeleteConfirm': 'Delete this team and its scoped tasks? The composition nodes stay unchanged.',
+        'compositionBoard': 'Composition board',
         'taskSubject': 'Task',
         'taskDescription': 'Details',
         'taskOwner': 'Owner',
@@ -117,6 +126,13 @@ window.__ModuleLoader__.load({
         'taskDelete': 'Delete',
         'taskDeleteTitle': 'Delete task',
         'taskDeleteConfirm': 'Delete this task? It exists only in the plugin task board.',
+        'taskProgressCompleted': '{count} completed',
+        'taskProgressActive': '{count} in progress',
+        'taskProgressPending': '{count} pending',
+        'taskOwner': 'Owner',
+        'taskBlocked': 'Blocked',
+        'taskBlockedBy': 'Blocked by',
+        'taskWriteScopes': 'Write scopes',
         'cleanup': 'Session cleanup',
         'cleanupHint': 'Preview orphaned clone sessions and one-shot placeholders that are no longer part of any composition. Deletion is a separate, confirmed step; only inactive, unowned sessions can be removed.',
         'cleanupCheck': 'Preview',
@@ -223,7 +239,16 @@ window.__ModuleLoader__.load({
         'syncNative': '同步原生子代理',
         'grantMessage': '允许该边双向消息',
         'grantInterrupt': '允许父节点中断子节点',
-        'tasks': '组合任务板',
+        'tasks': '共享任务',
+        'teams': '团队',
+        'createTeam': '创建团队',
+        'teamLabel': '团队名称',
+        'teamLead': '团队负责人（子树根）',
+        'teamHint': '团队是一组连通的节点；选择 lead 会预选其子树，可继续取消成员。团队任务使用原生 Team 任务板形状。',
+        'teamMembers': '个成员',
+        'deleteTeam': '删除团队',
+        'teamDeleteConfirm': '删除这个团队及其范围内的任务？组合节点本身不变。',
+        'compositionBoard': '组合任务板',
         'taskSubject': '任务',
         'taskDescription': '详情',
         'taskOwner': '负责人',
@@ -235,6 +260,13 @@ window.__ModuleLoader__.load({
         'taskDelete': '删除',
         'taskDeleteTitle': '删除任务',
         'taskDeleteConfirm': '删除这个任务？它只存在于插件任务板，不是 DSH Team。',
+        'taskProgressCompleted': '{count} 已完成',
+        'taskProgressActive': '{count} 进行中',
+        'taskProgressPending': '{count} 待处理',
+        'taskOwner': '负责人',
+        'taskBlocked': '受阻',
+        'taskBlockedBy': '依赖',
+        'taskWriteScopes': '写入范围',
         'cleanup': '会话清理',
         'cleanupHint': '预览已脱离组合的克隆会话和一次性占位。删除是独立的确认步骤；只能删除非 live、无组合归属的会话。',
         'cleanupCheck': '预览',
@@ -531,6 +563,69 @@ window.__ModuleLoader__.load({
         border: '1px solid var(--dsw-alias-border-l1)',
         borderRadius: '8px',
         background: 'var(--dsw-alias-bg-layer-1)',
+      },
+      taskHeader: { display: 'flex', alignItems: 'center', gap: '6px' },
+      taskGlyph: { color: 'var(--dsw-alias-label-secondary)', fontSize: '12px' },
+      taskProgress: {
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: '11px',
+        marginLeft: 'auto',
+      },
+      taskList: {
+        listStyle: 'none',
+        margin: 0,
+        padding: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '2px',
+      },
+      taskItem: {
+        borderTop: '1px solid var(--dsw-alias-border-l1)',
+        padding: '1px 0',
+      },
+      taskToggle: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        width: '100%',
+        minWidth: 0,
+        border: 'none',
+        background: 'transparent',
+        color: 'inherit',
+        padding: '4px 2px',
+        fontSize: '12px',
+        textAlign: 'left',
+        cursor: 'pointer',
+      },
+      taskDot: {
+        width: '7px',
+        height: '7px',
+        borderRadius: '50%',
+        flex: '0 0 auto',
+      },
+      taskSubject: {
+        flex: '1 1 auto',
+        minWidth: 0,
+        overflowWrap: 'anywhere',
+      },
+      taskOwner: {
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: '11px',
+        whiteSpace: 'nowrap',
+      },
+      taskChevron: { color: 'var(--dsw-alias-label-secondary)', fontSize: '10px' },
+      taskDetails: {
+        margin: '2px 0 6px 13px',
+        padding: '6px 8px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        borderRadius: '8px',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: '12px',
+        overflowWrap: 'anywhere',
       },
       error: {
         border: '1px solid var(--dsw-alias-state-error-primary)',
@@ -1118,6 +1213,7 @@ window.__ModuleLoader__.load({
       const [description, setDescription] = React.useState('')
       const [owner, setOwner] = React.useState('')
       const [adding, setAdding] = React.useState(false)
+      const [expandedTask, setExpandedTask] = React.useState(null)
       const [pendingDelete, setPendingDelete] = React.useState(null)
       const owners = nodes.filter((node) => node.kind === 'session')
       const statusKey = {
@@ -1125,6 +1221,25 @@ window.__ModuleLoader__.load({
         in_progress: 'statusInProgress',
         completed: 'statusCompleted',
       }
+      const byId = new Map(tasks.map((task) => [task.id, task]))
+      const ready = (task) => task.status === 'pending'
+        && (Array.isArray(task.blockedBy) ? task.blockedBy : []).every((id) => byId.get(id)?.status === 'completed')
+      const dotColor = (task) => {
+        if (task.status === 'completed') return 'var(--dsw-alias-state-success-primary)'
+        if (task.status === 'in_progress') return 'var(--dsw-alias-brand-primary)'
+        if (task.status === 'pending' && !ready(task)) return 'var(--dsw-alias-state-warn-primary)'
+        return 'var(--dsw-alias-label-secondary)'
+      }
+      const progress = (() => {
+        const completed = tasks.filter((task) => task.status === 'completed').length
+        const active = tasks.filter((task) => task.status === 'in_progress').length
+        const pending = tasks.length - completed - active
+        return [
+          ...completed > 0 ? [format(t, 'taskProgressCompleted', { count: String(completed) })] : [],
+          ...active > 0 ? [format(t, 'taskProgressActive', { count: String(active) })] : [],
+          ...pending > 0 ? [format(t, 'taskProgressPending', { count: String(pending) })] : [],
+        ].join('\u2002·\u2002')
+      })()
       const closeForm = () => {
         setAdding(false)
         setSubject('')
@@ -1137,7 +1252,11 @@ window.__ModuleLoader__.load({
         closeForm()
       }
       return h('div', { style: styles.board }, [
-        h('div', { key: 'title', style: styles.sectionTitle }, t('tasks')),
+        h('div', { key: 'title', style: styles.taskHeader }, [
+          h('span', { key: 'glyph', style: styles.taskGlyph, 'aria-hidden': true }, '\u2611'),
+          h('span', { key: 'label', style: styles.sectionTitle }, t('tasks')),
+          h('span', { key: 'progress', style: styles.taskProgress }, progress),
+        ]),
         adding === false
           ? h('button', {
               key: 'open-form',
@@ -1195,38 +1314,55 @@ window.__ModuleLoader__.load({
             ]),
         tasks.length === 0
           ? h('div', { key: 'none', style: styles.sessionMeta }, t('noTasks'))
-          : tasks.map((task) => {
+          : h('ul', { key: 'list', style: styles.taskList }, tasks.map((task) => {
               const ownerNode = nodes.find((node) => node.id === task.ownerNodeId)
-              return h('div', { key: task.id, style: styles.taskRow }, [
-                h('div', { key: 'main', style: { flex: '1 1 auto', minWidth: 0 } }, [
-                  h('div', { key: 'subject', style: { fontWeight: 500 } }, task.subject),
-                  h('div', { key: 'meta', style: styles.sessionMeta }, [
-                    h('span', { key: 'status', style: styles.badge }, t(statusKey[task.status] ?? 'statusPending')),
-                    ' ',
-                    ownerNode === undefined ? t('unowned') : ownerNode.label,
+              const ownerLabel = ownerNode === undefined ? t('unowned') : ownerNode.label
+              const blocked = task.status === 'pending' && !ready(task)
+              const open = expandedTask === task.id
+              return h('li', { key: task.id, style: styles.taskItem }, [
+                h('button', {
+                  key: 'toggle',
+                  type: 'button',
+                  style: styles.taskToggle,
+                  'aria-expanded': open,
+                  onClick: () => setExpandedTask((current) => current === task.id ? null : task.id),
+                }, [
+                  h('span', { key: 'dot', style: { ...styles.taskDot, background: dotColor(task) }, title: blocked ? t('taskBlocked') : t(statusKey[task.status] ?? 'statusPending') }),
+                  h('span', { key: 'subject', style: styles.taskSubject }, task.subject),
+                  h('span', { key: 'owner', style: styles.taskOwner }, ownerLabel),
+                  h('span', { key: 'chevron', style: styles.taskChevron, 'aria-hidden': true }, open ? '\u25be' : '\u25b8'),
+                ]),
+                open ? h('div', { key: 'details', style: styles.taskDetails }, [
+                  task.description ? h('div', { key: 'description' }, task.description) : null,
+                  h('div', { key: 'owner' }, `${t('taskOwner')}: ${ownerLabel}`),
+                  blocked ? h('div', { key: 'blocked', style: styles.warning }, t('taskBlocked')) : null,
+                  Array.isArray(task.blockedBy) && task.blockedBy.length > 0
+                    ? h('div', { key: 'blocked-by' }, `${t('taskBlockedBy')}: ${task.blockedBy.join(', ')}`)
+                    : null,
+                  Array.isArray(task.writeScopes) && task.writeScopes.length > 0
+                    ? h('div', { key: 'scopes' }, `${t('taskWriteScopes')}: ${task.writeScopes.join(', ')}`)
+                    : null,
+                  h('div', { key: 'actions', style: styles.confirmRow }, [
+                    task.status === 'pending'
+                      ? h('button', { key: 'start', type: 'button', style: styles.button, disabled: busy, onClick: () => onUpdate(task.id, 'start', task.revision) }, t('taskStart'))
+                      : null,
+                    task.status === 'in_progress'
+                      ? h('button', { key: 'complete', type: 'button', style: styles.button, disabled: busy, onClick: () => onUpdate(task.id, 'complete', task.revision) }, t('taskComplete'))
+                      : null,
+                    task.status === 'completed'
+                      ? h('button', { key: 'reopen', type: 'button', style: styles.button, disabled: busy, onClick: () => onUpdate(task.id, 'reopen', task.revision) }, t('taskReopen'))
+                      : null,
+                    h('button', {
+                      key: 'delete',
+                      type: 'button',
+                      style: styles.danger,
+                      disabled: busy,
+                      onClick: () => setPendingDelete(task),
+                    }, t('taskDelete')),
                   ]),
-                  task.description ? h('div', { key: 'description', style: styles.sessionMeta }, task.description) : null,
-                ]),
-                h('div', { key: 'actions', style: styles.confirmRow }, [
-                  task.status === 'pending'
-                    ? h('button', { key: 'start', type: 'button', style: styles.button, disabled: busy, onClick: () => onUpdate(task.id, 'start', task.revision) }, t('taskStart'))
-                    : null,
-                  task.status === 'in_progress'
-                    ? h('button', { key: 'complete', type: 'button', style: styles.button, disabled: busy, onClick: () => onUpdate(task.id, 'complete', task.revision) }, t('taskComplete'))
-                    : null,
-                  task.status === 'completed'
-                    ? h('button', { key: 'reopen', type: 'button', style: styles.button, disabled: busy, onClick: () => onUpdate(task.id, 'reopen', task.revision) }, t('taskReopen'))
-                    : null,
-                  h('button', {
-                    key: 'delete',
-                    type: 'button',
-                    style: styles.danger,
-                    disabled: busy,
-                    onClick: () => setPendingDelete(task),
-                  }, t('taskDelete')),
-                ]),
+                ]) : null,
               ])
-            }),
+            })),
         pendingDelete === null ? null : h(ConfirmDialog, {
           key: 'task-delete-dialog',
           title: t('taskDeleteTitle'),
@@ -1248,7 +1384,7 @@ window.__ModuleLoader__.load({
     function CompositionTab(props) {
       const { sessionId, t, openSession } = props
       const [state, setState] = React.useState({
-        loading: true, error: null, composition: null, observations: {}, grants: {}, tasks: [], storage: 'unknown', rootSessionId: null,
+        loading: true, error: null, composition: null, observations: {}, grants: {}, tasks: [], teams: [], storage: 'unknown', rootSessionId: null,
       })
       const [picker, setPicker] = React.useState({
         open: false, sessions: [], external: [], externalAvailable: false, query: '', parentId: '', titles: {},
@@ -1266,13 +1402,19 @@ window.__ModuleLoader__.load({
       const [cleanupConfirm, setCleanupConfirm] = React.useState(false)
       const [cleanupContent, setCleanupContent] = React.useState({})
       const [cleanupContentBusy, setCleanupContentBusy] = React.useState(null)
+      const [activeTeamId, setActiveTeamId] = React.useState(null)
+      const [teamForm, setTeamForm] = React.useState(false)
+      const [teamLabel, setTeamLabel] = React.useState('')
+      const [teamLead, setTeamLead] = React.useState('')
+      const [teamSelected, setTeamSelected] = React.useState([])
+      const [confirmTeamDelete, setConfirmTeamDelete] = React.useState(false)
       const [editingTitle, setEditingTitle] = React.useState(false)
       const [titleDraft, setTitleDraft] = React.useState('')
       const requestedTitles = React.useRef(new Set())
 
       const load = React.useCallback(async (options = {}) => {
         if (typeof sessionId !== 'string' || sessionId.length === 0) {
-          setState({ loading: false, error: null, composition: null, observations: {}, grants: {}, tasks: [], storage: 'unknown', rootSessionId: null })
+          setState({ loading: false, error: null, composition: null, observations: {}, grants: {}, tasks: [], teams: [], storage: 'unknown', rootSessionId: null })
           return
         }
         if (options.silent !== true) setState((previous) => ({ ...previous, loading: true, error: null }))
@@ -1285,6 +1427,7 @@ window.__ModuleLoader__.load({
             observations: data.observations ?? {},
             grants: data.grants ?? {},
             tasks: data.tasks ?? [],
+            teams: data.teams ?? [],
             storage: data.storage ?? 'unknown',
             rootSessionId: data.rootSessionId ?? data.composition?.rootSessionId ?? null,
           })
@@ -1292,7 +1435,7 @@ window.__ModuleLoader__.load({
           if (options.silent === true) {
             setState((previous) => ({ ...previous, error }))
           } else {
-            setState({ loading: false, error, composition: null, observations: {}, grants: {}, tasks: [], storage: 'unknown', rootSessionId: null })
+            setState({ loading: false, error, composition: null, observations: {}, grants: {}, tasks: [], teams: [], storage: 'unknown', rootSessionId: null })
           }
         }
       }, [sessionId])
@@ -1317,6 +1460,12 @@ window.__ModuleLoader__.load({
         setEditingTitle(false)
         setShowOneShot(false)
       }, [sessionId])
+
+      React.useEffect(() => {
+        if (activeTeamId !== null && !(state.teams ?? []).some((team) => team.id === activeTeamId)) {
+          setActiveTeamId(null)
+        }
+      }, [activeTeamId, state.teams])
 
       const mutate = React.useCallback(async (action, successMessage) => {
         setBusy(true)
@@ -1494,10 +1643,53 @@ window.__ModuleLoader__.load({
         null,
       )
 
+      const createTeam = async () => {
+        if (teamLead.length === 0) return
+        setBusy(true)
+        setNotice(null)
+        try {
+          const data = await callApi('/create-team', {
+            method: 'POST',
+            body: { rootSessionId: activeRoot, rootNodeId: teamLead, nodeIds: teamSelected, label: teamLabel },
+          })
+          await load({ silent: true })
+          const created = (data.teams ?? [])[(data.teams ?? []).length - 1]
+          setActiveTeamId(created?.id ?? null)
+          setTeamForm(false)
+          setTeamLabel('')
+          setTeamLead('')
+          setTeamSelected([])
+        } catch (error) {
+          setNotice(error.message)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const deleteTeam = async () => {
+        const teamId = activeTeamId
+        setConfirmTeamDelete(false)
+        if (teamId === null) return
+        setBusy(true)
+        setNotice(null)
+        try {
+          await callApi('/delete-team', {
+            method: 'POST',
+            body: { rootSessionId: activeRoot, teamId },
+          })
+          setActiveTeamId(null)
+          await load({ silent: true })
+        } catch (error) {
+          setNotice(error.message)
+        } finally {
+          setBusy(false)
+        }
+      }
+
       const createTask = (subject, description, ownerNodeId) => mutate(
         () => callApi('/create-task', {
           method: 'POST',
-          body: { rootSessionId: activeRoot, subject, description, ownerNodeId },
+          body: { rootSessionId: activeRoot, subject, description, ownerNodeId, teamId: activeTeamId },
         }),
         null,
       )
@@ -1505,7 +1697,7 @@ window.__ModuleLoader__.load({
       const updateTask = (taskId, action, expectedRevision) => mutate(
         () => callApi('/update-task', {
           method: 'POST',
-          body: { rootSessionId: activeRoot, taskId, action, expectedRevision },
+          body: { rootSessionId: activeRoot, taskId, action, expectedRevision, teamId: activeTeamId },
         }),
         null,
       )
@@ -1615,6 +1807,39 @@ window.__ModuleLoader__.load({
       )
       const tree = React.useMemo(() => treeOf(filteredComposition), [filteredComposition])
       const nodes = filteredComposition?.nodes ?? []
+      const teams = state.teams ?? []
+      const activeTeam = activeTeamId === null ? null : teams.find((team) => team.id === activeTeamId) ?? null
+      const teamMemberIds = (team) => {
+        const composition = state.composition
+        if (Array.isArray(team?.nodeIds) && team.nodeIds.length > 0) {
+          return new Set(team.nodeIds.filter((id) => composition?.nodes?.some((node) => node.id === id)))
+        }
+        const root = composition?.nodes?.find((node) => node.id === team?.rootNodeId)
+        if (root === undefined) return new Set()
+        const children = new Map()
+        for (const edge of composition.edges ?? []) {
+          const list = children.get(edge.parentId) ?? []
+          list.push(edge.childId)
+          children.set(edge.parentId, list)
+        }
+        const memberIds = new Set()
+        const queue = [root.id]
+        while (queue.length > 0) {
+          const id = queue.shift()
+          if (memberIds.has(id)) continue
+          memberIds.add(id)
+          for (const childId of children.get(id) ?? []) queue.push(childId)
+        }
+        return memberIds
+      }
+      const activeTeamMemberIds = activeTeam === null ? null : teamMemberIds(activeTeam)
+      const taskNodes = activeTeam === null
+        ? nodes
+        : nodes.filter((node) => activeTeamMemberIds.has(node.id))
+      const visibleTasks = (state.tasks ?? []).filter((task) => activeTeamId === null
+        ? task.teamId === null || task.teamId === undefined
+        : task.teamId === activeTeamId)
+      const teamLeadNodes = nodes.filter((node) => node.kind === 'session')
       const cleanupTotals = cleanup.data?.totals ?? null
       const cleanupLegacyCount = cleanup.includeLegacy ? cleanupTotals?.legacy.count ?? 0 : 0
       const cleanupLegacyBytes = cleanup.includeLegacy ? cleanupTotals?.legacy.bytes ?? 0 : 0
@@ -1809,10 +2034,105 @@ window.__ModuleLoader__.load({
                     t,
                   })
                 : h('button', { key: 'open-picker', type: 'button', style: styles.button, disabled: busy, onClick: () => void openPicker() }, t('addSession')),
+              h('div', { key: 'teams', style: styles.board }, [
+                h('div', { key: 'title', style: styles.taskHeader }, [
+                  h('span', { key: 'glyph', style: styles.taskGlyph, 'aria-hidden': true }, '◈'),
+                  h('span', { key: 'label', style: styles.sectionTitle }, t('teams')),
+                ]),
+                h('div', { key: 'selector', style: styles.confirmRow }, [
+                  h('select', {
+                    key: 'select',
+                    style: styles.select,
+                    value: activeTeamId ?? '',
+                    onChange: (event) => setActiveTeamId(event.target.value === '' ? null : event.target.value),
+                  }, [
+                    h('option', { key: 'composition', value: '' }, t('compositionBoard')),
+                    ...teams.map((team) => h('option', { key: team.id, value: team.id }, team.label)),
+                  ]),
+                  activeTeam === null ? null : h('button', {
+                    key: 'delete',
+                    type: 'button',
+                    style: styles.danger,
+                    disabled: busy,
+                    onClick: () => setConfirmTeamDelete(true),
+                  }, t('deleteTeam')),
+                  teamForm ? null : h('button', {
+                    key: 'create',
+                    type: 'button',
+                    style: styles.button,
+                    disabled: busy || teamLeadNodes.length === 0,
+                    onClick: () => {
+                      const lead = teamLead.length > 0 ? teamLead : (teamLeadNodes[0]?.id ?? '')
+                      setTeamForm(true)
+                      setTeamLead(lead)
+                      setTeamSelected(lead.length === 0 ? [] : [...teamMemberIds({ rootNodeId: lead })])
+                    },
+                  }, t('createTeam')),
+                ]),
+                activeTeam === null
+                  ? h('div', { key: 'hint', style: styles.sessionMeta }, t('teamHint'))
+                  : h('div', { key: 'hint', style: styles.sessionMeta }, `${activeTeam.label} · ${activeTeamMemberIds.size} ${t('teamMembers')}`),
+                teamForm ? h('div', {
+                  key: 'form',
+                  style: styles.picker,
+                  onKeyDown: (event) => {
+                    if (event.key !== 'Escape') return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setTeamForm(false)
+                  },
+                }, [
+                  h('div', { key: 'header', style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
+                    h('div', { key: 'title', style: { ...styles.sectionTitle, flex: '1 1 auto' } }, t('createTeam')),
+                    h('button', { key: 'cancel', type: 'button', style: styles.linkButton, onClick: () => setTeamForm(false) }, t('cancel')),
+                  ]),
+                  h('div', { key: 'fields', style: styles.taskForm }, [
+                    h('input', {
+                      key: 'label',
+                      style: styles.input,
+                      placeholder: t('teamLabel'),
+                      value: teamLabel,
+                      onChange: (event) => setTeamLabel(event.target.value),
+                    }),
+                    h('select', {
+                      key: 'lead',
+                      style: styles.select,
+                      value: teamLead,
+                      onChange: (event) => {
+                        const lead = event.target.value
+                        setTeamLead(lead)
+                        setTeamSelected(lead.length === 0 ? [] : [...teamMemberIds({ rootNodeId: lead })])
+                      },
+                    }, teamLeadNodes.map((node) => h('option', { key: node.id, value: node.id }, node.label))),
+                    h('button', {
+                      key: 'create',
+                      type: 'button',
+                      style: styles.button,
+                      disabled: busy || teamLead.length === 0 || !teamSelected.includes(teamLead),
+                      onClick: () => void createTeam(),
+                    }, t('createTeam')),
+                  ]),
+                  h('div', { key: 'members', style: styles.results }, teamLeadNodes.map((node) => h('label', {
+                    key: node.id,
+                    style: { display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px' },
+                  }, [
+                    h('input', {
+                      key: 'input',
+                      type: 'checkbox',
+                      checked: teamSelected.includes(node.id),
+                      onChange: (event) => setTeamSelected((previous) => event.target.checked
+                        ? [...new Set([...previous, node.id])]
+                        : previous.filter((id) => id !== node.id)),
+                    }),
+                    h('span', { key: 'label' }, node.label),
+                  ]))),
+                  h('div', { key: 'hint', style: styles.sessionMeta }, t('teamHint')),
+                ]) : null,
+              ]),
               h(TaskBoard, {
                 key: 'tasks',
-                tasks: state.tasks ?? [],
-                nodes,
+                tasks: visibleTasks,
+                nodes: taskNodes,
                 busy,
                 t,
                 onCreate: createTask,
@@ -1922,6 +2242,17 @@ window.__ModuleLoader__.load({
                 onCancel: () => setPendingClone(null),
                 onConfirm: confirmClone,
               }),
+              confirmTeamDelete ? h(ConfirmDialog, {
+                key: 'team-delete-dialog',
+                title: t('deleteTeam'),
+                message: t('teamDeleteConfirm'),
+                confirmLabel: t('deleteTeam'),
+                cancelLabel: t('cancel'),
+                danger: true,
+                busy,
+                onCancel: () => setConfirmTeamDelete(false),
+                onConfirm: () => void deleteTeam(),
+              }) : null,
               cleanupConfirm ? h(ConfirmDialog, {
                 key: 'cleanup-dialog',
                 title: t('cleanup'),

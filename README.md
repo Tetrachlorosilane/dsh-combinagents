@@ -126,10 +126,11 @@ composition membership from its `parentSession` header.
 | Rename | Change the node label (not the DSH session title) |
 | Message / Interrupt grants | Allow that action along the composition path |
 | Sync native agents | Import native descendants that are not mirrored yet |
-| Clone whole tree | Create a new independent tree; source stays unchanged |
+| Clone whole tree | Create a new independent tree; source stays unchanged, including copied task/Team scopes when present |
 | Bud as new root | Clone one node and its subtree as a new root |
 | Show one-shot agents | Show one-shot nodes that are hidden by default |
-| Composition tasks | Create, start, complete, reopen, and delete plugin tasks |
+| Teams | Select a lead and connected member nodes to create a Team; its board and task tools are scoped to that set |
+| Shared tasks | Native-shaped task board: create, list, get, claim/release, edit, depend, reassign, complete, reopen, and delete |
 | Session cleanup | Preview orphaned clone sessions and one-shot placeholders, open a brief first-user/last-message excerpt, then delete in a separate confirmed step |
 | Open conversation | Open a local session; external nodes never offer it |
 
@@ -160,10 +161,18 @@ execution path uses the composition:
 | `subagent_fork` | Same as `subagent`, using the fork provider |
 | `wait_agent` | Native caller-inbox wait behavior |
 
-`composition_task` is the only globally registered extra tool. The old
-`composition_list_agents`, `composition_send_message`, and
-`composition_interrupt_agent` aliases are removed. Native
-`list_subagent_models` and other unique tools are untouched.
+The plugin also exposes a **Team-shaped task API over the composition-owned
+board**. When the native Team service/tools are not mounted, it registers
+`team_task_create`, `team_task_list`, `team_task_get`, and `team_task_update`
+with the same field names, actions, CAS revisions, dependencies, readiness, and
+write-scope warnings as the native Team task tools. A Team is a connected
+set of composition nodes; selecting a lead seeds its subtree and individual
+members can be unchecked. When the caller belongs to one, these tools scope to
+that Team's board and members. They write only the plugin
+board, never native Team state; when Agent Teams is mounted, the native tools
+win and these aliases are not registered. `composition_task` remains a legacy
+single-tool aggregate. Native `list_subagent_models` and other unique tools are
+untouched.
 
 `list_agents` omits **one-shot** and **external** rows, matching the native
 continuable listing. One-shot targets cannot receive follow-ups. The lifecycle

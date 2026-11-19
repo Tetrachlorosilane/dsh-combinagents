@@ -347,6 +347,7 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
     let root
     let attachedWorkspace = null
     const cloneNodeBySource = new Map()
+    const clonedTeams = []
     const nodes = []
     const edges = []
     try {
@@ -525,6 +526,37 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
       }
       await store.putClone(cloneId, clone)
 
+      const teamIdBySource = new Map()
+      if (typeof store.putTeam === 'function' && typeof manager.listTeams === 'function') {
+        const sourceTeams = await manager.listTeams(sourceComposition.rootSessionId)
+        for (const team of sourceTeams) {
+          const teamRoot = cloneNodeBySource.get(team.rootNodeId)
+          if (teamRoot === undefined) continue
+          let nodeIds
+          if (Array.isArray(team.nodeIds)) {
+            const mapped = team.nodeIds
+              .map((id) => cloneNodeBySource.get(id)?.id)
+              .filter((id) => typeof id === 'string')
+            if (mapped.length !== team.nodeIds.length) continue
+            nodeIds = mapped
+          }
+          const teamId = randomUUID()
+          teamIdBySource.set(team.id, teamId)
+          const clonedTeam = {
+            id: teamId,
+            rootSessionId: root.id,
+            rootNodeId: teamRoot.id,
+            ...(nodeIds === undefined ? {} : { nodeIds }),
+            label: team.label,
+            createdBy: 'clone',
+            createdAt: snapshotAt,
+            updatedAt: snapshotAt,
+          }
+          await store.putTeam(teamId, clonedTeam)
+          clonedTeams.push(teamId)
+        }
+      }
+
       const taskIdBySource = new Map()
       const tasks = []
       for (const task of plan.tasks) {
@@ -539,6 +571,9 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
           ownerNodeId: task.ownerSourceNodeId === null
             ? null
             : (cloneNodeBySource.get(task.ownerSourceNodeId)?.id ?? null),
+          teamId: task.teamId === null || task.teamId === undefined
+            ? null
+            : (teamIdBySource.get(task.teamId) ?? null),
           blockedBy: [],
           writeScopes: [...task.writeScopes],
           revision: 1,
@@ -589,6 +624,9 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
             if (clone.newRootSessionId === root.id) await store.deleteClone(cloneId)
           }
         } catch {}
+        for (const teamId of clonedTeams) {
+          try { await store.deleteTeam?.(teamId) } catch {}
+        }
       }
       for (const [childId, sourceId] of pendingSources) {
         if (plan.nodes.some((node) => node.sourceSessionId === sourceId)) pendingSources.delete(childId)

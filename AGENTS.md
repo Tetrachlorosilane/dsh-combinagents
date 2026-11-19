@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 19 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (165 total);
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (171 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`; current target is DSH
   `0.2.2-rc.5`, with `engines.dsh` and plugin version `0.2.0`.
 
@@ -43,8 +43,13 @@ schemas, presentation callbacks, prompt identity/guidance, concurrency
 metadata, timeout, and restrictions remain untouched. The native delegation
 plugins remain mounted; do not use a preset that removes them. Disabling the
 plugin removes the listener and restores the native executor. The old
-`composition_*` aliases are removed; `composition_task` is the only globally
-registered extra tool. A legacy composed profile with no native rows gets
+`composition_*` aliases are removed. `composition_task` remains a legacy
+single-tool aggregate; when native Agent Teams is not mounted, the plugin also
+registers the four Team-shaped task tools (`team_task_create/list/get/update`)
+over the composition-owned board. A Team is a connected set of composition nodes;
+`team_task_*` scopes to the caller's Team (otherwise the composition board), and
+Team tasks/owners are validated against that set. Native Team wins when
+mounted. A legacy composed profile with no native rows gets
 static fallback definitions until it migrates. Cross-profile coherence uses a
 `.revision` marker beside the domain: after every durable composition/policy
 write the writer publishes a token, readers reopen the domain when
@@ -64,7 +69,9 @@ composition, label it with its native name, auto-grant the delegation edge, and
 forward the native `agent_preset` field when the schema exposes it. Explicit
 child `provider`/`model`/`reasoning_effort` selection is validated through the
 live LLM route and forwarded as child agent options. `composition_task` lists,
-creates, and updates board tasks (never DSH Team). The native
+creates, and updates board tasks; the four Team-shaped tools expose the caller's
+Team board (or composition board) with native Team field names/actions (never
+native Team state). The native
 `list_subagent_models` and other unique tools are untouched. The native prompt
 sections stay in place; the plugin adds no duplicate identity/delegation prompt.
 A clean headless profile verified the full chain in the earlier composed
@@ -176,11 +183,11 @@ src/clone-manager.js      Whole-tree clone/bud adapter: seeded root, depth-first
                           children, idle children, task copy, failure cleanup
 src/store.js              DSH storage-domain adapter + memory fallback,
                           revision reload, cross-profile mutation lock
-                          (compositions/policies/audit/audit_archive/tasks/clones)
+                          (compositions/policies/audit/audit_archive/tasks/clones/teams)
 src/discovery.js          Live/persisted session discovery and observations
 src/manager.js            Serialized mutations, grants, path authorization
 src/http.js               Loopback, token-authenticated JSON bridge
-src/controls.js           Execution interception (6) + composition_task
+src/controls.js           Execution interception (6) + composition_task + team_task_*
 src/session-cleanup.js    User-confirmed orphan/one-shot session cleanup (default JSONL root)
 tests/graph.test.mjs      Graph tests (19)
 tests/clone.test.mjs      Clone/bud plan tests
@@ -231,7 +238,7 @@ relay-label sanitization, workspace detach on failed clone, moving the
 The 2026-11-19 follow-up audit fixed ordinary-fork membership inheritance,
 cross-composition grant migration, external-placeholder idempotency, create/add
 membership races, the store reload-revision skip and reload-failure fallback,
-effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 165 tests pass. The
+effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 171 tests pass. The
 findings and remaining accepted risks are in
 [`docs/AUDIT-2026-11-19.md`](docs/AUDIT-2026-11-19.md). The live composition/bridge
 probe is in [`docs/BRIDGE-TEST-2026-11-19.md`](docs/BRIDGE-TEST-2026-11-19.md):
@@ -253,6 +260,14 @@ when composition storage is memory-backed or degraded, operates on the default
 workspace/archive/pin state, and never touches live sessions or composition
 members. Clone failures now write a durable failed clone record, and deleting a
 clone composition marks its record orphaned instead of deleting provenance.
+Teams are created from a connected set of local-session nodes; selecting a lead
+seeds its subtree, and members can be unchecked. Overlapping Teams are rejected. Team deletion removes only its scoped tasks, not composition
+nodes or Sessions. The task board UI mirrors the native Shared tasks shape
+(progress counts, compact expandable rows, owner/blockers/write scopes). The
+2026-11-19 live proof is in
+[`docs/TEAM-TEST-2026-11-19.md`](docs/TEAM-TEST-2026-11-19.md): a two-node Team
+was created, a Team task was created/reassigned/completed, composition tasks
+stayed out of Team scope, and Team deletion removed its scoped task.
 Remaining audit items: SEC-6 (default bidirectional grant, product decision),
 SEC-8 rate limiting, SEC-11 (loopback/proxy trust), SEC-12 (clone permission
 drift), X-10 (agent_preset/provider capability), X-12 (storageDomain hard
@@ -267,8 +282,9 @@ there was none; detaching removes the grant; composition title editing is
 implemented; archived nodes keep the current "offer open conversation, the
 workspace decides" behavior.
 Clone/bud decisions: clone the **whole root tree**; copy the plugin-owned task
-board and remap owners; expose no cwd/preset/permission override; budding keeps
-the original node, never auto-archives it, and leaves two parallel trees.
+board, remap owners, and copy Team definitions whose member nodes are included;
+expose no cwd/preset/permission override; budding keeps the original node, never
+auto-archives it, and leaves two parallel trees.
 
 ## 5. Development rules
 
@@ -394,6 +410,17 @@ sessions use `standard`. Clone/bud GUI checks passed on 2026-11-18.
   Profile the surrounding session UI before blaming the bridge.
 - **Archived nodes still offer "open conversation".** The workspace decides
   whether it can resume; this is an intentional 2026-11-17 decision.
+- **Composition Teams are overlay-only.** A Team is a stored set of composition
+  node ids plus a lead; it does not create a native Agent Team or a shared
+  checkout. Membership is validated as connected at creation, but a later
+  reparent can change the graph; recreate the Team if its structure no longer
+  matches. Team deletion removes its scoped tasks, not composition nodes or
+  Sessions.
+- **Team-shaped task tools are not native Team state.** `team_task_*` reuses
+  the native field/action vocabulary over the composition-owned board; it does
+  not create Agent Teams, a shared checkout, or native task records. Register it
+  only when the native Agent Teams service/tools are absent, and never let a
+  caller infer native Team authority from the name.
 - **Session cleanup is a file-level operation.** DSH 0.2.2-rc.5 has no public
   session-delete service, so the cleanup tool removes the default JSONL session
   directory and detaches workspace/archive/pin state. It does not remove shared
