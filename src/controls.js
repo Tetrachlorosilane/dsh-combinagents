@@ -195,8 +195,8 @@ export function createControls({
   const llm = () => ctx.get?.('llm')
   /** Input ids already reported by a wait in the same model tool call. */
   const reportedInput = new WeakMap()
-  /** In-flight automatic resumes, keyed by target session id. */
-  const activationJobs = new Map()
+  /** Plugin-owned AgentHandles for independently resumed plain targets. */
+  const resumeHandles = new Map()
   /** Aborts outstanding waits when the plugin unloads. */
   const waitLifetime = new AbortController()
   if (typeof ctx.effect === 'function') {
@@ -464,52 +464,116 @@ export function createControls({
   }
 
   /**
-   * Auto-activate an inactive local target before a message is delivered. DSH
-   * exposes `ctx.agents.resume` for exactly this persisted-session case; a
-   * successful resume makes the target live so the normal native/composition
-   * relay can deliver instead of returning an opaque "unavailable" error.
-   * @param {object} target - composition node.
-   * @param {string} rootSessionId - composition owner.
-   * @param {AbortSignal|undefined} signal - tool cancellation.
-   * @returns {Promise<object|undefined>} live target agent.
+   * Root session for one native creation chain. A not-yet-mirrored parent is
+   * represented by its session id; comparing those ids still proves sibling
+   * membership without inventing an Activation.
+   * @param {Map<string, object>} bySession - composition nodes by session id.
+   * @param {object} node - starting node.
+   * @returns {string|null} root session id.
    */
-  async function activateTarget(target, rootSessionId, signal) {
-    if (target.sessionId === null) return undefined
+  function nativeRootSessionId(bySession, node) {
+    let current = node
+    const seen = new Set()
+    while (current !== undefined && typeof current.nativeParentSessionId === 'string') {
+      const parentSessionId = current.nativeParentSessionId
+      if (seen.has(parentSessionId)) return null
+      seen.add(parentSessionId)
+      current = bySession.get(parentSessionId) ?? { sessionId: parentSessionId }
+    }
+    return typeof current?.sessionId === 'string' ? current.sessionId : null
+  }
+
+  /**
+   * Whether two nodes share one native creation-tree root. This is delivery
+   * routing only; authorization still uses `nativeRelated`/edge/root grants.
+   * @param {object} composition - graph.
+   * @param {object} from - caller node.
+   * @param {object} to - target node.
+   * @returns {boolean}
+   */
+  function sameNativeTree(composition, from, to) {
+    const bySession = new Map(composition.nodes
+      .filter((node) => typeof node.sessionId === 'string')
+      .map((node) => [node.sessionId, node]))
+    const fromRoot = nativeRootSessionId(bySession, from)
+    const toRoot = nativeRootSessionId(bySession, to)
+    return fromRoot !== null && fromRoot === toRoot
+  }
+
+  /**
+   * A plain top-level persisted target can be resumed through the Agent
+   * registry. Native `origin:'subagent'` identities must not: only the subagent
+   * manager may create their Activation, and a bare resume leaves an unowned
+   * live child that cannot be disposed by the plugin.
+   * @param {object} node - target composition node.
+   * @returns {boolean}
+   */
+  function independentlyResumable(node) {
+    if (node.sessionId === null || node.kind === 'external') return false
+    if (node.source === 'subagent' || typeof node.nativeParentSessionId === 'string') return false
+    const mode = modeOfNode(node)
+    return mode === 'continuable' || mode === 'unknown'
+  }
+
+  /**
+   * Resume a plain persisted top-level target and retain its AgentHandle so the
+   * plugin can dispose it after the turn. The handle is the only ownership
+   * capability; dropping it would leave an unowned live Agent.
+   * @param {object} target - target node.
+   * @param {string} rootSessionId - composition owner.
+   * @param {AbortSignal|undefined} signal - cancellation.
+   * @returns {Promise<object>} resumed Agent.
+   */
+  async function resumeIndependentTarget(target, rootSessionId, signal) {
     const existing = liveAgent(target.sessionId)
     if (existing !== undefined) return existing
     const service = agents()
     if (typeof service?.resume !== 'function') {
       throw new CompositionError('TARGET_NOT_LIVE', 'target session is inactive and auto-activation is unavailable')
     }
-    const existingJob = activationJobs.get(target.sessionId)
-    if (existingJob !== undefined) return existingJob
-    const job = (async () => {
-      try {
-        const handle = await service.resume({
-          resumeSessionId: target.sessionId,
-          ...(signal === undefined ? {} : { signal }),
-        })
-        const activated = handle?.agent ?? liveAgent(target.sessionId)
-        if (activated === undefined) throw new Error('resume returned no live agent')
-        await manager.recordAudit(rootSessionId, {
-          kind: 'activation',
-          toNodeId: target.id,
-          outcome: 'resumed',
-          detail: { trigger: 'send_message', sessionId: target.sessionId },
-        })
-        return activated
-      } catch (error) {
-        if (error instanceof CompositionError) throw error
-        throw new CompositionError(
-          'TARGET_NOT_RESUMABLE',
-          `target ${JSON.stringify(target.label)} is inactive and could not be auto-activated: ${String(error?.message ?? error)}`,
-        )
-      } finally {
-        activationJobs.delete(target.sessionId)
-      }
-    })()
-    activationJobs.set(target.sessionId, job)
-    return job
+    let handle
+    try {
+      handle = await service.resume({
+        resumeSessionId: target.sessionId,
+        ...(signal === undefined ? {} : { signal }),
+      })
+    } catch (error) {
+      throw new CompositionError(
+        'TARGET_NOT_RESUMABLE',
+        `target ${JSON.stringify(target.label)} is inactive and could not be resumed: ${String(error?.message ?? error)}`,
+      )
+    }
+    if (handle?.agent === undefined) {
+      try { await handle?.dispose?.() } catch {}
+      throw new CompositionError('TARGET_NOT_RESUMABLE', 'the resume call returned no live agent')
+    }
+    resumeHandles.set(target.sessionId, handle)
+    await manager.recordAudit(rootSessionId, {
+      kind: 'activation',
+      toNodeId: target.id,
+      outcome: 'resumed',
+      detail: { trigger: 'send_message', sessionId: target.sessionId },
+    })
+    return handle.agent
+  }
+
+  /**
+   * Dispose a plugin-owned resume handle after its turn, or immediately after a
+   * failed delivery.
+   * @param {string} sessionId - target session id.
+   * @param {boolean} immediate - dispose without waiting for idle.
+   * @returns {void}
+   */
+  function retireResumeHandle(sessionId, immediate = false) {
+    const handle = resumeHandles.get(sessionId)
+    if (handle === undefined) return
+    resumeHandles.delete(sessionId)
+    const dispose = () => Promise.resolve(handle.dispose?.()).catch(() => undefined)
+    if (immediate || typeof handle.agent?.whenIdle !== 'function') {
+      void dispose()
+      return
+    }
+    void Promise.resolve(handle.agent.whenIdle()).then(dispose, dispose)
   }
 
   /**
@@ -791,21 +855,54 @@ export function createControls({
    * @param {AbortSignal} signal - call cancellation.
    * @returns {Promise<{messageId: string}|null>} native result, or null when not applicable.
    */
-  async function deliverNative(agent, target, message, signal) {
+  async function deliverNative(agent, target, message, signal, nativeTree = false) {
     const service = subagents()
     if (target.sessionId === null || typeof service?.sendMessage !== 'function') return null
     const targetAgent = liveAgent(target.sessionId)
+    // A cold target has no Activation by definition. Only probe ownership when
+    // an Agent actually exists; probing rootOf on a cold target is impossible.
     if (targetAgent !== undefined && typeof service.rootOf === 'function') {
-      // The native relay only owns the caller's native tree. A live target in
-      // another tree is the composition bridge's job; a same-tree target uses
-      // the native service and its errors (authorization, capacity, archival)
-      // must fail the delivery instead of being silently bypassed by followup.
-      // A rootOf failure is an authority failure, not a fallback signal.
-      const sameTree = service.rootOf(agent) === service.rootOf(targetAgent)
-      if (!sameTree) return null
+      let sameTree
+      try {
+        sameTree = service.rootOf(agent) === service.rootOf(targetAgent)
+      } catch (error) {
+        if (error?.code === 'UNAUTHORIZED') {
+          throw new CompositionError(
+            'TARGET_UNOWNED',
+            'the target agent has no active runtime owner; it may be an independently resumed child and cannot be restored without a Host restart',
+          )
+        }
+        throw error
+      }
+      if (!nativeTree && !sameTree) return null
+      if (nativeTree && !sameTree) {
+        throw new CompositionError(
+          'TARGET_UNOWNED',
+          'the native-tree metadata and the live runtime owner disagree; restart the Host before delivering to this target',
+        )
+      }
     }
-    const messageId = await service.sendMessage(agent, target.sessionId, [{ type: 'text', text: message }], { signal })
-    return { messageId: String(messageId) }
+    if (!nativeTree && targetAgent === undefined) return null
+    try {
+      // For a native-tree cold target, let the native service create the
+      // managed Activation; it owns cold resume, capacity, and settlement.
+      const messageId = await service.sendMessage(agent, target.sessionId, [{ type: 'text', text: message }], { signal })
+      return { messageId: String(messageId) }
+    } catch (error) {
+      if (error?.code === 'UNAUTHORIZED') {
+        throw new CompositionError(
+          'TARGET_UNOWNED',
+          'the target agent has no active runtime owner; it may be an independently resumed child and cannot be restored without a Host restart',
+        )
+      }
+      if (error?.code === 'NOT_RESUMABLE') {
+        throw new CompositionError(
+          'TARGET_NOT_RESUMABLE',
+          `the target agent cannot be resumed: ${String(error?.message ?? error)}`,
+        )
+      }
+      throw error
+    }
   }
 
   /**
@@ -919,33 +1016,57 @@ export function createControls({
         throw new CompositionError('NOT_AUTHORIZED', NOT_AUTHORIZED)
       }
       const authorization = auth.allowed ? 'edge' : rootBypass ? 'root' : 'native'
-      // Inactive local agents are resumed before delivery; this keeps
-      // send_message actionable instead of returning a bare "unavailable".
-      targetAgent = await activateTarget(target, rootSessionId, exec.signal) ?? targetAgent
-      // A message is the same low-risk text delivery as native send_message.
-      // The explicit composition edge/native-tree/root authorization is enough;
-      // do not add a second per-message workspace approval prompt.
-      const native = await deliverNative(agent, target, args.message, exec.signal)
-      if (native !== null) {
+      const nativeTree = nativeBypass || sameNativeTree(record.composition, callerNode, target)
+      try {
+        // A native-tree cold target is restored by the native subagent service
+        // itself. Only a plain persisted top-level target is resumed directly.
+        const native = await deliverNative(agent, target, args.message, exec.signal, nativeTree)
+        if (native !== null) {
+          await manager.recordAudit(rootSessionId, {
+            kind: 'message',
+            fromNodeId: callerNode.id,
+            toNodeId: target.id,
+            outcome: 'delivered',
+            detail: { edgeIds: auth.edgeIds, authorization, messageId: native.messageId },
+          })
+          return native
+        }
+        if (targetAgent === undefined) {
+          if (!independentlyResumable(target)) {
+            throw new CompositionError(
+              'TARGET_NOT_RESUMABLE',
+              "the target is a native subagent outside the caller's tree; only its own tree root can restore it",
+            )
+          }
+          targetAgent = await resumeIndependentTarget(target, rootSessionId, exec.signal)
+        }
+        const envelope = deliver(agent, targetAgent, args.message, callerNode)
+        // The resumed top-level target is plugin-owned; dispose after this turn.
+        retireResumeHandle(target.sessionId)
         await manager.recordAudit(rootSessionId, {
           kind: 'message',
           fromNodeId: callerNode.id,
           toNodeId: target.id,
           outcome: 'delivered',
-          detail: { edgeIds: auth.edgeIds, authorization, messageId: native.messageId },
+          detail: { edgeIds: auth.edgeIds, authorization, messageId: envelope.id },
         })
-        return native
+        return { messageId: envelope.id }
+      } catch (error) {
+        retireResumeHandle(target.sessionId, true)
+        await manager.recordAudit(rootSessionId, {
+          kind: 'message',
+          fromNodeId: callerNode.id,
+          toNodeId: target.id,
+          outcome: 'error',
+          detail: {
+            edgeIds: auth.edgeIds,
+            authorization,
+            code: error instanceof CompositionError ? error.code : 'DELIVERY_FAILED',
+            error: String(error?.message ?? error),
+          },
+        })
+        throw error
       }
-      if (targetAgent === undefined) throw new CompositionError('TARGET_NOT_LIVE', TARGET_NOT_LIVE)
-      const envelope = deliver(agent, targetAgent, args.message, callerNode)
-      await manager.recordAudit(rootSessionId, {
-        kind: 'message',
-        fromNodeId: callerNode.id,
-        toNodeId: target.id,
-        outcome: 'delivered',
-        detail: { edgeIds: auth.edgeIds, authorization, messageId: envelope.id },
-      })
-      return { messageId: envelope.id }
     },
   }
 

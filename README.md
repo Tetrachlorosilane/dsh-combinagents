@@ -288,8 +288,11 @@ storage backend outside the default directory needs a `storageDir` override.
   targets use the composition relay.
 - Composition **messages** are authorized by an edge grant, the composition
   root, or existing native-tree ancestry; they do not ask a per-message
-  workspace approval question. An inactive local target is auto-resumed through
-  `ctx.agents.resume` before delivery; **interrupts** still ask the approval service
+  workspace approval question. A native-tree cold target is restored by the
+  native subagent service. A plain inactive top-level target is resumed through
+  `ctx.agents.resume` with a retained handle; an unowned native child returns
+  `TARGET_UNOWNED`, and a foreign inactive native child returns
+  `TARGET_NOT_RESUMABLE`. **Interrupts** still ask the approval service
   when crossing workspaces without full permission; only an accepted one-shot
   approval proceeds.
 - Every delivered, denied, or approval-denied action is audited.
@@ -318,7 +321,8 @@ storage backend outside the default directory needs a `storageDir` override.
 | `TEAM_LABEL_CONFLICT` / `TEAM_AMBIGUOUS` | Team labels must be unique; use the Team id when a legacy duplicate exists. |
 | `TEAM_NOT_FOUND` / `TEAM_FORBIDDEN` | The `team` id/label does not exist, or the caller is neither the composition root nor a member. |
 | `TEAM_TASK_LIMIT` / `TEAM_TASK_DELETED` | The 256 non-deleted task cap was reached, or a deleted Team tombstone was mutated. (HTTP surfaces the internal `TASK_LIMIT`.) |
-| `TARGET_NOT_RESUMABLE` | The inactive target has no supported continuation state and could not be auto-activated. The error includes the resume failure. |
+| `TARGET_NOT_RESUMABLE` | The native subagent service cannot restore the target (missing/unsupported continuation state). |
+| `TARGET_UNOWNED` | The target Agent is live but has no active runtime owner (for example an independently resumed child). Only a Host restart or the original handle owner can clear that state. |
 | A one-shot agent is missing | It is hidden by default. Enable **Show one-shot agents**; use **Sync native agents** if its mode is still unknown. |
 | The tree looks stale in another profile | Wait for the 3-second poll, refresh the page, or check that both profiles run this version. |
 | The tab is absent | Confirm the plugin and client UI are enabled, then refresh after the Host restart. |

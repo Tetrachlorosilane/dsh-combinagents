@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 19 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (186 total);
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (190 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`; current target is DSH
   `0.2.2-rc.5`, with `engines.dsh` and plugin version `0.2.0`.
 
@@ -67,9 +67,12 @@ external rows and includes `mode=` in the remaining descriptions;
 agents only when enabled and defaults off.
 `send_message` is authorized by a composition edge grant, composition-root
 authority, or existing native-tree ancestry; it does not ask a per-message
-workspace approval question. An inactive local target is resumed through
-`ctx.agents.resume` before delivery; failure returns the actionable
-`TARGET_NOT_RESUMABLE` error. `interrupt_agent` still uses per-edge grants plus
+workspace approval question. A native-tree cold target is restored by the native
+`ctx.subagents.sendMessage` path (which owns cold resume and Activation
+lifetime); an independently resumed child that has no active runtime owner
+returns `TARGET_UNOWNED`. A plain inactive top-level target may be resumed
+through `ctx.agents.resume`, with the returned `AgentHandle` retained for
+disposal; a native subagent is never resumed that way. `interrupt_agent` still uses per-edge grants plus
 the cross-workspace approval gate. Same-native-tree delivery prefers the native
 relay, and live cross-tree targets use the composition relay. `subagent` / `subagent_fork`
 start a native activation under the caller, mirror the child into the
@@ -137,8 +140,9 @@ Hard invariants:
   `sandboxPolicy.registerWritableRoot`, or ACL code from a graph mutation.
 - Cross-tree delivery uses the composition-aware same-name `send_message` /
   `interrupt_agent` execution interceptors. Messages use an edge grant, root
-  authority, or native-tree ancestry; inactive targets are auto-resumed.
-  Interrupts use grants plus the approval rule below. Do not bypass them with an unshadowed native tool.
+  authority, or native-tree ancestry; native-tree cold targets are restored by
+  the native subagent service, and only plain top-level targets use
+  `ctx.agents.resume` with handle ownership. Interrupts use grants plus the approval rule below. Do not bypass them with an unshadowed native tool.
 - Do not add prompt sections or dynamic tool descriptions. Composition control
   and delegation tools are static; native tool schemas stay unchanged.
 - Never delete a DSH session because a graph node was removed.
@@ -172,7 +176,8 @@ Re-verify these before claiming compatibility with another release.
 | `startActivation` requires an exact live parent and creates a new child | `@deepseek-ai/dsh-subagent/src/index.ts`, `src/manager.ts` |
 | `rootOf` needs a live Activation; a `parentSession` header alone is not tree membership | `src/manager.ts`, `rootOf` |
 | Cold resume walks `parentSession` plus each parent catalog entry | `src/manager.ts`, `resolveCreationAncestry` |
-| `sendMessage` only targets the caller's native tree | `src/index.ts`, `manager.ts`; `@deepseek-ai/dsh-tool-subagent-control/README.md` |
+| `sendMessage` only targets the caller's native tree; it cold-restores an inactive child through the subagent manager | `src/index.ts`, `manager.ts`; `@deepseek-ai/dsh-tool-subagent-control/README.md` |
+| An Agent can be live while having no Activation; `ctx.agents.resume` on an already-live child creates an unowned child (write claim held), and there is no adoption API | `dsh-agent/src/index.ts`, `dsh-agent-loop/src/index.ts`, `dsh-subagent/src/manager.ts` |
 | Child creation inherits the **parent's** sandbox/approval policy; it does not copy a different source's policy | `src/child-agent.ts`, `captureDelegatedPolicyOverrides` |
 | External agents have no local Session and accept no follow-up | `@deepseek-ai/dsh-subagent/README.md` |
 | Team membership is one native tree and a shared checkout | `@deepseek-ai/dsh-agent-team/README.md` |
@@ -253,7 +258,7 @@ relay-label sanitization, workspace detach on failed clone, moving the
 The 2026-11-19 follow-up audit fixed ordinary-fork membership inheritance,
 cross-composition grant migration, external-placeholder idempotency, create/add
 membership races, the store reload-revision skip and reload-failure fallback,
-effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 186 tests pass. The
+effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 190 tests pass. The
 findings and remaining accepted risks are in
 [`docs/AUDIT-2026-11-19.md`](docs/AUDIT-2026-11-19.md). The live composition/bridge
 probe is in [`docs/BRIDGE-TEST-2026-11-19.md`](docs/BRIDGE-TEST-2026-11-19.md):

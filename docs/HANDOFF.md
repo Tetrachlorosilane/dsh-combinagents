@@ -28,7 +28,7 @@
 > **2026-11-20 追加**：Team API 的完整技术契约见
 > [`TEAM-API.md`](TEAM-API.md)。Team/任务写入已发布 `.revision`，Team 工具支持
 > 显式 `team` id/label 与 `team_list`，Team 图结构校验、continuable 成员限制、
-> UI 默认成员过滤和 owner reassign 已完成。全量测试 **186 pass / 0 fail**；
+> UI 默认成员过滤和 owner reassign 已完成。全量测试 **190 pass / 0 fail**；
 > 实机复核见 [`TEAM-TEST-2026-11-20.md`](TEAM-TEST-2026-11-20.md)。
 
 ## 0. 给接手代理的摘要
@@ -646,7 +646,7 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
   另加 `dsh-combinagents-count` 入口显示数量并打开本插件 tab；未改动任何工具 schema
   或消息路由；
 - 已实现：逐边 `allowMessage` / `allowInterrupt` 授权、三工具、原生 relay source、
-  消息的 edge/root/native 授权、inactive 目标的 `agents.resume` 自动激活与中断的跨工作区 approval 门、审计表；手动连接默认双向消息，直接改父
+  消息的 edge/root/native 授权、native tree 冷目标的 native cold-restore 与中断的跨工作区 approval 门、审计表；手动连接默认双向消息，直接改父
   迁移授权，detach 删除授权；
 - 已实现：组合标题编辑（`/set-title` + tab 头部）；
 - 已实现：插件自有任务板（`tasks` 表 + tab UI + `/tasks`、`/create-task`、

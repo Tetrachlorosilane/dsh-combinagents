@@ -81,8 +81,8 @@ under the old composed preset keep that preset; they get fallback definitions.
   Same-native-tree targets prefer the native relay; live cross-tree targets use
   the composition relay. Messages additionally allow the composition root and
   existing native-tree ancestry, without a per-message workspace approval;
-  inactive local targets are auto-resumed; cross-workspace interrupts use the
-  approval gate. This deliberately replaces
+  native-tree cold targets use the native subagent cold-restore path;
+  cross-workspace interrupts use the approval gate. This deliberately replaces
   the native-tree-only authority; it is the merged design.
 - `subagent` / `subagent_fork` start a native activation, mirror the child into
   the composition, and auto-grant the delegation edge. `agent_preset` is

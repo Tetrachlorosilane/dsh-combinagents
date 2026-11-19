@@ -37,8 +37,10 @@ particular:
 - Overlay edges do not by themselves change native `send_message` authority;
   the merged execution interceptor implements the composition bridge.
   Messages use an edge grant, root authority, or native-tree ancestry without a
-  per-message approval prompt; inactive targets are auto-resumed through
-  `ctx.agents.resume`. Interrupts use grants plus approval.
+  per-message approval prompt; native-tree cold targets are restored by the
+  native subagent service, never by a bare `ctx.agents.resume`; plain top-level
+  targets may use `ctx.agents.resume` with a retained/disposed handle.
+  Interrupts use grants plus approval.
 - Six native names keep their native definitions; a `tools/execute` interceptor
   supplies composition values. `composition_task` is the legacy aggregate; when
   native Agent Teams is absent the plugin also registers four Team-shaped task
@@ -525,8 +527,8 @@ Semantics:
 - `send_message` / `interrupt_agent` resolve composition labels, node ids, or
   session ids. Messages are allowed by a per-edge `allowMessage` grant, the
   composition root, or existing native-tree ancestry; inactive local targets
-  are auto-resumed before delivery. Interrupts require the corresponding
-  per-edge grant. Native-tree targets still prefer the native
+  are restored by the native subagent service when they belong to the native
+  tree. Interrupts require the corresponding per-edge grant. Native-tree targets still prefer the native
   relay. Live cross-tree targets use the composition relay. Cross-workspace
   interrupts without a full-permission caller ask through
   `ctx.approval.request`; only `allowed-once` proceeds.

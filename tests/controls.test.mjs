@@ -17,8 +17,10 @@ function harness(options = {}) {
   const grantedEdges = []
   const nativeSends = []
   const resumes = []
+  const disposedResumes = []
   const workerAgent = {
     status: 'idle',
+    whenIdle: async () => {},
     followup: (message) => delivered.push(message),
     steer: (message) => steered.push(message),
   }
@@ -46,8 +48,8 @@ function harness(options = {}) {
   const composition = {
     rootSessionId: 's-a',
     nodes: [
-      { id: 'n-a', sessionId: 's-a', label: options.callerLabel ?? 'Lead', kind: 'session', source: 'top-level', mode: 'continuable' },
-      { id: 'n-b', sessionId: 's-b', label: 'Worker', kind: 'session', source: 'subagent', mode: 'continuable' },
+      { id: 'n-a', sessionId: 's-a', label: options.callerLabel ?? 'Lead', kind: 'session', source: 'top-level', mode: 'continuable', ...(options.callerNativeParent === undefined ? {} : { nativeParentSessionId: options.callerNativeParent }) },
+      { id: 'n-b', sessionId: 's-b', label: 'Worker', kind: 'session', source: options.targetSource ?? 'subagent', mode: 'continuable', ...(options.targetNativeParent === null ? {} : { nativeParentSessionId: options.targetNativeParent ?? 's-a' }) },
     ],
     edges: [{ id: 'e1', parentId: 'n-a', childId: 'n-b', role: 'reports-to' }],
   }
@@ -122,19 +124,21 @@ function harness(options = {}) {
         }
       }
       if (name === 'agents') {
-        let resumedWorker
+        let resumedAgent
         return {
           get: (id) => {
             if (id === 's-a') return callerAgent
             if (id !== 's-b') return undefined
-            if (options.inactiveTarget === true) return resumedWorker
+            if (options.inactiveTarget === true) return resumedAgent
             return workerAgent
           },
           async resume({ resumeSessionId }) {
             resumes.push(resumeSessionId)
-            if (options.resumeError === true) throw new Error('resume failed')
-            resumedWorker = workerAgent
-            return { agent: workerAgent, dispose: async () => {} }
+            resumedAgent = workerAgent
+            return {
+              agent: workerAgent,
+              async dispose() { disposedResumes.push(resumeSessionId) },
+            }
           },
         }
       }
@@ -146,10 +150,15 @@ function harness(options = {}) {
             started.push(spec)
             return { childId: 's-child', name: 'agent-1' }
           },
-          ...(options.nativeSend === true || options.nativeSendError === true) ? {
+          ...(options.nativeSend === true || options.nativeSendError === true || options.nativeSendErrorCode !== undefined) ? {
             async sendMessage(...args) {
               nativeSends.push(args)
               if (options.nativeSendError === true) throw new Error('native authorization denied')
+              if (options.nativeSendErrorCode !== undefined) {
+                const error = new Error(options.nativeSendErrorMessage ?? 'agent has no active runtime owner')
+                error.code = options.nativeSendErrorCode
+                throw error
+              }
               return 'm-native'
             },
           } : {},
@@ -238,6 +247,7 @@ function harness(options = {}) {
     grantedEdges,
     nativeSends,
     resumes,
+    disposedResumes,
     taskCalls,
     teamScopeCalls,
     teams,
@@ -360,17 +370,38 @@ test('send_message does not bypass a native relay authorization error', async ()
   assert.equal(harnessed.delivered.length, 0)
 })
 
-test('send_message auto-resumes an inactive target before delivery', async () => {
-  const harnessed = harness({ inactiveTarget: true })
-  await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'wake up' }, {
+test('send_message lets the native service cold-restore an inactive native child', async () => {
+  const harnessed = harness({
+    inactiveTarget: true,
+    nativeSend: true,
+    nativeRoots: () => { throw new Error('rootOf must not run for a cold native target') },
+  })
+  const result = await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'wake up' }, {
     agent: { id: 's-a' }, signal: new AbortController().signal,
   })
-  assert.deepEqual(harnessed.resumes, ['s-b'])
-  assert.equal(harnessed.delivered.length, 1)
+  assert.deepEqual(result, { messageId: 'm-native' })
+  assert.equal(harnessed.nativeSends.length, 1)
+  assert.equal(harnessed.delivered.length, 0)
 })
 
-test('send_message reports a failed auto-activation instead of returning silently', async () => {
-  const harnessed = harness({ inactiveTarget: true, resumeError: true })
+test('send_message reports an unowned native child without retrying agents.resume', async () => {
+  const harnessed = harness({
+    inactiveTarget: true,
+    nativeSend: true,
+    nativeSendErrorCode: 'UNAUTHORIZED',
+  })
+  await assert.rejects(
+    harnessed.tool('send_message').execute({ agent: 'Worker', message: 'wake up' }, {
+      agent: { id: 's-a' }, signal: new AbortController().signal,
+    }),
+    (error) => error instanceof CompositionError && error.code === 'TARGET_UNOWNED',
+  )
+  assert.equal(harnessed.nativeSends.length, 1)
+  assert.equal(harnessed.delivered.length, 0)
+})
+
+test('send_message refuses an inactive native child outside the caller tree', async () => {
+  const harnessed = harness({ inactiveTarget: true, targetNativeParent: 's-other' })
   await assert.rejects(
     harnessed.tool('send_message').execute({ agent: 'Worker', message: 'wake up' }, {
       agent: { id: 's-a' }, signal: new AbortController().signal,
@@ -378,6 +409,57 @@ test('send_message reports a failed auto-activation instead of returning silentl
     (error) => error instanceof CompositionError && error.code === 'TARGET_NOT_RESUMABLE',
   )
   assert.equal(harnessed.delivered.length, 0)
+  assert.equal(harnessed.resumes.length, 0)
+})
+
+test('send_message auto-resumes a plain inactive top-level target with a retained handle', async () => {
+  const harnessed = harness({
+    inactiveTarget: true,
+    targetSource: 'top-level',
+    targetNativeParent: null,
+  })
+  await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'wake up' }, {
+    agent: { id: 's-a' }, signal: new AbortController().signal,
+  })
+  assert.deepEqual(harnessed.resumes, ['s-b'])
+  assert.equal(harnessed.delivered.length, 1)
+})
+
+test('send_message cold-restores a native sibling through the native service', async () => {
+  const harnessed = harness({
+    inactiveTarget: true,
+    nativeSend: true,
+    callerNativeParent: 's-root',
+    targetNativeParent: 's-root',
+  })
+  const result = await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'sibling' }, {
+    agent: { id: 's-a' }, signal: new AbortController().signal,
+  })
+  assert.deepEqual(result, { messageId: 'm-native' })
+  assert.equal(harnessed.nativeSends.length, 1)
+  assert.equal(harnessed.resumes.length, 0)
+})
+
+test('send_message reports a live native orphan before calling the native service', async () => {
+  const harnessed = harness({
+    nativeSend: true,
+    targetNativeParent: 's-a',
+    nativeRoots: (agent) => {
+      if (agent.id === 's-b') {
+        const error = new Error('agent has no active runtime owner')
+        error.code = 'UNAUTHORIZED'
+        throw error
+      }
+      return { id: 's-a' }
+    },
+  })
+  await assert.rejects(
+    harnessed.tool('send_message').execute({ agent: 'Worker', message: 'wake up' }, {
+      agent: { id: 's-a' }, signal: new AbortController().signal,
+    }),
+    (error) => error instanceof CompositionError && error.code === 'TARGET_UNOWNED',
+  )
+  assert.equal(harnessed.nativeSends.length, 0)
 })
 
 test('send_message does not ask for approval across workspaces', async () => {
