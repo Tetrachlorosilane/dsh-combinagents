@@ -134,7 +134,7 @@ tab 中选择 lead 会预选其子树，然后通过复选框增删成员。成�
 
 - **Composition board** 只显示没有 Team 的任务（`teamId: null`）；
 - 选中 Team 后只显示该 Team 的任务；
-- 删除 Team 会删除其 scoped tasks，但不会删除组合节点或 Session；
+- Team 任务最多 256 个未删除行；删除 Team 任务会写入 tombstone（任务板隐藏、保留历史）；删除 Team 会删除其 scoped tasks，但不会删除组合节点或 Session；
 - clone/bud 会复制成员节点被包含的 Team 定义，并重映射任务的 `teamId`；
 - Team 是固定成员快照：删除/移动成员，或 reparent 导致 Team 不连通/重叠，
   都会被拒绝；需要修改结构时先删除 Team。
@@ -222,6 +222,7 @@ team_task_update { "team": "Build", "task_id": "...",
 | `TEAM_MEMBER_MODE` | Team 成员/owner 是 one-shot，或会变成 one-shot；Team 需要 continuable 本地节点。 |
 | `TEAM_LABEL_CONFLICT` / `TEAM_AMBIGUOUS` | Team label 必须唯一；旧数据重名时使用 Team id。 |
 | `TEAM_NOT_FOUND` / `TEAM_FORBIDDEN` | `team` id/label 不存在，或调用者既不是组合根也不是 Team 成员。 |
+| `TEAM_TASK_LIMIT` / `TEAM_TASK_DELETED` | 非删除任务达到 256 上限，或试图修改已删除的 Team tombstone；HTTP 内部仍返回 `TASK_LIMIT`。 |
 | 看不到某个 one-shot 代理 | 默认隐藏；打开 **Show one-shot agents**，必要时先 **Sync native agents**。 |
 | 另一个 profile 的树看起来是旧的 | 等待 3 秒轮询、刷新页面，或确认两个 profile 都运行当前版本。 |
 | 没有页面 | 确认插件和 client UI 已启用，Host 重启后刷新页面。 |
@@ -267,6 +268,7 @@ src/controls.js          Native tool 执行拦截
 - [DSH 可行性分析](docs/FEASIBILITY.md)
 - [Standard profile 配置与迁移](docs/COMPOSED-PROFILE.md)
 - [Team API 与生命周期](docs/TEAM-API.md)
+- [原生 Team 与插件 Team 对比](docs/TEAM-NATIVE-COMPARISON-2026-11-20.md)
 - [Clone/bud spike](docs/CLONE-SPIKE.md)
 - [贡献者工作约定](AGENTS.md)
 

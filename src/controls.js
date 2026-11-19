@@ -1047,16 +1047,12 @@ export function createControls({
     const scopes = Array.isArray(task.writeScopes) ? task.writeScopes : []
     const warnings = new Set()
     for (const other of tasks) {
-      if (other.id === task.id || other.status === 'completed' || other.status === 'deleted') continue
+      if (other.id === task.id || other.status !== 'in_progress') continue
       const otherScopes = Array.isArray(other.writeScopes) ? other.writeScopes : []
-      for (const selfScope of scopes) {
-        for (const otherScope of otherScopes) {
-          if (selfScope === otherScope
-            || selfScope.startsWith(`${otherScope}/`)
-            || otherScope.startsWith(`${selfScope}/`)) {
-            warnings.add(`${selfScope} overlaps ${otherScope} on ${other.id}`)
-          }
-        }
+      if (scopes.some((selfScope) => otherScopes.some((otherScope) => selfScope === otherScope
+        || selfScope.startsWith(`${otherScope}/`)
+        || otherScope.startsWith(`${selfScope}/`)))) {
+        warnings.add(`write scopes overlap with ${other.id}`)
       }
     }
     return [...warnings]
@@ -1133,7 +1129,9 @@ export function createControls({
    */
   function nativeTaskView(task, tasks, composition) {
     const owner = composition.nodes.find((node) => node.id === task.ownerNodeId)
-    const ownerName = owner?.label ?? (typeof task.ownerNodeId === 'string' ? task.ownerNodeId : undefined)
+    const ownerName = typeof task.ownerName === 'string' && task.ownerName.length > 0
+      ? task.ownerName
+      : owner?.label ?? (typeof task.ownerNodeId === 'string' ? task.ownerNodeId : undefined)
     return {
       id: task.id,
       revision: task.revision,
@@ -1259,8 +1257,8 @@ export function createControls({
         throw new CompositionError('TEAM_MEMBER_REQUIRED', 'owner filter must name a member of this Team')
       }
       const tasks = scope.tasks
-      const filtered = tasks.filter((task) =>
-        (args.status === undefined || task.status === args.status)
+      const filtered = tasks.filter((task) => task.status !== 'deleted'
+        && (args.status === undefined || task.status === args.status)
         && (ownerNode === undefined || task.ownerNodeId === ownerNode.id)
         && (args.unowned === undefined || (task.ownerNodeId === null || task.ownerNodeId === undefined) === args.unowned)
         && (args.ready === undefined || taskIsReady(task, tasks) === args.ready))
@@ -1328,15 +1326,17 @@ export function createControls({
         teamId: scope.teamId,
         actor: caller.callerNode.sessionId,
       })
-      if (args.action === 'delete') {
-        return { ...nativeTaskView(task, tasks, caller.record.composition), status: 'deleted', revision: task.revision + 1 }
-      }
       const scopedAfter = after.filter((candidate) => scope.teamId === null
         ? candidate.teamId === null || candidate.teamId === undefined
         : candidate.teamId === scope.teamId)
       const updated = scopedAfter.find((candidate) => candidate.id === args.task_id)
-      if (updated === undefined) throw new CompositionError('TASK_NOT_FOUND', 'updated task was not returned')
-      return nativeTaskView(updated, scopedAfter, caller.record.composition)
+      if (updated !== undefined) return nativeTaskView(updated, scopedAfter, caller.record.composition)
+      if (args.action === 'delete') {
+        // A composition-board delete is a hard delete; still return a canonical
+        // deleted view without claiming the old task is ready.
+        return nativeTaskView({ ...task, status: 'deleted', revision: task.revision + 1 }, tasks, caller.record.composition)
+      }
+      throw new CompositionError('TASK_NOT_FOUND', 'updated task was not returned')
     },
   }
 
@@ -1454,7 +1454,7 @@ export function createControls({
       const caller = await callerContext(exec.agent)
       if (caller === null) throw new CompositionError('NOT_IN_COMPOSITION', NOT_IN_COMPOSITION)
       if (args.action === 'list') {
-        return { tasks: (await manager.getTasks(caller.rootSessionId, undefined, null)).map(taskView) }
+        return { tasks: (await manager.getTasks(caller.rootSessionId, undefined, null)).filter((task) => task.status !== 'deleted').map(taskView) }
       }
       if (args.action === 'create') {
         return {
@@ -1464,7 +1464,7 @@ export function createControls({
             ownerNodeId: caller.callerNode.id,
             createdBy: `agent:${caller.callerNode.sessionId}`,
             actor: caller.callerNode.sessionId,
-          })).filter((task) => task.teamId === null || task.teamId === undefined).map(taskView),
+          })).filter((task) => (task.teamId === null || task.teamId === undefined) && task.status !== 'deleted').map(taskView),
         }
       }
       const action = args.status === 'in_progress'
@@ -1477,14 +1477,59 @@ export function createControls({
           action,
           teamId: null,
           actor: caller.callerNode.sessionId,
-        })).filter((task) => task.teamId === null || task.teamId === undefined).map(taskView),
+        })).filter((task) => (task.teamId === null || task.teamId === undefined) && task.status !== 'deleted').map(taskView),
       }
     },
   }
 
+  const TEAM_TOOL_ERRORS = {
+    TASK_CONFLICT: 'TEAM_TASK_STALE_REVISION',
+    TASK_FORBIDDEN: 'TEAM_TASK_UNAUTHORIZED',
+    TASK_ALREADY_CLAIMED: 'TEAM_TASK_ALREADY_CLAIMED',
+    TASK_BLOCKED: 'TEAM_TASK_BLOCKED',
+    TASK_INVALID_TRANSITION: 'TEAM_TASK_INVALID_TRANSITION',
+    TASK_NOT_FOUND: 'TEAM_TASK_NOT_FOUND',
+    TASK_HAS_DEPENDENTS: 'TEAM_TASK_HAS_DEPENDENTS',
+    TASK_DEPENDENCY_CYCLE: 'TEAM_TASK_DEPENDENCY_CYCLE',
+    TASK_LIMIT: 'TEAM_TASK_LIMIT',
+    TEAM_MEMBER_REQUIRED: 'TEAM_MEMBER_NOT_FOUND',
+    TEAM_MEMBER_MODE: 'TEAM_MEMBER_NOT_FOUND',
+    TEAM_FORBIDDEN: 'TEAM_TASK_UNAUTHORIZED',
+    UNKNOWN_NODE: 'TEAM_MEMBER_NOT_FOUND',
+    UNKNOWN_TARGET: 'TEAM_MEMBER_NOT_FOUND',
+    INVALID_FIELD: 'TEAM_INVALID_ARGUMENT',
+  }
+
+  /**
+   * Present the Team task tools' errors in the native Team vocabulary while
+   * keeping the manager/HTTP error codes stable for the plugin API.
+   * @param {unknown} error - thrown value.
+   * @param {object} args - task tool arguments.
+   * @returns {unknown} mapped error.
+   */
+  function nativeTeamError(error, args) {
+    if (!(error instanceof CompositionError)) return error
+    const mapped = error.code === 'TASK_FORBIDDEN' && args?.action === 'reassign'
+      ? 'TEAM_LEAD_REQUIRED'
+      : TEAM_TOOL_ERRORS[error.code]
+    return mapped === undefined ? error : new CompositionError(mapped, error.message)
+  }
+
+  const teamTaskDefinitions = [teamTaskCreate, teamTaskList, teamTaskGet, teamTaskUpdate]
+    .map((definition) => ({
+      ...definition,
+      execute: async (args, exec) => {
+        try {
+          return await definition.execute(args, exec)
+        } catch (error) {
+          throw nativeTeamError(error, args)
+        }
+      },
+    }))
+
   const definitions = [
     listAgents, sendMessage, interruptAgent, subagentTool, forkTool, waitTool, taskTool,
-    teamList, teamTaskCreate, teamTaskList, teamTaskGet, teamTaskUpdate,
+    teamList, ...teamTaskDefinitions,
   ]
   const NATIVE_NAMES = new Set(['list_agents', 'send_message', 'interrupt_agent', 'subagent', 'subagent_fork', 'wait_agent'])
   const handlers = new Map(definitions
@@ -1634,7 +1679,7 @@ export function createControls({
           return false
         }
       }
-      const definitionsToRegister = [taskTool, teamList, teamTaskCreate, teamTaskList, teamTaskGet, teamTaskUpdate]
+      const definitionsToRegister = [taskTool, teamList, ...teamTaskDefinitions]
       let nativeTeam = false
       try {
         nativeTeam = ctx.get?.('agentTeams') !== undefined

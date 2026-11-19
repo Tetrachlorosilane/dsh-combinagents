@@ -1,8 +1,8 @@
 # dsh-combinagents 设计与交接说明
 
-> **文档地位**：这是交给下一位实现代理的产品需求与设计基线。  
+> **文档地位**：这是交给下一位实现代理的产品需求与设计基线。
 > 与 `docs/ARCHITECTURE.md` 或 `docs/FEASIBILITY.md` 冲突时，**需求以本文为准**；
-> DSH 技术事实仍以 `docs/FEASIBILITY.md` 的源码核对结果为准。  
+> DSH 技术事实仍以 `docs/FEASIBILITY.md` 的源码核对结果为准。
 > **当前状态**：Phase 1 已安装到 `desktop` profile（`application: applied`），并于
 > 2026-11-17 通过真实 GUI 目视验收（深色/浅色/420px 窄宽度；tab、计数 chip、picker、
 > 详情、改名/改父、逐边授权、外部占位、任务板、创建/删除组合、sync-native、原生
@@ -27,7 +27,7 @@
 > **2026-11-20 追加**：Team API 的完整技术契约见
 > [`TEAM-API.md`](TEAM-API.md)。Team/任务写入已发布 `.revision`，Team 工具支持
 > 显式 `team` id/label 与 `team_list`，Team 图结构校验、continuable 成员限制、
-> UI 默认成员过滤和 owner reassign 已完成。全量测试 **179 pass / 0 fail**；
+> UI 默认成员过滤和 owner reassign 已完成。全量测试 **181 pass / 0 fail**；
 > 实机复核见 [`TEAM-TEST-2026-11-20.md`](TEAM-TEST-2026-11-20.md)。
 
 ## 0. 给接手代理的摘要

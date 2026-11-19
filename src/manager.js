@@ -32,6 +32,7 @@ export const DEFAULT_COMPOSITION_TITLE = 'Agent composition'
 
 /** Same cap the graph model enforces for labels. */
 const MAX_LABEL = 120
+const MAX_TASKS = 256
 
 /**
  * @param {unknown} value - candidate text.
@@ -650,7 +651,28 @@ export function createManager({
    */
   function taskText(value, max) {
     if (typeof value !== 'string') return ''
-    return value.trim().slice(0, max)
+    const text = value.trim()
+    if (text.length > max) {
+      throw new CompositionError('INVALID_FIELD', `task text exceeds ${max} characters`)
+    }
+    return text
+  }
+
+  /**
+   * Normalize one advisory workspace-relative task write scope, matching the
+   * native Team rule: no absolute paths, drive letters, empty/./.. segments.
+   * @param {unknown} value - user-provided prefix.
+   * @returns {string} normalized prefix.
+   */
+  function taskScope(value) {
+    if (typeof value !== 'string') throw new CompositionError('INVALID_FIELD', 'write scope must be a string')
+    const normalized = value.trim().replaceAll('\\', '/').replace(/^\.\//u, '').replace(/\/+$/u, '')
+    const segments = normalized.split('/')
+    if (normalized.length === 0 || normalized.startsWith('/') || /^[a-z]:/iu.test(normalized)
+      || segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')) {
+      throw new CompositionError('TEAM_INVALID_WRITE_SCOPE', `invalid workspace-relative write scope ${JSON.stringify(value)}`)
+    }
+    return normalized
   }
 
   /**
@@ -852,24 +874,31 @@ export function createManager({
       const createdBy = textOf(input.createdBy, 128) ?? 'user'
       const actor = textOf(input.actor, 128) ?? 'user'
       const existing = await getTasks(rootSessionId, undefined, teamId)
-      const blockedBy = [...new Set(Array.isArray(input.blockedBy)
-        ? input.blockedBy.filter((id) => typeof id === 'string' && id.length > 0)
-        : [])]
-      const known = new Set(existing.map((candidate) => candidate.id))
+      const activeTasks = existing.filter((candidate) => candidate.status !== 'deleted')
+      if (activeTasks.length >= MAX_TASKS) {
+        throw new CompositionError('TASK_LIMIT', `task limit ${MAX_TASKS} reached`)
+      }
+      const blockedBy = []
+      for (const id of Array.isArray(input.blockedBy) ? input.blockedBy : []) {
+        if (typeof id !== 'string' || id.length === 0) continue
+        if (blockedBy.includes(id)) throw new CompositionError('INVALID_FIELD', `duplicate blocked task ${JSON.stringify(id)}`)
+        blockedBy.push(id)
+      }
+      const known = new Set(activeTasks.map((candidate) => candidate.id))
       for (const id of blockedBy) {
         if (!known.has(id)) throw new CompositionError('TASK_NOT_FOUND', `blocked task ${JSON.stringify(id)} does not exist`)
       }
-      const writeScopes = [...new Set(Array.isArray(input.writeScopes)
-        ? input.writeScopes.map((scope) => textOf(scope, 500)).filter((scope) => scope.length > 0)
-        : [])]
+      const writeScopes = [...new Set(Array.isArray(input.writeScopes) ? input.writeScopes.map(taskScope) : [])]
+      const owner = ownerNodeId === null ? undefined : record.composition.nodes.find((node) => node.id === ownerNodeId)
       const task = {
         id: randomUUID(),
         rootSessionId,
         teamId,
         subject,
-        description: taskText(input.description, 8000),
+        description: taskText(input.description, 16384),
         status: 'pending',
         ownerNodeId,
+        ...(owner === undefined ? {} : { ownerName: owner.label }),
         blockedBy,
         writeScopes,
         revision: 1,
@@ -923,6 +952,9 @@ export function createManager({
       if (task.teamId !== null && task.teamId !== undefined && (team === undefined || team === null || team.rootSessionId !== rootSessionId)) {
         throw new CompositionError('TEAM_NOT_FOUND', 'the task team no longer exists')
       }
+      if (task.status === 'deleted') {
+        throw new CompositionError('TEAM_TASK_DELETED', `task ${JSON.stringify(task.id)} is deleted`)
+      }
       const tasks = allTasks.filter((candidate) => team === null
         ? candidate.teamId === null || candidate.teamId === undefined
         : candidate.teamId === team.id)
@@ -953,6 +985,7 @@ export function createManager({
           next = {
             ...task,
             ownerNodeId: actorNode.id,
+            ownerName: actorNode.label,
             status: 'in_progress',
             revision: task.revision + 1,
             updatedAt: now(),
@@ -962,7 +995,7 @@ export function createManager({
         case 'release': {
           requireOwner()
           if (task.status !== 'in_progress') throw new CompositionError('TASK_INVALID_TRANSITION', 'only an in-progress task can be released')
-          next = { ...task, ownerNodeId: null, status: 'pending', revision: task.revision + 1, updatedAt: now() }
+          next = { ...task, ownerNodeId: null, ownerName: undefined, status: 'pending', revision: task.revision + 1, updatedAt: now() }
           break
         }
         case 'edit': {
@@ -975,9 +1008,9 @@ export function createManager({
           next = {
             ...task,
             subject,
-            ...input.description === undefined ? {} : { description: taskText(input.description, 8000) },
+            ...input.description === undefined ? {} : { description: taskText(input.description, 16384) },
             ...input.writeScopes === undefined ? {} : {
-              writeScopes: [...new Set(input.writeScopes.map((scope) => textOf(scope, 500)).filter((scope) => scope.length > 0))],
+              writeScopes: [...new Set(input.writeScopes.map(taskScope))],
             },
             revision: task.revision + 1,
             updatedAt: now(),
@@ -987,8 +1020,13 @@ export function createManager({
         case 'set_dependencies': {
           requireOwner()
           if (!Array.isArray(input.blockedBy)) throw new CompositionError('INVALID_FIELD', 'set_dependencies requires blockedBy')
-          const blockedBy = [...new Set(input.blockedBy.filter((id) => typeof id === 'string' && id.length > 0))]
-          const known = new Set(tasks.map((candidate) => candidate.id))
+          const blockedBy = []
+          for (const id of input.blockedBy) {
+            if (typeof id !== 'string' || id.length === 0) continue
+            if (blockedBy.includes(id)) throw new CompositionError('INVALID_FIELD', `duplicate blocked task ${JSON.stringify(id)}`)
+            blockedBy.push(id)
+          }
+          const known = new Set(tasks.filter((candidate) => candidate.status !== 'deleted').map((candidate) => candidate.id))
           for (const id of blockedBy) {
             if (!known.has(id)) throw new CompositionError('TASK_NOT_FOUND', `blocked task ${JSON.stringify(id)} does not exist`)
           }
@@ -1007,7 +1045,7 @@ export function createManager({
         case 'reopen': {
           requireOwner()
           if (task.status !== 'completed') throw new CompositionError('TASK_INVALID_TRANSITION', 'only a completed task can reopen')
-          next = { ...task, status: 'pending', ownerNodeId: null, revision: task.revision + 1, updatedAt: now() }
+          next = { ...task, status: 'pending', ownerNodeId: null, ownerName: undefined, revision: task.revision + 1, updatedAt: now() }
           break
         }
         case 'reassign': {
@@ -1025,8 +1063,9 @@ export function createManager({
           const ownerNodeId = typeof input.ownerNodeId === 'string' && input.ownerNodeId.length > 0
             ? input.ownerNodeId
             : null
+          let owner
           if (ownerNodeId !== null) {
-            const owner = record.composition.nodes.find((node) => node.id === ownerNodeId && node.kind === 'session')
+            owner = record.composition.nodes.find((node) => node.id === ownerNodeId && node.kind === 'session')
             if (owner === undefined) throw new CompositionError('UNKNOWN_NODE', 'reassign target is not a local composition node')
             if (team !== null && !teamNodes(record.composition, team).some((node) => node.id === ownerNodeId)) {
               throw new CompositionError('TEAM_MEMBER_REQUIRED', 'reassign target must belong to this team')
@@ -1039,6 +1078,7 @@ export function createManager({
           next = {
             ...task,
             ownerNodeId,
+            ownerName: ownerNodeId === null ? undefined : owner?.label,
             status: ownerNodeId === null ? 'pending' : 'in_progress',
             revision: task.revision + 1,
             updatedAt: now(),
@@ -1051,7 +1091,9 @@ export function createManager({
           if (dependent !== undefined) {
             throw new CompositionError('TASK_HAS_DEPENDENTS', `task still blocks ${dependent.id}`)
           }
-          next = null
+          next = team === null
+            ? null
+            : { ...task, status: 'deleted', revision: task.revision + 1, updatedAt: now() }
           break
         }
         case 'start': {
@@ -1060,7 +1102,7 @@ export function createManager({
           next = {
             ...task,
             status: 'in_progress',
-            ...task.ownerNodeId === null && actorNode !== undefined ? { ownerNodeId: actorNode.id } : {},
+            ...task.ownerNodeId === null && actorNode !== undefined ? { ownerNodeId: actorNode.id, ownerName: actorNode.label } : {},
             revision: task.revision + 1,
             updatedAt: now(),
           }

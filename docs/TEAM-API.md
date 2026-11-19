@@ -21,6 +21,13 @@ team: {
 
 Teams live in the `teams` table of the `combinagents` storage domain. Tasks
 carry an optional `teamId`; a Team's task board is the task set with that id.
+Non-deleted tasks are capped at 256 per scope; tombstoned (`deleted`) tasks do
+not consume the cap.
+
+Team task deletion writes a tombstone: `team_task_get` can still read the
+deleted snapshot, `team_task_list` excludes it, and further mutation returns
+`TEAM_TASK_DELETED`. The legacy `composition_task` delete remains a hard delete
+because it is not a Team task board.
 
 ## 2. Profile and tool availability
 
@@ -113,10 +120,13 @@ All routes require the loopback token and exact Host/Origin checks.
 | `TEAM_OVERLAP` | Creation would overlap an existing Team |
 | `TEAM_LABEL_CONFLICT` | Team label already in use |
 | `TEAM_NOT_CONNECTED` | Creation would produce a disconnected member set |
+| `TASK_LIMIT` / `TEAM_TASK_LIMIT` | The 256 non-deleted task scope cap was reached; the Team tool layer maps it to `TEAM_TASK_LIMIT` |
+| `TEAM_TASK_DELETED` | A Team tombstone cannot be mutated |
+| `TEAM_TASK_STALE_REVISION` / `TEAM_TASK_UNAUTHORIZED` | Team tool-layer aliases for stale CAS and unauthorized mutations |
 
 ## 9. Verification
 
-- Automated: `node --test tests/*.test.mjs` — 179 pass / 0 fail.
+- Automated: `node --test tests/*.test.mjs` — 181 pass / 0 fail.
 - Live 2026-11-20: `team_list`, explicit `team` scope, Team Lead owner
   resolution, revision changes, duplicate-label rejection, and Team task
   isolation passed. A `composition_task` create/update output leak was found,
@@ -125,3 +135,5 @@ All routes require the loopback token and exact Host/Origin checks.
   running (`AGENT_BUSY`); manager tests cover it.
 - Evidence: [`TEAM-TEST-2026-11-20.md`](TEAM-TEST-2026-11-20.md),
   [`DESIGN-REVIEW-2026-11-19.md`](DESIGN-REVIEW-2026-11-19.md).
+- Native-vs-plugin parity review:
+  [`TEAM-NATIVE-COMPARISON-2026-11-20.md`](TEAM-NATIVE-COMPARISON-2026-11-20.md).

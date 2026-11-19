@@ -380,7 +380,8 @@ export function createApi({
       if (rootSessionId === '') throw new HttpError(400, 'INVALID_REQUEST', 'rootSessionId is required')
       const teamId = url.searchParams.get('teamId')
       return json(200, {
-        tasks: await manager.getTasks(rootSessionId, undefined, teamId === null || teamId === '' ? undefined : teamId),
+        tasks: (await manager.getTasks(rootSessionId, undefined, teamId === null || teamId === '' ? undefined : teamId))
+          .filter((task) => task.status !== 'deleted'),
       })
     }
     if (route === '/teams') {
@@ -429,7 +430,8 @@ export function createApi({
         updatedAt: record.updatedAt,
         observations,
         grants: await manager.getGrants(record.composition.rootSessionId, record),
-        tasks: await manager.getTasks(record.composition.rootSessionId, record),
+        tasks: (await manager.getTasks(record.composition.rootSessionId, record))
+          .filter((task) => task.status !== 'deleted'),
         teams: await manager.listTeams(record.composition.rootSessionId, record),
         storage: manager.storageMode,
       })
@@ -531,7 +533,7 @@ export function createApi({
         createdBy: 'user',
         actor: 'user',
       })
-      return json(200, { tasks })
+      return json(200, { tasks: tasks.filter((task) => task.status !== 'deleted') })
     }
     if (route === '/update-task') {
       const tasks = await manager.updateTask(body.rootSessionId, {
@@ -542,7 +544,7 @@ export function createApi({
         ...(body.ownerNodeId === undefined ? {} : { ownerNodeId: body.ownerNodeId }),
         actor: 'user',
       })
-      return json(200, { tasks })
+      return json(200, { tasks: tasks.filter((task) => task.status !== 'deleted') })
     }
     if (route === '/remove-node') {
       const record = await manager.removeNode(body.rootSessionId, {

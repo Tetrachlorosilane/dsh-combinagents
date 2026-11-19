@@ -14,7 +14,7 @@ overlay、Team/任务板、Team 形状工具、clone/bud、session cleanup、Cli
 > 多个 Team、图结构变化和“替代原生 Team”承诺上存在一组问题。
 >
 > **修复状态（2026-11-19）：R1–R7、R9、R11、R12 已修复；R8 保留为明确的产品
-> 边界；R10 已补 owner/reassign，claim 仍由模型工具负责。全量测试现为 179
+> 边界；R10 已补 owner/reassign，claim 仍由模型工具负责。全量测试现为 181
 > pass / 0 fail。** 本文件保留原始审查证据，下面的“修复状态”表给出对应实现。
 
 ## 契约
@@ -259,7 +259,7 @@ overlay、Team/任务板、Team 形状工具、clone/bud、session cleanup、Cli
 
 ## 4. 已验证正常的部分
 
-- 修复后全量测试 **179 pass / 0 fail**。
+- 修复后全量测试 **181 pass / 0 fail**。
 - 实机 Host：
   - 创建两节点 Team；
   - `team_task_create/list/get/reassign/complete/delete` 全通过；

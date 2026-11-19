@@ -731,7 +731,7 @@ test('supports claim, release, dependencies, reassign, and dependent-safe delete
   })
   second = tasks.find((task) => task.id === second.id)
   assert.equal(second.subject, 'Second edited')
-  assert.deepEqual(second.writeScopes, ['src/'])
+  assert.deepEqual(second.writeScopes, ['src'])
 
   tasks = await manager.createTask('s-a', { subject: 'Third', description: 'Three' })
   let third = tasks.find((task) => task.subject === 'Third')
@@ -897,6 +897,51 @@ test('rejects a one-shot Team member', async () => {
     nodeIds: [root.id, b.id],
     label: 'One shot',
   }), 'TEAM_MEMBER_MODE')
+})
+
+test('keeps a Team task tombstone and rejects stale edits', async () => {
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(['s-a', 's-b']) })
+  await manager.create('s-a')
+  const root = (await manager.state('s-a')).composition.nodes[0]
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: root.id })
+  const b = (await manager.state('s-a')).composition.nodes.find((node) => node.sessionId === 's-b')
+  const [team] = await manager.createTeam('s-a', { rootNodeId: b.id, nodeIds: [b.id], label: 'Tombstones' })
+  const created = await manager.createTask('s-a', {
+    subject: 'Delete me',
+    description: 'Tombstone',
+    teamId: team.id,
+    ownerNodeId: b.id,
+  })
+  const task = created.find((candidate) => candidate.subject === 'Delete me')
+  assert.equal(task.ownerName, b.label)
+  await rejectsWithCode(manager.createTask('s-a', {
+    subject: 'Bad scope',
+    description: 'Bad',
+    teamId: team.id,
+    writeScopes: ['../outside'],
+  }), 'TEAM_INVALID_WRITE_SCOPE')
+  await rejectsWithCode(manager.createTask('s-a', {
+    subject: 'Duplicate blocker',
+    description: 'Bad',
+    teamId: team.id,
+    blockedBy: [task.id, task.id],
+  }), 'INVALID_FIELD')
+  await manager.updateTask('s-a', {
+    taskId: task.id,
+    expectedRevision: 1,
+    action: 'delete',
+    teamId: team.id,
+    actor: 's-b',
+  })
+  const all = await manager.getTasks('s-a', undefined, team.id)
+  assert.equal(all.find((candidate) => candidate.id === task.id)?.status, 'deleted')
+  await rejectsWithCode(manager.updateTask('s-a', {
+    taskId: task.id,
+    expectedRevision: 2,
+    action: 'complete',
+    teamId: team.id,
+    actor: 's-b',
+  }), 'TEAM_TASK_DELETED')
 })
 
 test('sync-native refuses a child already owned by another composition', async () => {

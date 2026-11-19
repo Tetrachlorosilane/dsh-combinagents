@@ -1316,7 +1316,9 @@ window.__ModuleLoader__.load({
           ? h('div', { key: 'none', style: styles.sessionMeta }, t('noTasks'))
           : h('ul', { key: 'list', style: styles.taskList }, tasks.map((task) => {
               const ownerNode = nodes.find((node) => node.id === task.ownerNodeId)
-              const ownerLabel = ownerNode === undefined ? t('unowned') : ownerNode.label
+              const ownerLabel = typeof task.ownerName === 'string' && task.ownerName.length > 0
+                ? task.ownerName
+                : ownerNode === undefined ? t('unowned') : ownerNode.label
               const blocked = task.status === 'pending' && !ready(task)
               const open = expandedTask === task.id
               return h('li', { key: task.id, style: styles.taskItem }, [

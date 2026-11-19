@@ -199,7 +199,9 @@ The `Shared tasks` board follows the selected Team:
 
 - **Composition board** shows tasks without a Team (`teamId: null`);
 - a Team selection shows only that Team's tasks;
-- Team deletion removes its scoped tasks, not composition nodes or Sessions;
+- Team tasks are capped at 256 non-deleted rows; deleting a Team task writes a
+  tombstone (hidden from the board, retained for history); Team deletion removes
+  its scoped tasks, not composition nodes or Sessions;
 - clone/bud copies Team definitions whose member nodes are included and remaps
   their task `teamId`;
 - a Team is a fixed membership snapshot: removing or moving a member, or a
@@ -311,6 +313,7 @@ storage backend outside the default directory needs a `storageDir` override.
 | `TEAM_MEMBER_MODE` | A Team member/owner is one-shot, or would become one. Teams require continuable local nodes. |
 | `TEAM_LABEL_CONFLICT` / `TEAM_AMBIGUOUS` | Team labels must be unique; use the Team id when a legacy duplicate exists. |
 | `TEAM_NOT_FOUND` / `TEAM_FORBIDDEN` | The `team` id/label does not exist, or the caller is neither the composition root nor a member. |
+| `TEAM_TASK_LIMIT` / `TEAM_TASK_DELETED` | The 256 non-deleted task cap was reached, or a deleted Team tombstone was mutated. (HTTP surfaces the internal `TASK_LIMIT`.) |
 | A one-shot agent is missing | It is hidden by default. Enable **Show one-shot agents**; use **Sync native agents** if its mode is still unknown. |
 | The tree looks stale in another profile | Wait for the 3-second poll, refresh the page, or check that both profiles run this version. |
 | The tab is absent | Confirm the plugin and client UI are enabled, then refresh after the Host restart. |
@@ -367,6 +370,7 @@ More detail:
 - [DSH feasibility notes](docs/FEASIBILITY.md)
 - [Standard-profile setup and migration](docs/COMPOSED-PROFILE.md)
 - [Team API and lifecycle](docs/TEAM-API.md)
+- [Native Team vs plugin Team comparison](docs/TEAM-NATIVE-COMPARISON-2026-11-20.md)
 - [Clone/bud spike](docs/CLONE-SPIKE.md)
 - [Working contract for contributors](AGENTS.md)
 

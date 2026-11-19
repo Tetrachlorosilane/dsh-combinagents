@@ -562,15 +562,17 @@ export function createCloneManager({ ctx, store, discovery, manager, now = () =>
       for (const task of plan.tasks) {
         const taskId = randomUUID()
         taskIdBySource.set(task.sourceTaskId, taskId)
+        const ownerNode = task.ownerSourceNodeId === null
+          ? undefined
+          : cloneNodeBySource.get(task.ownerSourceNodeId)
         tasks.push({
           id: taskId,
           rootSessionId: root.id,
           subject: task.subject,
           description: task.description,
           status: task.status,
-          ownerNodeId: task.ownerSourceNodeId === null
-            ? null
-            : (cloneNodeBySource.get(task.ownerSourceNodeId)?.id ?? null),
+          ownerNodeId: ownerNode?.id ?? null,
+          ...(ownerNode === undefined ? {} : { ownerName: ownerNode.label }),
           teamId: task.teamId === null || task.teamId === undefined
             ? null
             : (teamIdBySource.get(task.teamId) ?? null),

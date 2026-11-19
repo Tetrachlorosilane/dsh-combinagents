@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 19 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (179 total);
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (181 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`; current target is DSH
   `0.2.2-rc.5`, with `engines.dsh` and plugin version `0.2.0`.
 
@@ -213,6 +213,7 @@ docs/FEASIBILITY.md       DSH source review, options, verdicts
 docs/ARCHITECTURE.md      Phase-1 design, storage, HTTP, UI, acceptance criteria
 docs/COMPOSED-PROFILE.md  Standard-mode execution interception and migration
 docs/TEAM-API.md          Team model, HTTP/tool contract, authorization, lifecycle
+docs/TEAM-NATIVE-COMPARISON-2026-11-20.md  Native Team vs plugin Team parity review
 docs/CLONE-SPIKE.md       DSH seed/catalog/permission findings for clone/bud
 package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
@@ -243,7 +244,7 @@ relay-label sanitization, workspace detach on failed clone, moving the
 The 2026-11-19 follow-up audit fixed ordinary-fork membership inheritance,
 cross-composition grant migration, external-placeholder idempotency, create/add
 membership races, the store reload-revision skip and reload-failure fallback,
-effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 179 tests pass. The
+effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 181 tests pass. The
 findings and remaining accepted risks are in
 [`docs/AUDIT-2026-11-19.md`](docs/AUDIT-2026-11-19.md). The live composition/bridge
 probe is in [`docs/BRIDGE-TEST-2026-11-19.md`](docs/BRIDGE-TEST-2026-11-19.md):
@@ -279,7 +280,8 @@ stayed out of Team scope, and Team deletion removed its scoped task. The post-ha
 `team` scope, `team_list`, Team Lead owner resolution, revision publication,
 and Team isolation passed; a `composition_task` create/update output leak was
 found and fixed with a regression test. The consolidated technical contract is
-[`docs/TEAM-API.md`](docs/TEAM-API.md).
+[`docs/TEAM-API.md`](docs/TEAM-API.md); the native-vs-plugin parity review is
+[`docs/TEAM-NATIVE-COMPARISON-2026-11-20.md`](docs/TEAM-NATIVE-COMPARISON-2026-11-20.md).
 Remaining audit items: SEC-6 (default bidirectional grant, product decision),
 SEC-8 rate limiting, SEC-11 (loopback/proxy trust), SEC-12 (clone permission
 drift), X-10 (agent_preset/provider capability), X-12 (storageDomain hard

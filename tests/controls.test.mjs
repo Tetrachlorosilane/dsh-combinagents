@@ -91,6 +91,7 @@ function harness(options = {}) {
     },
     async updateTask(rootSessionId, input) {
       taskCalls.push({ kind: 'update', rootSessionId, ...input })
+      if (options.updateError !== undefined) throw new CompositionError(options.updateError, 'stale probe')
       return [{ id: input.taskId, subject: 'Review', status: 'in_progress', revision: 2, teamId: input.teamId ?? null }]
     },
     async teamForNode(_rootSessionId, nodeId) {
@@ -904,6 +905,19 @@ test('Team-scoped tools accept an explicit Team and expose Team discovery', asyn
   assert.equal(updated.status, 'in_progress')
   const updateCall = harnessed.taskCalls.find((call) => call.kind === 'update')
   assert.equal(updateCall.teamId, 'team-b')
+})
+
+test('maps Team tool failures into the native error vocabulary', async () => {
+  const harnessed = harness({ updateError: 'TASK_CONFLICT' })
+  const exec = { agent: harnessed.callerAgent, signal: new AbortController().signal }
+  await assert.rejects(
+    harnessed.tool('team_task_update').execute({
+      task_id: 't1',
+      expected_revision: 1,
+      action: 'complete',
+    }, exec),
+    (error) => error instanceof CompositionError && error.code === 'TEAM_TASK_STALE_REVISION',
+  )
 })
 
 test('does not replace native Team task tools when they are already mounted', () => {
