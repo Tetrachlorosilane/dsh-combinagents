@@ -207,7 +207,9 @@ team: { id, rootSessionId, rootNodeId, nodeIds?, label, createdBy, createdAt, up
 - Clone/bud copies Team records whose member nodes are in the selected tree and
   remaps their task `teamId`.
 - If a later reparent changes the graph, the stored member set is still the
-  Team's scope; recreate the Team if the graph no longer matches.
+  Team's scope; the save is rejected rather than silently shrinking it. Delete
+  the Team before changing its membership. The consolidated HTTP/tool contract
+  is in [`TEAM-API.md`](TEAM-API.md).
 
 ### Cross-profile coherence
 

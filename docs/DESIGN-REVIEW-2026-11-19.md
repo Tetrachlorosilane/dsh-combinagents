@@ -17,6 +17,11 @@ overlay、Team/任务板、Team 形状工具、clone/bud、session cleanup、Cli
 > 边界；R10 已补 owner/reassign，claim 仍由模型工具负责。全量测试现为 179
 > pass / 0 fail。** 本文件保留原始审查证据，下面的“修复状态”表给出对应实现。
 
+## 契约
+
+修复后的 Team 模型、HTTP/tool 参数、授权和生命周期统一记录在
+[`TEAM-API.md`](TEAM-API.md)。
+
 ## 修复状态
 
 | 项 | 状态 | 实现 |

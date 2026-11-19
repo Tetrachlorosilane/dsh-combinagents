@@ -7,7 +7,8 @@ separate composed preset and it does not remove native delegation rows.
 ## How replacement works
 
 The plugin owns `composition_task`, `team_list`, the four Team-shaped task tools
-(when native Agent Teams is absent), and one execution interceptor:
+(when native Agent Teams is absent), and one execution interceptor. The Team
+model/HTTP/tool contract is in [`TEAM-API.md`](TEAM-API.md):
 
 ```js
 ctx.on('tools/execute', async (exec, next) => {

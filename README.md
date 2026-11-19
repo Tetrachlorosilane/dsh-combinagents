@@ -215,16 +215,31 @@ model call that needs another Team must pass `team` explicitly.
 
 | Tool | Scope |
 |---|---|
-| `team_task_create` | Creates a task on the caller's Team board, or the composition board outside a Team |
+| `team_task_create` | Creates on the caller's/explicit Team board, or the composition board outside a Team |
 | `team_task_list` | Filters by status/owner/unowned/ready, returns compact native-shaped pages |
 | `team_task_get` | Reads one task from the active scope |
 | `team_task_update` | CAS actions: claim, release, edit, set_dependencies, complete, reopen, reassign, delete |
 | `team_list` | Lists visible Team ids, labels, Leads, and members for explicit `team` selection |
 
+Typical tool flow:
+
+```text
+team_list                         -> find the Team id or unique label
+team_task_list { "team": "Build" }
+team_task_create { "team": "Build", "subject": "...", "description": "..." }
+team_task_update { "team": "Build", "task_id": "...",
+                   "expected_revision": 1, "action": "claim" }
+```
+
+From the composition root, omitting `team` uses the board of the Team that
+contains the root; outside any Team it uses the composition board.
+
 Native Team tools win when Agent Teams is mounted; the plugin then does not
 register these aliases. This is an overlay-level **Team-shaped task board**, not
-a native Agent Team, Team mode, or a shared checkout. See the live proof in
-[`docs/TEAM-TEST-2026-11-19.md`](docs/TEAM-TEST-2026-11-19.md).
+a native Agent Team, Team mode, or a shared checkout. See the technical
+contract in [`docs/TEAM-API.md`](docs/TEAM-API.md) and the live proofs in
+[`docs/TEAM-TEST-2026-11-19.md`](docs/TEAM-TEST-2026-11-19.md) and
+[`docs/TEAM-TEST-2026-11-20.md`](docs/TEAM-TEST-2026-11-20.md).
 
 ### Lifecycle modes
 
@@ -351,6 +366,7 @@ More detail:
 - [Product handoff](docs/HANDOFF.md)
 - [DSH feasibility notes](docs/FEASIBILITY.md)
 - [Standard-profile setup and migration](docs/COMPOSED-PROFILE.md)
+- [Team API and lifecycle](docs/TEAM-API.md)
 - [Clone/bud spike](docs/CLONE-SPIKE.md)
 - [Working contract for contributors](AGENTS.md)
 

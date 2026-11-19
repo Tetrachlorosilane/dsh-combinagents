@@ -44,7 +44,7 @@ metadata, timeout, and restrictions remain untouched. The native delegation
 plugins remain mounted; do not use a preset that removes them. Disabling the
 plugin removes the listener and restores the native executor. The old
 `composition_*` aliases are removed. `composition_task` remains a legacy
-single-tool aggregate; when native Agent Teams is not mounted, the plugin also
+composition-only aggregate; when native Agent Teams is not mounted, the plugin also
 registers the four Team-shaped task tools (`team_task_create/list/get/update`)
 plus `team_list` over the composition-owned board. A Team is a connected set of composition nodes;
 `team_task_*` scopes to the caller's Team (otherwise the composition board), and
@@ -73,7 +73,7 @@ composition, label it with its native name, auto-grant the delegation edge, and
 forward the native `agent_preset` field when the schema exposes it. Explicit
 child `provider`/`model`/`reasoning_effort` selection is validated through the
 live LLM route and forwarded as child agent options. `composition_task` lists,
-creates, and updates board tasks; the four Team-shaped tools expose the caller's
+creates, and updates composition-only board tasks; the four Team-shaped tools expose the caller's
 Team board (or composition board) with native Team field names/actions (never
 native Team state), and `team_list` exposes Team ids/labels/members. The native
 `list_subagent_models` and other unique tools are untouched. The native prompt
@@ -212,6 +212,7 @@ docs/HANDOFF.md           Authoritative product requirements, clone/bridge/bud l
 docs/FEASIBILITY.md       DSH source review, options, verdicts
 docs/ARCHITECTURE.md      Phase-1 design, storage, HTTP, UI, acceptance criteria
 docs/COMPOSED-PROFILE.md  Standard-mode execution interception and migration
+docs/TEAM-API.md          Team model, HTTP/tool contract, authorization, lifecycle
 docs/CLONE-SPIKE.md       DSH seed/catalog/permission findings for clone/bud
 package.json              ESM package, no runtime dependencies, DSH bundle shape
 ```
@@ -277,7 +278,8 @@ stayed out of Team scope, and Team deletion removed its scoped task. The post-ha
 [`docs/TEAM-TEST-2026-11-20.md`](docs/TEAM-TEST-2026-11-20.md): explicit
 `team` scope, `team_list`, Team Lead owner resolution, revision publication,
 and Team isolation passed; a `composition_task` create/update output leak was
-found and fixed with a regression test.
+found and fixed with a regression test. The consolidated technical contract is
+[`docs/TEAM-API.md`](docs/TEAM-API.md).
 Remaining audit items: SEC-6 (default bidirectional grant, product decision),
 SEC-8 rate limiting, SEC-11 (loopback/proxy trust), SEC-12 (clone permission
 drift), X-10 (agent_preset/provider capability), X-12 (storageDomain hard
@@ -425,7 +427,8 @@ sessions use `standard`. Clone/bud GUI checks passed on 2026-11-18.
   checkout. Membership is explicit and validated on every graph save; a
   reparent/removal/move that would invalidate a Team is rejected, so delete the
   Team before changing its membership. Team deletion removes its scoped tasks,
-  not composition nodes or Sessions.
+  not composition nodes or Sessions. The UI-selected Team is only a view scope;
+  model calls addressing another Team must pass `team` or use `team_list`.
 - **Team-shaped task tools are not native Team state.** `team_task_*` reuses
   the native field/action vocabulary over the composition-owned board; it does
   not create Agent Teams, a shared checkout, Team mode, or native task records.

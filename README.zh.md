@@ -118,7 +118,7 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 | `subagent_fork` | 同上，使用 fork provider |
 | `wait_agent` | 原生 caller-inbox 等待语义 |
 
-插件还在组合自有任务板上提供 **Team 形状的任务 API**。当 profile 未挂载原生 Team 服务/工具时，注册 `team_task_create`、`team_task_list`、`team_task_get`、`team_task_update`，字段、动作、CAS revision、依赖、ready 和 write-scope warning 与原生 Team 任务工具一致。Team 是一组连通的组合节点；选择 lead 会预选其子树，成员可继续取消。调用者属于某个 Team 时，这些工具限定在该 Team 的任务板与成员内。它们只写插件任务板，不写原生 Team 状态；挂载 Agent Teams 时原生工具优先，不注册这些别名。`team` 可按 id 或唯一 label 选择 Team，`team_list` 用于发现。`composition_task` 保留为旧版组合任务板入口，不列出 Team 任务。Native `list_subagent_models` 和其他 unique tool 不受影响。
+插件还在组合自有任务板上提供 **Team 形状的任务 API**。当 profile 未挂载原生 Team 服务/工具时，注册 `team_task_create`、`team_task_list`、`team_task_get`、`team_task_update`，字段、动作、CAS revision、依赖、ready 和 write-scope warning 与原生 Team 任务工具一致。Team 是一组连通的 continuable 本地组合节点；选择 lead 会预选其子树，成员可继续取消。调用者属于某个 Team 时，这些工具限定在该 Team 的任务板与成员内。它们只写插件任务板，不写原生 Team 状态；挂载 Agent Teams 时原生工具优先，不注册这些别名。`team` 可按 id 或唯一 label 选择 Team，`team_list` 用于发现。`composition_task` 保留为旧版组合任务板入口，不列出 Team 任务。Native `list_subagent_models` 和其他 unique tool 不受影响。
 
 `list_agents` 默认不列出 **one-shot** 和 **external** 行，与 native 的 continuable 列表一致。One-shot 目标不能接收 follow-up。由于 native output schema 没有单独的 `mode` 字段，lifecycle mode 被写进行 description。
 
@@ -146,15 +146,30 @@ tab 中选择 lead 会预选其子树，然后通过复选框增删成员。成�
 
 | 工具 | 作用域 |
 |---|---|
-| `team_task_create` | 在调用者 Team 的任务板创建；不在 Team 时用组合任务板 |
+| `team_task_create` | 在调用者/显式指定的 Team 任务板创建；不在 Team 时用组合任务板 |
 | `team_task_list` | 按 status/owner/unowned/ready 过滤，返回原生形状分页 |
 | `team_task_get` | 读取当前作用域的一个任务 |
 | `team_task_update` | CAS 动作：claim、release、edit、set_dependencies、complete、reopen、reassign、delete |
 | `team_list` | 列出可见 Team 的 id、label、Lead 和成员，供 `team` 参数选择 |
 
+典型工具流程：
+
+```text
+team_list                         -> 找到 Team id 或唯一 label
+team_task_list { "team": "Build" }
+team_task_create { "team": "Build", "subject": "...", "description": "..." }
+team_task_update { "team": "Build", "task_id": "...",
+                   "expected_revision": 1, "action": "claim" }
+```
+
+从组合根调用时，省略 `team` 会使用包含该根的 Team 任务板；不在任何 Team 时使用
+组合任务板。
+
 挂载原生 Agent Teams 时原生工具优先，插件不注册这些别名。这是 overlay 层的
-**Team 形状任务板**，不是原生 Agent Team、Team mode 或共享 checkout。实机验证见
-[`docs/TEAM-TEST-2026-11-19.md`](docs/TEAM-TEST-2026-11-19.md)。
+**Team 形状任务板**，不是原生 Agent Team、Team mode 或共享 checkout。技术契约见
+[`docs/TEAM-API.md`](docs/TEAM-API.md)，实机验证见
+[`docs/TEAM-TEST-2026-11-19.md`](docs/TEAM-TEST-2026-11-19.md) 和
+[`docs/TEAM-TEST-2026-11-20.md`](docs/TEAM-TEST-2026-11-20.md)。
 
 ### 生命周期模式
 
@@ -251,6 +266,7 @@ src/controls.js          Native tool 执行拦截
 - [产品交接说明](docs/HANDOFF.md)
 - [DSH 可行性分析](docs/FEASIBILITY.md)
 - [Standard profile 配置与迁移](docs/COMPOSED-PROFILE.md)
+- [Team API 与生命周期](docs/TEAM-API.md)
 - [Clone/bud spike](docs/CLONE-SPIKE.md)
 - [贡献者工作约定](AGENTS.md)
 

@@ -17,12 +17,18 @@
 > 元数据、标题按 `/titles` 延迟批量折叠，不再为打开选择器扫描全部会话日志。2026-11-18 起
 > `mode` 已移除：插件在标准 profile 上为每个 Agent 安装六个原生同名的 **scoped
 > wrapper**，复制原生 schema/description/output，仅替换 `execute`；禁用插件即恢复原生
-> 路径。`composition_*` 别名已删除；`composition_task` 保留为旧聚合入口，未挂载
+> 路径。`composition_*` 别名已删除；`composition_task` 保留为旧的 composition-only 聚合入口，未挂载
 > 原生 Agent Teams 时另注册 `team_list` 和四个 Team 形状任务工具（`team_task_create/list/get/update`）
 > 到组合任务板，原生 Team 优先。旧 composed preset 仅保留给历史会话，新会话默认 `standard`；需重启 Host 后新建会话验证。
 > 跨树消息（产品中的 Bridge 能力）由同名 `send_message` / `interrupt_agent` + 逐边授权
 > + approval + 审计实现，不是独立一层；克隆/出芽已实现
-> （`src/clone.js` + `src/clone-manager.js`），GUI 复验待做。
+> （`src/clone.js` + `src/clone-manager.js`）。
+>
+> **2026-11-20 追加**：Team API 的完整技术契约见
+> [`TEAM-API.md`](TEAM-API.md)。Team/任务写入已发布 `.revision`，Team 工具支持
+> 显式 `team` id/label 与 `team_list`，Team 图结构校验、continuable 成员限制、
+> UI 默认成员过滤和 owner reassign 已完成。全量测试 **179 pass / 0 fail**；
+> 实机复核见 [`TEAM-TEST-2026-11-20.md`](TEAM-TEST-2026-11-20.md)。
 
 ## 0. 给接手代理的摘要
 
