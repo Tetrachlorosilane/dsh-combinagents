@@ -60,6 +60,9 @@ function harness(options = {}) {
     },
     async authorizeMessage() {
       if (options.denyMessage === true) return { allowed: false, edgeIds: ['e1'], deniedEdgeIds: ['e1'] }
+      if (options.explicitDenyMessage === true) {
+        return { allowed: false, edgeIds: ['e1'], deniedEdgeIds: ['e1'], explicitlyDeniedEdgeIds: ['e1'] }
+      }
       return { allowed: true, edgeIds: ['e1'], deniedEdgeIds: [] }
     },
     async authorizeInterrupt() {
@@ -207,6 +210,7 @@ function harness(options = {}) {
           },
         }
       }
+      if (name === 'agentTeams') return options.agentTeams
       if (name === 'tools') return toolsService
       if (name === 'llm' && options.llm === true) {
         return {
@@ -493,6 +497,17 @@ test('send_message delivers when the edge grant exists even if approval would re
   })
   assert.equal(harnessed.approvals.length, 0)
   assert.equal(harnessed.delivered.length, 1)
+})
+
+test('an explicit message deny overrides the composition-root bypass', async () => {
+  const harnessed = harness({ explicitDenyMessage: true })
+  await assert.rejects(
+    harnessed.tool('send_message').execute({ agent: 'Worker', message: 'blocked' }, {
+      agent: { id: 's-a' }, signal: new AbortController().signal,
+    }),
+    (error) => error instanceof CompositionError && error.code === 'NOT_AUTHORIZED',
+  )
+  assert.equal(harnessed.delivered.length, 0)
 })
 
 test('composition root can message a node without a message edge grant', async () => {
@@ -1072,6 +1087,22 @@ test('maps Team tool failures into the native error vocabulary', async () => {
     }, exec),
     (error) => error instanceof CompositionError && error.code === 'TEAM_TASK_STALE_REVISION',
   )
+})
+
+test('deferred Team fallback yields to a late native Team service', async () => {
+  const registered = []
+  const harnessed = harness({ agentTeams: { active: true } })
+  const dispose = harnessed.controls.register({
+    get: () => undefined,
+    register: (definition) => {
+      registered.push(definition.name)
+      return () => {}
+    },
+  }, { deferTeamTools: true })
+  assert.deepEqual(registered, ['composition_task'])
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.deepEqual(registered, ['composition_task'])
+  dispose()
 })
 
 test('does not replace native Team task tools when they are already mounted', () => {

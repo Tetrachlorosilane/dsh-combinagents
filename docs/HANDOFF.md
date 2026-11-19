@@ -28,7 +28,7 @@
 > **2026-11-20 追加**：Team API 的完整技术契约见
 > [`TEAM-API.md`](TEAM-API.md)。Team/任务写入已发布 `.revision`，Team 工具支持
 > 显式 `team` id/label 与 `team_list`，Team 图结构校验、continuable 成员限制、
-> UI 默认成员过滤和 owner reassign 已完成。全量测试 **190 pass / 0 fail**；
+> UI 默认成员过滤和 owner reassign 已完成。全量测试 **192 pass / 0 fail**；
 > 实机复核见 [`TEAM-TEST-2026-11-20.md`](TEAM-TEST-2026-11-20.md)。
 
 ## 0. 给接手代理的摘要

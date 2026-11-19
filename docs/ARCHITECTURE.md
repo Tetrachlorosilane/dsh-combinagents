@@ -40,7 +40,8 @@ particular:
   per-message approval prompt; native-tree cold targets are restored by the
   native subagent service, never by a bare `ctx.agents.resume`; plain top-level
   targets may use `ctx.agents.resume` with a retained/disposed handle.
-  Interrupts use grants plus approval.
+  An explicit `allowMessage:false` record overrides root/native default
+  authority. Interrupts use grants plus approval.
 - Six native names keep their native definitions; a `tools/execute` interceptor
   supplies composition values. `composition_task` is the legacy aggregate; when
   native Agent Teams is absent the plugin also registers four Team-shaped task

@@ -292,7 +292,8 @@ storage backend outside the default directory needs a `storageDir` override.
   native subagent service. A plain inactive top-level target is resumed through
   `ctx.agents.resume` with a retained handle; an unowned native child returns
   `TARGET_UNOWNED`, and a foreign inactive native child returns
-  `TARGET_NOT_RESUMABLE`. **Interrupts** still ask the approval service
+  `TARGET_NOT_RESUMABLE`. An explicit `allowMessage:false` grant overrides the
+  root/native default bypass; only an implicit deny may be waived. **Interrupts** still ask the approval service
   when crossing workspaces without full permission; only an accepted one-shot
   approval proceeds.
 - Every delivered, denied, or approval-denied action is audited.

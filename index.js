@@ -61,7 +61,7 @@ export function apply(ctx, config = {}) {
     // native Team names win when that profile already mounts them. The six
     // native-name tools are installed per Agent so they shadow the native
     // definitions without changing the global registry other plugins read.
-    const disposeTasks = controls.register(toolCtx.tools)
+    const disposeTasks = controls.register(toolCtx.tools, { deferTeamTools: true })
     const attached = new Map()
     const attach = (agent) => {
       if (agent === undefined || attached.has(agent.id)) return

@@ -1005,7 +1005,11 @@ export function createControls({
         .find((node) => node.sessionId === record.composition.rootSessionId)
       const rootBypass = compositionRoot?.id === callerNode.id
       const nativeBypass = nativeRelated(record.composition, callerNode, target)
-      if (!auth.allowed && !rootBypass && !nativeBypass) {
+      const explicitlyDenied = (auth.explicitlyDeniedEdgeIds ?? []).length > 0
+      // Root/native default authority may waive an implicit deny, never a
+      // per-edge grant the user explicitly turned off.
+      const bypass = !explicitlyDenied && (rootBypass || nativeBypass)
+      if (!auth.allowed && !bypass) {
         await manager.recordAudit(rootSessionId, {
           kind: 'message',
           fromNodeId: callerNode.id,
@@ -1015,8 +1019,9 @@ export function createControls({
         })
         throw new CompositionError('NOT_AUTHORIZED', NOT_AUTHORIZED)
       }
-      const authorization = auth.allowed ? 'edge' : rootBypass ? 'root' : 'native'
-      const nativeTree = nativeBypass || sameNativeTree(record.composition, callerNode, target)
+      const authorization = auth.allowed ? 'edge' : bypass ? (rootBypass ? 'root' : 'native') : 'denied'
+      const underNativeTree = nativeBypass || sameNativeTree(record.composition, callerNode, target)
+      const nativeTree = underNativeTree && !explicitlyDenied
       try {
         // A native-tree cold target is restored by the native subagent service
         // itself. Only a plain persisted top-level target is resumed directly.
@@ -1875,7 +1880,7 @@ export function createControls({
     attach,
     detach,
     intercept,
-    register(tools) {
+    register(tools, options = {}) {
       const disposers = []
       const when = async ({ agent }) => {
         if (agent === undefined || typeof agent.id !== 'string' || agent.id.length === 0) return false
@@ -1885,24 +1890,14 @@ export function createControls({
           return false
         }
       }
-      const definitionsToRegister = [taskTool, teamList, ...teamTaskDefinitions]
-      let nativeTeam = false
-      try {
-        nativeTeam = ctx.get?.('agentTeams') !== undefined
-      } catch {
-        nativeTeam = false
-      }
-      for (const definition of definitionsToRegister) {
-        // A profile that mounts the native Team service/tools keeps them
-        // authoritative; never shadow real Team task state.
-        if (nativeTeam && (definition.name.startsWith('team_task_') || definition.name === 'team_list')) continue
+      const registerOne = (definition) => {
         let existing
         try {
           existing = typeof tools.get === 'function' ? tools.get(definition.name) : undefined
         } catch {
           existing = undefined
         }
-        if (existing !== undefined) continue
+        if (existing !== undefined) return
         try {
           disposers.push(tools.register(definition, { when }))
         } catch {
@@ -1910,7 +1905,29 @@ export function createControls({
           // that tool untouched rather than shadowing it.
         }
       }
+      const registerTeamFallback = () => {
+        let nativeTeam = false
+        try {
+          nativeTeam = ctx.get?.('agentTeams') !== undefined
+        } catch {
+          nativeTeam = false
+        }
+        if (nativeTeam) return
+        for (const definition of [teamList, ...teamTaskDefinitions]) {
+          // A profile that mounts the native Team service/tools keeps them
+          // authoritative; never shadow real Team task state.
+          registerOne(definition)
+        }
+      }
+      // The native Team tool plugin may apply after this plugin. Defer the
+      // fallback by one turn so its service/tool registrations win the names;
+      // legacy profiles without native Team still get the composition board.
+      let teamTimer
+      registerOne(taskTool)
+      if (options.deferTeamTools === true) teamTimer = setTimeout(registerTeamFallback, 0)
+      else registerTeamFallback()
       return () => {
+        if (teamTimer !== undefined) clearTimeout(teamTimer)
         for (const dispose of disposers.reverse()) {
           try { dispose() } catch {}
         }

@@ -201,7 +201,7 @@ team_task_update { "team": "Build", "task_id": "...",
 - Overlay 不会写 DSH `SessionHeader`、native `subagent/catalog`、cwd、sandbox policy 或 permission preset。
 - 组合边表示组织关系。插件的 `send_message` 和 `interrupt_agent` 执行使用组合授权，但不会绕过 native session policy。
 - 同一 native tree 内优先使用 native relay；live 跨树目标使用组合 relay。
-- 组合**消息**由 edge grant、组合根或已有 native tree 关系授权，不再逐条询问跨 workspace approval；native tree 的冷目标由 native subagent service 恢复；普通顶层 inactive 目标由 `ctx.agents.resume` 恢复并保留 AgentHandle；无权 runtime 的 native 子代理返回 `TARGET_UNOWNED`，外部树的 inactive native 子代理返回 `TARGET_NOT_RESUMABLE`；
+- 组合**消息**由 edge grant、组合根或已有 native tree 关系授权，不再逐条询问跨 workspace approval；native tree 的冷目标由 native subagent service 恢复；普通顶层 inactive 目标由 `ctx.agents.resume` 恢复并保留 AgentHandle；无权 runtime 的 native 子代理返回 `TARGET_UNOWNED`，外部树的 inactive native 子代理返回 `TARGET_NOT_RESUMABLE`；显式 `allowMessage:false` 优先于 root/native 默认放行，只有未记录的隐式 deny 可被豁免；
   **中断**在跨 workspace 且没有 full permission 时仍会请求 approval，只有 `allowed-once` 才继续。
 - 每次 delivered、denied 或 approval-denied 操作都会写入 audit。
 - External 节点不能接收 follow-up。

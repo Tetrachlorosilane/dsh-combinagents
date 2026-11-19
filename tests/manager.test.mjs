@@ -600,7 +600,9 @@ test('authorizes messages and interrupts only along granted edge paths', async (
   assert.equal((await manager.authorizeMessage('s-a', c.id, root.id)).allowed, true)
   assert.equal((await manager.authorizeInterrupt('s-a', root.id, c.id)).allowed, false)
   await manager.setEdgeGrant('s-a', bc.id, { allowMessage: false })
-  assert.equal((await manager.authorizeMessage('s-a', root.id, c.id)).allowed, false)
+  const deniedAuth = await manager.authorizeMessage('s-a', root.id, c.id)
+  assert.equal(deniedAuth.allowed, false)
+  assert.deepEqual(deniedAuth.explicitlyDeniedEdgeIds, [bc.id])
   assert.equal((await manager.authorizeMessage('s-a', c.id, root.id)).allowed, false)
   await manager.setEdgeGrant('s-a', bc.id, { allowMessage: true })
 

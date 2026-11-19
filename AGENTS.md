@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 19 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (190 total);
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (192 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`; current target is DSH
   `0.2.2-rc.5`, with `engines.dsh` and plugin version `0.2.0`.
 
@@ -67,7 +67,9 @@ external rows and includes `mode=` in the remaining descriptions;
 agents only when enabled and defaults off.
 `send_message` is authorized by a composition edge grant, composition-root
 authority, or existing native-tree ancestry; it does not ask a per-message
-workspace approval question. A native-tree cold target is restored by the native
+workspace approval question. An **explicitly disabled** `allowMessage` edge
+always wins over root/native default authority; only an implicit (no policy
+record) deny may be waived. A native-tree cold target is restored by the native
 `ctx.subagents.sendMessage` path (which owns cold resume and Activation
 lifetime); an independently resumed child that has no active runtime owner
 returns `TARGET_UNOWNED`. A plain inactive top-level target may be resumed
@@ -258,7 +260,7 @@ relay-label sanitization, workspace detach on failed clone, moving the
 The 2026-11-19 follow-up audit fixed ordinary-fork membership inheritance,
 cross-composition grant migration, external-placeholder idempotency, create/add
 membership races, the store reload-revision skip and reload-failure fallback,
-effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 190 tests pass. The
+effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 192 tests pass. The
 findings and remaining accepted risks are in
 [`docs/AUDIT-2026-11-19.md`](docs/AUDIT-2026-11-19.md). The live composition/bridge
 probe is in [`docs/BRIDGE-TEST-2026-11-19.md`](docs/BRIDGE-TEST-2026-11-19.md):

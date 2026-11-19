@@ -576,11 +576,16 @@ export function createManager({
       return { allowed: false, edgeIds: [], deniedEdgeIds: [] }
     }
     const grants = await getGrants(rootSessionId)
+    const stored = (await store.getPolicy(rootSessionId))?.edges ?? {}
     const denied = path.filter((edge) => grants[edge.id]?.allowMessage !== true)
+    // An explicit policy record must beat the root/native default bypass. Only
+    // a missing record is an implicit deny that the controls bridge may waive.
+    const explicit = path.filter((edge) => stored[edge.id] !== undefined && stored[edge.id]?.allowMessage !== true)
     return {
       allowed: denied.length === 0,
       edgeIds: path.map((edge) => edge.id),
       deniedEdgeIds: denied.map((edge) => edge.id),
+      explicitlyDeniedEdgeIds: explicit.map((edge) => edge.id),
     }
   }
 
