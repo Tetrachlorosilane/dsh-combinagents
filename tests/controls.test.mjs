@@ -17,6 +17,8 @@ function harness(options = {}) {
   const grantedEdges = []
   const nativeSends = []
   const taskCalls = []
+  const teamScopeCalls = []
+  const teams = options.teams ?? []
   const resolvedModels = []
   const listeners = new Map()
   const promptContexts = []
@@ -36,6 +38,7 @@ function harness(options = {}) {
     steer: (message) => steered.push(message),
   }
   const composition = {
+    rootSessionId: 's-a',
     nodes: [
       { id: 'n-a', sessionId: 's-a', label: options.callerLabel ?? 'Lead', kind: 'session', source: 'top-level', mode: 'continuable' },
       { id: 'n-b', sessionId: 's-b', label: 'Worker', kind: 'session', source: 'subagent', mode: 'continuable' },
@@ -43,7 +46,8 @@ function harness(options = {}) {
     edges: [{ id: 'e1', parentId: 'n-a', childId: 'n-b', role: 'reports-to' }],
   }
   const manager = {
-    async resolveSession() {
+    async resolveSession(sessionId = 's-a') {
+      if (sessionId !== 's-a' && sessionId !== 's-b') return null
       return { rootSessionId: 's-a', record: { composition, updatedAt: 1 } }
     },
     async authorizeMessage() {
@@ -58,8 +62,9 @@ function harness(options = {}) {
     async grantDelegatedEdge(rootSessionId, parentSessionId, childSessionId) {
       grantedEdges.push({ rootSessionId, parentSessionId, childSessionId })
     },
-    async getTasks() {
+    async getTasks(_rootSessionId, _record, teamId = undefined) {
       taskCalls.push({ kind: 'list' })
+      teamScopeCalls.push(teamId)
       return [{
         id: 't1',
         rootSessionId: 's-a',
@@ -77,11 +82,27 @@ function harness(options = {}) {
     },
     async createTask(rootSessionId, input) {
       taskCalls.push({ kind: 'create', rootSessionId, ...input })
-      return [{ id: 't2', subject: input.subject, status: 'pending', revision: 1 }]
+      return [
+        { id: 't2', subject: input.subject, status: 'pending', revision: 1 },
+        ...(options.teamTaskInCreate === true
+          ? [{ id: 't-team', teamId: 'team-x', subject: 'Team task', status: 'pending', revision: 1 }]
+          : []),
+      ]
     },
     async updateTask(rootSessionId, input) {
       taskCalls.push({ kind: 'update', rootSessionId, ...input })
-      return [{ id: input.taskId, subject: 'Review', status: 'in_progress', revision: 2 }]
+      return [{ id: input.taskId, subject: 'Review', status: 'in_progress', revision: 2, teamId: input.teamId ?? null }]
+    },
+    async teamForNode(_rootSessionId, nodeId) {
+      return teams.find((team) => (team.nodeIds ?? []).includes(nodeId)) ?? null
+    },
+    async resolveTeam(_rootSessionId, reference) {
+      const found = teams.find((team) => team.id === reference || team.label === reference)
+      if (found === undefined) throw new Error('TEAM_NOT_FOUND')
+      return found
+    },
+    async listTeams() {
+      return teams
     },
     async recordAudit() {},
   }
@@ -205,6 +226,8 @@ function harness(options = {}) {
     grantedEdges,
     nativeSends,
     taskCalls,
+    teamScopeCalls,
+    teams,
     resolvedModels,
     composition,
     callerAgent,
@@ -497,7 +520,7 @@ test('tool definitions use native names and preserve contracts', () => {
   assert.deepEqual(controls.definitions.map((definition) => definition.name), [
     'list_agents', 'send_message', 'interrupt_agent',
     'subagent', 'subagent_fork', 'wait_agent', 'composition_task',
-    'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
+    'team_list', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
   ])
   const byName = new Map(controls.definitions.map((definition) => [definition.name, definition]))
   for (const contract of [
@@ -562,7 +585,7 @@ test('composition_task and the four Team-shaped task tools are globally register
   const global = []
   controls.register({ register: (definition) => global.push(definition.name) })
   assert.deepEqual(global, [
-    'composition_task', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
+    'composition_task', 'team_list', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
   ])
 })
 
@@ -721,6 +744,23 @@ test('wait_agent does not spin on input already reported in the same root call',
   await assert.rejects(second, (error) => error?.code === 'WAIT_UNAVAILABLE')
 })
 
+test('extra task tools are conditional on composition membership', async () => {
+  const harnessed = harness()
+  const registered = []
+  harnessed.controls.register({
+    get: () => undefined,
+    register: (definition, options) => {
+      registered.push({ definition, options })
+      return () => {}
+    },
+  })
+  const entry = registered.find((candidate) => candidate.definition.name === 'team_task_list')
+  assert.equal(typeof entry.options.when, 'function')
+  assert.equal(await entry.options.when({ agent: { id: 's-a' } }), true)
+  assert.equal(await entry.options.when({ agent: { id: 'unknown' } }), false)
+  assert.equal(await entry.options.when({}), false)
+})
+
 test('delegation/list tools declare their concurrency safety', () => {
   const harnessed = harness()
   assert.equal(harnessed.tool('subagent').isConcurrencySafe(), true)
@@ -790,7 +830,7 @@ test('task tool lists, creates, and updates the plugin board', async () => {
       createdBy: 'agent:s-a',
       actor: 's-a',
     },
-    { kind: 'update', rootSessionId: 's-a', taskId: 't2', expectedRevision: 1, action: 'start', actor: 's-a' },
+    { kind: 'update', rootSessionId: 's-a', taskId: 't2', expectedRevision: 1, action: 'start', teamId: null, actor: 's-a' },
   ])
 })
 
@@ -820,6 +860,50 @@ test('Team-shaped task tools expose the native view and owner filters', async ()
   const createCall = harnessed.taskCalls.find((call) => call.kind === 'create')
   assert.deepEqual(createCall.blockedBy, ['t1'])
   assert.deepEqual(createCall.writeScopes, ['src/'])
+})
+
+test('composition_task never returns Team tasks after a mutation', async () => {
+  const harnessed = harness({ teamTaskInCreate: true })
+  const exec = { agent: harnessed.callerAgent, signal: new AbortController().signal }
+  const created = await harnessed.tool('composition_task').execute({
+    action: 'create',
+    subject: 'Composition only',
+    description: 'Filter Team rows',
+  }, exec)
+  assert.deepEqual(created.tasks.map((task) => task.id), ['t2'])
+})
+
+test('Team-scoped tools accept an explicit Team and expose Team discovery', async () => {
+  const teams = [{
+    id: 'team-b',
+    label: 'B team',
+    rootNodeId: 'n-b',
+    nodeIds: ['n-b'],
+    rootSessionId: 's-a',
+    createdBy: 'user',
+    createdAt: 1,
+    updatedAt: 1,
+  }]
+  const harnessed = harness({ teams })
+  const exec = { agent: harnessed.callerAgent, signal: new AbortController().signal }
+  const listed = await harnessed.tool('team_list').execute({}, exec)
+  assert.equal(listed.teams.length, 1)
+  assert.equal(listed.teams[0].label, 'B team')
+  assert.deepEqual(listed.teams[0].members.map((member) => member.label), ['Worker'])
+  const taskList = await harnessed.tool('team_task_list').execute({ team: 'B team' }, exec)
+  assert.equal(taskList.tasks.length, 1)
+  assert.equal(harnessed.teamScopeCalls.at(-1), 'team-b')
+  const leadTasks = await harnessed.tool('team_task_list').execute({ team: 'B team', owner: 'lead' }, exec)
+  assert.equal(leadTasks.tasks.length, 1)
+  const updated = await harnessed.tool('team_task_update').execute({
+    team: 'team-b',
+    task_id: 't1',
+    expected_revision: 1,
+    action: 'claim',
+  }, exec)
+  assert.equal(updated.status, 'in_progress')
+  const updateCall = harnessed.taskCalls.find((call) => call.kind === 'update')
+  assert.equal(updateCall.teamId, 'team-b')
 })
 
 test('does not replace native Team task tools when they are already mounted', () => {

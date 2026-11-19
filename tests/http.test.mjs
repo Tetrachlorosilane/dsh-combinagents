@@ -598,6 +598,28 @@ test('moves another composition root under a target node through add-node', asyn
   assert.equal(source.data.composition.nodes.length, 3)
 })
 
+test('forwards an explicit owner through update-task reassign', async () => {
+  const { api } = makeHarness()
+  const created = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))
+  const root = created.data.composition.nodes[0]
+  const added = await call(api, authorized('POST', '/dsh-combinagents/create-task', JSON.stringify({
+    rootSessionId: 's-a',
+    subject: 'Assign me',
+    description: 'Owner forwarding',
+  })))
+  const task = added.data.tasks[0]
+  const reassigned = await call(api, authorized('POST', '/dsh-combinagents/update-task', JSON.stringify({
+    rootSessionId: 's-a',
+    taskId: task.id,
+    expectedRevision: task.revision,
+    action: 'reassign',
+    ownerNodeId: root.id,
+  })))
+  assert.equal(reassigned.status, 200)
+  assert.equal(reassigned.data.tasks[0].ownerNodeId, root.id)
+  assert.equal(reassigned.data.tasks[0].status, 'in_progress')
+})
+
 test('creates and transitions plugin-owned tasks with revision conflicts', async () => {
   const { api } = makeHarness()
   const created = await call(api, authorized('POST', '/dsh-combinagents/create', JSON.stringify({ rootSessionId: 's-a' })))

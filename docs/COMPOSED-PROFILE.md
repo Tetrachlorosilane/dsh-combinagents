@@ -6,8 +6,8 @@ separate composed preset and it does not remove native delegation rows.
 
 ## How replacement works
 
-The plugin owns `composition_task`, the four Team-shaped task tools (when native
-Agent Teams is absent), and one execution interceptor:
+The plugin owns `composition_task`, `team_list`, the four Team-shaped task tools
+(when native Agent Teams is absent), and one execution interceptor:
 
 ```js
 ctx.on('tools/execute', async (exec, next) => {
@@ -30,9 +30,10 @@ tool-registry mutation.
 
 The old `composition_list_agents` / `composition_send_message` /
 `composition_interrupt_agent` aliases are removed. `composition_task` remains a
-legacy aggregate; `team_task_create/list/get/update` are also registered when
-native Agent Teams is absent. Native Team tools win when that service is
-mounted. Native `list_subagent_models` and all other unique tools are untouched.
+legacy aggregate; `team_list` and `team_task_create/list/get/update` are also
+registered when native Agent Teams is absent. Native Team tools win when that
+service is mounted. These extra tools are conditional on the caller having a
+composition; outside a Team the task tools use the composition board. Native `list_subagent_models` and all other unique tools are untouched.
 
 ## Fallback for legacy composed profiles
 
@@ -85,10 +86,12 @@ under the old composed preset keep that preset; they get fallback definitions.
   with `agentPreset`.
 - `wait_agent` keeps the native timeout/output contract and adds same-call input
   de-duplication.
-- `composition_task` remains the plugin-owned aggregate board; the four
-  Team-shaped tools resolve the caller's connected Team scope (or the
-  composition board outside a Team) and never write native Team state. Native
-  Agent Teams, when mounted, keeps its own tools and task state.
+- `composition_task` remains the plugin-owned aggregate board and lists only
+  tasks without a Team; the four Team-shaped tools resolve the caller's
+  connected Team scope (or the composition board outside a Team), accept an
+  optional `team` id/label, and never write native Team state. `team_list`
+  exposes Team ids/labels/members; the composition root can administer all
+  Teams. Native Agent Teams, when mounted, keeps its own tools and task state.
 - The tab has a "show one-shot agents" checkbox, off by default; one-shot nodes
   are filtered from the tree, with any continuable descendants promoted.
 
@@ -104,16 +107,18 @@ under the old composed preset keep that preset; they get fallback definitions.
 - The composition-aware tools still return `NOT_IN_COMPOSITION` when the caller
   has no composition; `subagent` creates one for a top-level caller.
 - Labels are the model-facing `name`; duplicate labels are ambiguous.
-- `composition_task` plus the Team-shaped task tools are extra global tools and
-  therefore change the tool
-  catalog relative to a pure native session; the six delegated tools do not.
+- `composition_task`, `team_list`, and the Team-shaped task tools are extra
+  tools and therefore change the tool catalog relative to a pure native session;
+  they are exposed only when the caller belongs to a composition. The six
+  delegated tools do not change the catalog.
 
 ## Verification
 
 Open a new standard session and confirm:
 
-1. the tool list contains the six native names plus `composition_task` and the
-   Team-shaped task tools when native Team is absent;
+1. the tool list contains the six native names plus `composition_task`,
+   `team_list`, and the Team-shaped task tools when native Team is absent and
+   the caller has a composition;
 2. the six descriptions/parameters are the native ones;
 3. `subagent` creates a composition child and an auto-granted edge;
 4. `list_agents` returns the composition names/status;

@@ -1102,12 +1102,20 @@ export function createControls({
    * @param {object} caller - composition caller context.
    * @returns {Promise<{team: object|null, teamId: string|null, tasks: object[]}>}
    */
-  async function nativeTaskScope(caller) {
+  async function nativeTaskScope(caller, requestedTeam = undefined) {
     let team = null
-    try {
-      team = await manager.teamForNode?.(caller.rootSessionId, caller.callerNode.id) ?? null
-    } catch {
-      team = null
+    if (typeof requestedTeam === 'string' && requestedTeam.length > 0) {
+      team = await manager.resolveTeam(caller.rootSessionId, requestedTeam)
+      const isRoot = caller.callerNode.sessionId === caller.record.composition.rootSessionId
+      if (!isRoot && !teamMembers(caller.record.composition, team).some((node) => node.id === caller.callerNode.id)) {
+        throw new CompositionError('TEAM_FORBIDDEN', 'only the composition root or a Team member may use this Team')
+      }
+    } else {
+      try {
+        team = await manager.teamForNode?.(caller.rootSessionId, caller.callerNode.id) ?? null
+      } catch {
+        team = null
+      }
     }
     const teamId = team?.id ?? null
     const tasks = await manager.getTasks(caller.rootSessionId, undefined, teamId)
@@ -1115,7 +1123,6 @@ export function createControls({
   }
 
   /**
-   * Native-shaped task view used by the four compatibility tools.  /**
    * Native-shaped task view used by the four compatibility tools. The plugin
    * board is composition-owned; the shape matches the Team task view so callers
    * can use the same workflow without writing native Team state.
@@ -1146,9 +1153,11 @@ export function createControls({
    * @param {string} reference - node id, session id, or unique label.
    * @returns {object} local session node.
    */
-  function nativeOwnerNode(composition, reference) {
+  function nativeOwnerNode(composition, reference, team = null) {
     if (reference === 'lead') {
-      const root = composition.nodes.find((node) => node.sessionId === composition.rootSessionId)
+      const root = team === null
+        ? composition.nodes.find((node) => node.sessionId === composition.rootSessionId)
+        : composition.nodes.find((node) => node.id === team.rootNodeId)
       if (root !== undefined) return root
     }
     const node = resolveTarget(composition, reference)
@@ -1190,17 +1199,18 @@ export function createControls({
 
   const teamTaskCreate = {
     name: 'team_task_create',
-    description: 'Create one unowned pending task on the composition-shared task board using the Team task API shape.',
+    description: 'Create one unowned pending task on the selected composition Team board using the Team task API shape.',
     parameters: objectSchema({
       subject: { type: 'string', description: 'Concise task title.' },
       description: { type: 'string', description: 'Complete task details and acceptance criteria.' },
       blocked_by: { type: 'array', items: { type: 'string' }, description: 'Task ids that must complete first.' },
       write_scopes: { type: 'array', items: { type: 'string' }, description: 'Advisory workspace-relative prefixes this task expects to modify.' },
+      team: { type: 'string', description: 'Optional Team id or unique label; defaults to the caller Team, then the composition board.' },
     }, ['subject', 'description']),
     output: { schema: nativeTaskViewSchema, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     async execute(args, exec) {
       const caller = await nativeTaskCaller(exec, 'team_task_create')
-      const scope = await nativeTaskScope(caller)
+      const scope = await nativeTaskScope(caller, args.team)
       const beforeIds = new Set(scope.tasks.map((task) => task.id))
       const after = await manager.createTask(caller.rootSessionId, {
         subject: args.subject,
@@ -1223,7 +1233,7 @@ export function createControls({
 
   const teamTaskList = {
     name: 'team_task_list',
-    description: 'List composition-shared tasks, including readiness, owner, revision, blockers, and write-scope warnings.',
+    description: 'List composition Team tasks, including readiness, owner, revision, blockers, and write-scope warnings.',
     parameters: objectSchema({
       status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: 'Optional exact status filter.' },
       owner: { type: 'string', description: 'Optional owner agent label, session id, or lead.' },
@@ -1231,6 +1241,7 @@ export function createControls({
       ready: { type: 'boolean', description: 'Optional readiness filter.' },
       cursor: { type: 'integer', description: 'Zero-based result offset. Defaults to 0.' },
       limit: { type: 'integer', description: 'Number of rows, 1 through 100. Defaults to 50.' },
+      team: { type: 'string', description: 'Optional Team id or unique label; defaults to the caller Team, then the composition board.' },
     }),
     output: { schema: nativeTaskListSchema, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     isConcurrencySafe: () => true,
@@ -1241,8 +1252,8 @@ export function createControls({
       if (!Number.isSafeInteger(cursor) || cursor < 0) throw new CompositionError('INVALID_FIELD', 'cursor must be a non-negative safe integer')
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new CompositionError('INVALID_FIELD', 'limit must be an integer from 1 through 100')
       if (args.owner !== undefined && args.unowned !== undefined) throw new CompositionError('INVALID_FIELD', 'owner and unowned filters cannot be combined')
-      const scope = await nativeTaskScope(caller)
-      const ownerNode = args.owner === undefined ? undefined : nativeOwnerNode(caller.record.composition, args.owner)
+      const scope = await nativeTaskScope(caller, args.team)
+      const ownerNode = args.owner === undefined ? undefined : nativeOwnerNode(caller.record.composition, args.owner, scope.team)
       if (scope.team !== null && ownerNode !== undefined
         && !teamMembers(caller.record.composition, scope.team).some((node) => node.id === ownerNode.id)) {
         throw new CompositionError('TEAM_MEMBER_REQUIRED', 'owner filter must name a member of this Team')
@@ -1263,15 +1274,16 @@ export function createControls({
 
   const teamTaskGet = {
     name: 'team_task_get',
-    description: 'Read the complete latest value of one composition-shared task before changing or executing it.',
+    description: 'Read the complete latest value of one composition Team task before changing or executing it.',
     parameters: objectSchema({
       task_id: { type: 'string', description: 'Shared task id.' },
+      team: { type: 'string', description: 'Optional Team id or unique label; defaults to the caller Team.' },
     }, ['task_id']),
     output: { schema: nativeTaskViewSchema, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       const caller = await nativeTaskCaller(exec, 'team_task_get')
-      const scope = await nativeTaskScope(caller)
+      const scope = await nativeTaskScope(caller, args.team)
       const task = scope.tasks.find((candidate) => candidate.id === args.task_id)
       if (task === undefined) throw new CompositionError('TASK_NOT_FOUND', `task ${JSON.stringify(args.task_id)} does not exist`)
       return nativeTaskView(task, scope.tasks, caller.record.composition)
@@ -1280,7 +1292,7 @@ export function createControls({
 
   const teamTaskUpdate = {
     name: 'team_task_update',
-    description: 'Compare-and-set a composition-shared task action using the latest revision from team_task_get or team_task_list.',
+    description: 'Compare-and-set a composition Team task action using the latest revision from team_task_get or team_task_list.',
     parameters: objectSchema({
       task_id: { type: 'string', description: 'Shared task id.' },
       expected_revision: { type: 'integer', description: 'Current task revision used as the CAS precondition.' },
@@ -1289,16 +1301,17 @@ export function createControls({
       description: { type: 'string', description: 'Replacement details for edit.' },
       blocked_by: { type: 'array', items: { type: 'string' }, description: 'Complete blocker list for set_dependencies.' },
       write_scopes: { type: 'array', items: { type: 'string' }, description: 'Replacement advisory write scopes for edit.' },
-      owner: { type: 'string', description: 'Owner label/session id for root-only reassign; omit to unassign.' },
+      owner: { type: 'string', description: 'Owner label/session id for Team Lead/composition-root/user reassign; omit to unassign.' },
+      team: { type: 'string', description: 'Optional Team id or unique label; defaults to the caller Team.' },
     }, ['task_id', 'expected_revision', 'action']),
     output: { schema: nativeTaskViewSchema, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     async execute(args, exec) {
       const caller = await nativeTaskCaller(exec, 'team_task_update')
-      const scope = await nativeTaskScope(caller)
+      const scope = await nativeTaskScope(caller, args.team)
       const tasks = scope.tasks
       const task = tasks.find((candidate) => candidate.id === args.task_id)
       if (task === undefined) throw new CompositionError('TASK_NOT_FOUND', `task ${JSON.stringify(args.task_id)} does not exist`)
-      const ownerNode = args.owner === undefined ? undefined : nativeOwnerNode(caller.record.composition, args.owner)
+      const ownerNode = args.owner === undefined ? undefined : nativeOwnerNode(caller.record.composition, args.owner, scope.team)
       if (scope.team !== null && ownerNode !== undefined
         && !teamMembers(caller.record.composition, scope.team).some((node) => node.id === ownerNode.id)) {
         throw new CompositionError('TEAM_MEMBER_REQUIRED', 'owner must belong to this Team')
@@ -1324,6 +1337,56 @@ export function createControls({
       const updated = scopedAfter.find((candidate) => candidate.id === args.task_id)
       if (updated === undefined) throw new CompositionError('TASK_NOT_FOUND', 'updated task was not returned')
       return nativeTaskView(updated, scopedAfter, caller.record.composition)
+    },
+  }
+
+  const teamListViewSchema = objectSchema({
+    id: { type: 'string' },
+    label: { type: 'string' },
+    rootNodeId: { type: 'string' },
+    lead: { type: 'string' },
+    members: {
+      type: 'array',
+      items: objectSchema({
+        id: { type: 'string' },
+        label: { type: 'string' },
+        sessionId: { type: 'string' },
+      }, ['id', 'label', 'sessionId']),
+    },
+  }, ['id', 'label', 'rootNodeId', 'lead', 'members'])
+
+  const teamList = {
+    name: 'team_list',
+    description: 'List composition-scoped Teams visible to the caller, including labels, Leads, and members, so Team-scoped task tools can be addressed explicitly.',
+    parameters: objectSchema({}),
+    output: {
+      schema: objectSchema({ teams: { type: 'array', items: teamListViewSchema } }, ['teams']),
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      const caller = await nativeTaskCaller(exec, 'team_list')
+      const teams = await manager.listTeams?.(caller.rootSessionId) ?? []
+      const rootId = caller.callerNode.sessionId === caller.record.composition.rootSessionId
+      const visible = teams.filter((team) => rootId
+        || teamMembers(caller.record.composition, team).some((node) => node.id === caller.callerNode.id))
+      return {
+        teams: visible.map((team) => {
+          const members = teamMembers(caller.record.composition, team)
+          const lead = members.find((node) => node.id === team.rootNodeId)
+          return {
+            id: team.id,
+            label: team.label,
+            rootNodeId: team.rootNodeId,
+            lead: lead?.label ?? team.rootNodeId,
+            members: members.map((node) => ({
+              id: node.id,
+              label: node.label,
+              sessionId: node.sessionId ?? '',
+            })),
+          }
+        }),
+      }
     },
   }
 
@@ -1391,7 +1454,7 @@ export function createControls({
       const caller = await callerContext(exec.agent)
       if (caller === null) throw new CompositionError('NOT_IN_COMPOSITION', NOT_IN_COMPOSITION)
       if (args.action === 'list') {
-        return { tasks: (await manager.getTasks(caller.rootSessionId)).map(taskView) }
+        return { tasks: (await manager.getTasks(caller.rootSessionId, undefined, null)).map(taskView) }
       }
       if (args.action === 'create') {
         return {
@@ -1401,7 +1464,7 @@ export function createControls({
             ownerNodeId: caller.callerNode.id,
             createdBy: `agent:${caller.callerNode.sessionId}`,
             actor: caller.callerNode.sessionId,
-          })).map(taskView),
+          })).filter((task) => task.teamId === null || task.teamId === undefined).map(taskView),
         }
       }
       const action = args.status === 'in_progress'
@@ -1412,15 +1475,16 @@ export function createControls({
           taskId: args.taskId,
           expectedRevision: args.expected_revision,
           action,
+          teamId: null,
           actor: caller.callerNode.sessionId,
-        })).map(taskView),
+        })).filter((task) => task.teamId === null || task.teamId === undefined).map(taskView),
       }
     },
   }
 
   const definitions = [
     listAgents, sendMessage, interruptAgent, subagentTool, forkTool, waitTool, taskTool,
-    teamTaskCreate, teamTaskList, teamTaskGet, teamTaskUpdate,
+    teamList, teamTaskCreate, teamTaskList, teamTaskGet, teamTaskUpdate,
   ]
   const NATIVE_NAMES = new Set(['list_agents', 'send_message', 'interrupt_agent', 'subagent', 'subagent_fork', 'wait_agent'])
   const handlers = new Map(definitions
@@ -1562,7 +1626,15 @@ export function createControls({
     intercept,
     register(tools) {
       const disposers = []
-      const definitionsToRegister = [taskTool, teamTaskCreate, teamTaskList, teamTaskGet, teamTaskUpdate]
+      const when = async ({ agent }) => {
+        if (agent === undefined || typeof agent.id !== 'string' || agent.id.length === 0) return false
+        try {
+          return await manager.resolveSession(agent.id) !== null
+        } catch {
+          return false
+        }
+      }
+      const definitionsToRegister = [taskTool, teamList, teamTaskCreate, teamTaskList, teamTaskGet, teamTaskUpdate]
       let nativeTeam = false
       try {
         nativeTeam = ctx.get?.('agentTeams') !== undefined
@@ -1572,7 +1644,7 @@ export function createControls({
       for (const definition of definitionsToRegister) {
         // A profile that mounts the native Team service/tools keeps them
         // authoritative; never shadow real Team task state.
-        if (nativeTeam && definition.name.startsWith('team_task_')) continue
+        if (nativeTeam && (definition.name.startsWith('team_task_') || definition.name === 'team_list')) continue
         let existing
         try {
           existing = typeof tools.get === 'function' ? tools.get(definition.name) : undefined
@@ -1581,7 +1653,7 @@ export function createControls({
         }
         if (existing !== undefined) continue
         try {
-          disposers.push(tools.register(definition))
+          disposers.push(tools.register(definition, { when }))
         } catch {
           // A duplicate registration means another plugin won the name; leave
           // that tool untouched rather than shadowing it.

@@ -18,7 +18,7 @@
 > `mode` 已移除：插件在标准 profile 上为每个 Agent 安装六个原生同名的 **scoped
 > wrapper**，复制原生 schema/description/output，仅替换 `execute`；禁用插件即恢复原生
 > 路径。`composition_*` 别名已删除；`composition_task` 保留为旧聚合入口，未挂载
-> 原生 Agent Teams 时另注册四个 Team 形状任务工具（`team_task_create/list/get/update`）
+> 原生 Agent Teams 时另注册 `team_list` 和四个 Team 形状任务工具（`team_task_create/list/get/update`）
 > 到组合任务板，原生 Team 优先。旧 composed preset 仅保留给历史会话，新会话默认 `standard`；需重启 Host 后新建会话验证。
 > 跨树消息（产品中的 Bridge 能力）由同名 `send_message` / `interrupt_agent` + 逐边授权
 > + approval + 审计实现，不是独立一层；克隆/出芽已实现
@@ -331,8 +331,9 @@ Composition Layer
 - **不复制运行中的 Activation**：只复制 durable 前缀；运行中的 turn 由 DSH fork
   的闭合逻辑处理；
 - **不复制 pending inbox**；
-- **Team 任务板明确复制**：复制插件自有 `tasks`，并把 `ownerNodeId` 重映射到克隆
-  节点；不写 DSH Team（本插件任务板不是 DSH Team）；
+- **Team 定义与任务板明确复制**：复制插件自有 `teams`（仅成员节点都在克隆树内）
+  和 `tasks`，把 `ownerNodeId` 重映射到克隆节点、把 `task.teamId` 重映射到克隆
+  Team；不写 DSH Team（本插件任务板不是 DSH Team）；
 - **cwd/preset/权限不可修改**：克隆沿用源节点的值，UI 不提供覆盖；通过 seeded
   前缀和显式重建保持，不做静默放宽/收紧；
 - **新 id**：所有克隆节点都是新 Session id。
@@ -352,7 +353,7 @@ Composition Layer
 | 问题 | 结论 |
 |---|---|
 | 克隆范围 | **整棵根树**（根 + 全部子代理/外部占位），不支持只选中间子树 |
-| Team 任务板 | **复制**插件自有任务板，并把 owner 重映射到新节点 |
+| Team 定义/任务板 | **复制**成员节点都在克隆树内的 Team 定义，复制插件自有任务板，并重映射 owner 与 `teamId` |
 | cwd/preset/权限 | **不允许修改**；克隆沿用源值，UI 不提供覆盖 |
 | 出芽后原节点 | **保留、不自动归档**；两棵树并行独立 |
 
@@ -648,7 +649,7 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 - 已实现（2026-11-18 合并模式）：标准 profile 保留原生 delegation 插件；插件为每个
   live Agent 在 `agent.ctx` 安装六个同名 **scoped wrapper**，复制原生
   schema/description/output，只替换 `execute`；卸载即恢复原生。`composition_*` 别名
-  删除；`composition_task` 保留，另有四个 Team 形状任务工具在无原生 Team 时注册。
+  删除；`composition_task` 保留，另有 `team_list` 和四个 Team 形状任务工具在无原生 Team 时注册。
   `subagent`/`subagent_fork` 通过
   `startActivation` 创建、挂入组合、用原生名标记并自动授权该边；`send_message` 对
   原生后代优先走原生 relay（含冷恢复），live 跨树目标走组合 relay；`wait_agent`
@@ -736,7 +737,7 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 | 模型工具 | 标准 profile 保留原生 delegation 插件；插件为每个 Agent 安装六个同名 scoped wrapper，复制原生 name/description/parameters/output，仅替换 execute；`composition_task` 全局新增；`composition_*` 别名已删除；禁用插件恢复原生；仍需真实标准会话核对工具列表/顺序/前缀 |
 | 消息 source | 复用原生 `{ kind: 'agent-message', form: 'relay', senderSessionId }` 与 relay 前缀 |
 | 敏感确认 | 仅跨工作区且调用方非完全权限时走 `approval.request`；`allowed-once` 才继续 |
-| Team | 插件自有 Team 任务板已实现（`teams` 表 + `tasks.teamId`；连通成员/lead/重叠校验；Team 创建、选择、删除；任务创建/列表/读取/claim/release/edit/dependencies/reassign/complete/reopen/delete；revision 冲突）；不写 DSH Team；`composition_task` 和四个 `team_task_*` 工具已实现 |
+| Team | 插件自有 Team 任务板已实现（`teams` 表 + `tasks.teamId`；连通成员/lead/重叠/one-shot/重复 label 校验；创建时显式保存 nodeIds；图编辑若使 Team 失效则拒绝；Team 创建、选择、删除；任务创建/列表/读取/claim/release/edit/dependencies/reassign/complete/reopen/delete；revision 冲突）；不写 DSH Team；`composition_task`、`team_list` 和四个 `team_task_*` 工具已实现，任务工具支持显式 `team` id/label |
 
 ### 已确认决策（后续阶段）
 

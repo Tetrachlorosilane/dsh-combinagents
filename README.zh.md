@@ -118,14 +118,15 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 | `subagent_fork` | 同上，使用 fork provider |
 | `wait_agent` | 原生 caller-inbox 等待语义 |
 
-插件还在组合自有任务板上提供 **Team 形状的任务 API**。当 profile 未挂载原生 Team 服务/工具时，注册 `team_task_create`、`team_task_list`、`team_task_get`、`team_task_update`，字段、动作、CAS revision、依赖、ready 和 write-scope warning 与原生 Team 任务工具一致。Team 是一组连通的组合节点；选择 lead 会预选其子树，成员可继续取消。调用者属于某个 Team 时，这些工具限定在该 Team 的任务板与成员内。它们只写插件任务板，不写原生 Team 状态；挂载 Agent Teams 时原生工具优先，不注册这些别名。`composition_task` 保留为旧版单工具聚合入口。Native `list_subagent_models` 和其他 unique tool 不受影响。
+插件还在组合自有任务板上提供 **Team 形状的任务 API**。当 profile 未挂载原生 Team 服务/工具时，注册 `team_task_create`、`team_task_list`、`team_task_get`、`team_task_update`，字段、动作、CAS revision、依赖、ready 和 write-scope warning 与原生 Team 任务工具一致。Team 是一组连通的组合节点；选择 lead 会预选其子树，成员可继续取消。调用者属于某个 Team 时，这些工具限定在该 Team 的任务板与成员内。它们只写插件任务板，不写原生 Team 状态；挂载 Agent Teams 时原生工具优先，不注册这些别名。`team` 可按 id 或唯一 label 选择 Team，`team_list` 用于发现。`composition_task` 保留为旧版组合任务板入口，不列出 Team 任务。Native `list_subagent_models` 和其他 unique tool 不受影响。
 
 `list_agents` 默认不列出 **one-shot** 和 **external** 行，与 native 的 continuable 列表一致。One-shot 目标不能接收 follow-up。由于 native output schema 没有单独的 `mode` 字段，lifecycle mode 被写进行 description。
 
 ### Team 与任务板
 
-Team 是**一组连通的组合节点**，不是原生 Agent Team。在组合 tab 中选择 lead
-会预选其子树，然后通过复选框增删成员。服务端拒绝不连通集合和与已有 Team
+Team 是**一组连通的 continuable 本地组合节点**，不是原生 Agent Team。在组合
+tab 中选择 lead 会预选其子树，然后通过复选框增删成员。成员集合会显式保存。
+服务端拒绝不连通集合、one-shot/external 成员、重复 label，以及与已有 Team
 重叠的集合。Team membership 存在插件 domain 中，重启 Host 后仍保留，且不写
 原生 Team 状态。
 
@@ -134,9 +135,14 @@ Team 是**一组连通的组合节点**，不是原生 Agent Team。在组合 ta
 - **Composition board** 只显示没有 Team 的任务（`teamId: null`）；
 - 选中 Team 后只显示该 Team 的任务；
 - 删除 Team 会删除其 scoped tasks，但不会删除组合节点或 Session；
-- clone/bud 会复制成员节点被包含的 Team 定义，并重映射任务的 `teamId`。
+- clone/bud 会复制成员节点被包含的 Team 定义，并重映射任务的 `teamId`；
+- Team 是固定成员快照：删除/移动成员，或 reparent 导致 Team 不连通/重叠，
+  都会被拒绝；需要修改结构时先删除 Team。
 
-未挂载原生 Agent Teams 时，四个 Team 形状工具自动使用调用者所属 Team：
+未挂载原生 Agent Teams 时，四个 Team 形状工具默认使用调用者所属 Team。可传
+`team`（id 或唯一 label）指定其他 Team；组合根可以管理所有 Team，非根调用者
+只能访问自己的 Team。`team_list` 用于发现 Team id/label/Lead/成员。Tab 中选中的 Team 只是**查看作用域**；
+模型如果要操作其他 Team，必须显式传 `team`。
 
 | 工具 | 作用域 |
 |---|---|
@@ -144,9 +150,10 @@ Team 是**一组连通的组合节点**，不是原生 Agent Team。在组合 ta
 | `team_task_list` | 按 status/owner/unowned/ready 过滤，返回原生形状分页 |
 | `team_task_get` | 读取当前作用域的一个任务 |
 | `team_task_update` | CAS 动作：claim、release、edit、set_dependencies、complete、reopen、reassign、delete |
+| `team_list` | 列出可见 Team 的 id、label、Lead 和成员，供 `team` 参数选择 |
 
 挂载原生 Agent Teams 时原生工具优先，插件不注册这些别名。这是 overlay 层的
-功能替代，不是原生 Team，也没有共享 checkout。实机验证见
+**Team 形状任务板**，不是原生 Agent Team、Team mode 或共享 checkout。实机验证见
 [`docs/TEAM-TEST-2026-11-19.md`](docs/TEAM-TEST-2026-11-19.md)。
 
 ### 生命周期模式
@@ -166,7 +173,8 @@ Team 是**一组连通的组合节点**，不是原生 Agent Team。在组合 ta
 
 数据存放在 DSH home 下，因此两个 profile 可以打开同一份组合数据。每个 Host 都有自己的 storage-domain 内存快照。本插件让它们收敛：
 
-- durable composition 或 policy 写入后，更新一个小的 `.revision` marker。
+- durable composition、policy、task、Team 或 clone 写入后，更新一个小的
+  `.revision` marker。
 - 读端发现 marker 变化时重新打开 storage domain，并重建 session membership。
 - 组合 mutation 使用跨进程 `.mutation.lock`，避免两个 profile 互相覆盖 read-modify-write。
 - 页面可见时每 3 秒轮询 `/state`，header chip 每 5 秒轮询 `/summary`。
@@ -195,6 +203,10 @@ Team 是**一组连通的组合节点**，不是原生 Agent Team。在组合 ta
 | `another DSH profile is changing the composition` | 另一个 profile 持有 mutation lock，稍后重试。 |
 | `STORAGE_UNAVAILABLE` | Domain 重新加载失败；读取保留最后一次内存快照，写入 fail-closed。重启 Host。 |
 | `storageMemory` 警告 | Storage domain 未能打开；修改只在 Host 重启前有效，检查 DSH storage backend。 |
+| `TEAM_STRUCTURE_CONFLICT` | 图编辑会删除 Team 成员、使集合不连通或造成 Team 重叠；请先删除 Team 再改结构。 |
+| `TEAM_MEMBER_MODE` | Team 成员/owner 是 one-shot，或会变成 one-shot；Team 需要 continuable 本地节点。 |
+| `TEAM_LABEL_CONFLICT` / `TEAM_AMBIGUOUS` | Team label 必须唯一；旧数据重名时使用 Team id。 |
+| `TEAM_NOT_FOUND` / `TEAM_FORBIDDEN` | `team` id/label 不存在，或调用者既不是组合根也不是 Team 成员。 |
 | 看不到某个 one-shot 代理 | 默认隐藏；打开 **Show one-shot agents**，必要时先 **Sync native agents**。 |
 | 另一个 profile 的树看起来是旧的 | 等待 3 秒轮询、刷新页面，或确认两个 profile 都运行当前版本。 |
 | 没有页面 | 确认插件和 client UI 已启用，Host 重启后刷新页面。 |
@@ -205,8 +217,8 @@ Team 是**一组连通的组合节点**，不是原生 Agent Team。在组合 ta
 - 不提供 native re-parenting，也不合并会话。
 - 标签是用户可见文本，可能重复；重复标签会让 `send_message` 的目标选择有歧义。
 - 不改变会话的 workspace、sandbox、permission preset 或 approval policy。
-- 任务板和 Team 都是插件数据，不是 DSH Team 状态。Team 是连通 overlay，不是原生 Agent Team，也没有共享 checkout。
-- 后续 reparent 可能改变 Team 的图结构；如果已有 Team 与当前结构不再匹配，请重建 Team。
+- 任务板和 Team 都是插件数据，不是 DSH Team 状态。Team 是连通 overlay，不是原生 Agent Team，也没有共享 checkout。会导致 Team 失效的图编辑会被拒绝；修改成员前先删除 Team。
+- Team 工具只在调用者有组合时出现；不在任何 Team 中时操作组合任务板。
 - 在超大 transcript 下，超大 archived 组合的周边会话 UI 仍可能绘制很慢；bridge 本身不是瓶颈。
 - 旧 composed 会话在迁移到 standard preset 前使用 fallback tool definitions。
 - Native request-prefix fingerprint 尚未纳入验收测试。

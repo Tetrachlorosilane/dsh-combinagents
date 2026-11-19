@@ -772,6 +772,7 @@ export function createStore(ctx, options = {}) {
       const table = await tableOf(TASK_TABLE)
       if (table !== null) {
         await durableWrite(() => table.put(taskId, record))
+        writeRevision()
       } else {
         memory.get(TASK_TABLE).set(taskId, record)
       }
@@ -784,6 +785,7 @@ export function createStore(ctx, options = {}) {
       const previous = table !== null ? table.get(taskId) : memory.get(TASK_TABLE).get(taskId)
       if (table !== null) {
         await durableWrite(() => table.delete(taskId))
+        writeRevision()
       } else {
         memory.get(TASK_TABLE).delete(taskId)
       }
@@ -807,14 +809,22 @@ export function createStore(ctx, options = {}) {
     async putTeam(teamId, record) {
       assertWritable()
       const table = await tableOf(TEAM_TABLE)
-      if (table !== null) await durableWrite(() => table.put(teamId, record))
-      else memory.get(TEAM_TABLE).set(teamId, record)
+      if (table !== null) {
+        await durableWrite(() => table.put(teamId, record))
+        writeRevision()
+      } else {
+        memory.get(TEAM_TABLE).set(teamId, record)
+      }
     },
     async deleteTeam(teamId) {
       assertWritable()
       const table = await tableOf(TEAM_TABLE)
-      if (table !== null) await durableWrite(() => table.delete(teamId))
-      else memory.get(TEAM_TABLE).delete(teamId)
+      if (table !== null) {
+        await durableWrite(() => table.delete(teamId))
+        writeRevision()
+      } else {
+        memory.get(TEAM_TABLE).delete(teamId)
+      }
     },
     async listTeams(rootSessionId) {
       const table = await tableOf(TEAM_TABLE)
@@ -834,6 +844,7 @@ export function createStore(ctx, options = {}) {
       const table = await tableOf(CLONE_TABLE)
       if (table !== null) {
         await durableWrite(() => table.put(cloneId, record))
+        writeRevision()
       } else {
         memory.get(CLONE_TABLE).set(cloneId, record)
       }
@@ -845,6 +856,7 @@ export function createStore(ctx, options = {}) {
       const previous = table !== null ? table.get(cloneId) : memory.get(CLONE_TABLE).get(cloneId)
       if (table !== null) {
         await durableWrite(() => table.delete(cloneId))
+        writeRevision()
       } else {
         memory.get(CLONE_TABLE).delete(cloneId)
       }

@@ -1335,6 +1335,16 @@ window.__ModuleLoader__.load({
                 open ? h('div', { key: 'details', style: styles.taskDetails }, [
                   task.description ? h('div', { key: 'description' }, task.description) : null,
                   h('div', { key: 'owner' }, `${t('taskOwner')}: ${ownerLabel}`),
+                  task.status === 'pending' || task.status === 'in_progress' ? h('select', {
+                    key: 'owner-select',
+                    style: styles.select,
+                    value: task.ownerNodeId ?? '',
+                    disabled: busy,
+                    onChange: (event) => onUpdate(task.id, 'reassign', task.revision, event.target.value.length === 0 ? null : event.target.value),
+                  }, [
+                    h('option', { key: 'none', value: '' }, t('unowned')),
+                    ...owners.map((node) => h('option', { key: node.id, value: node.id }, node.label)),
+                  ]) : null,
                   blocked ? h('div', { key: 'blocked', style: styles.warning }, t('taskBlocked')) : null,
                   Array.isArray(task.blockedBy) && task.blockedBy.length > 0
                     ? h('div', { key: 'blocked-by' }, `${t('taskBlockedBy')}: ${task.blockedBy.join(', ')}`)
@@ -1403,6 +1413,10 @@ window.__ModuleLoader__.load({
       const [cleanupContent, setCleanupContent] = React.useState({})
       const [cleanupContentBusy, setCleanupContentBusy] = React.useState(null)
       const [activeTeamId, setActiveTeamId] = React.useState(null)
+      const restoredTeamFor = React.useRef(null)
+      const activeTeamStorageKey = state.rootSessionId === undefined || state.rootSessionId === null
+        ? null
+        : `dsh-combinagents.active-team.${state.rootSessionId}`
       const [teamForm, setTeamForm] = React.useState(false)
       const [teamLabel, setTeamLabel] = React.useState('')
       const [teamLead, setTeamLead] = React.useState('')
@@ -1466,6 +1480,29 @@ window.__ModuleLoader__.load({
           setActiveTeamId(null)
         }
       }, [activeTeamId, state.teams])
+
+      React.useEffect(() => {
+        if (activeTeamStorageKey === null || state.composition === null || restoredTeamFor.current === activeTeamStorageKey) return
+        restoredTeamFor.current = activeTeamStorageKey
+        try {
+          const saved = window.localStorage?.getItem(activeTeamStorageKey)
+          if (saved !== null && saved !== undefined && (state.teams ?? []).some((team) => team.id === saved)) {
+            setActiveTeamId(saved)
+          }
+        } catch {
+          // Storage can be disabled; the tab still works without a restored selection.
+        }
+      }, [activeTeamStorageKey, state.composition, state.teams])
+
+      React.useEffect(() => {
+        if (activeTeamStorageKey === null || restoredTeamFor.current !== activeTeamStorageKey) return
+        try {
+          if (activeTeamId === null) window.localStorage?.removeItem(activeTeamStorageKey)
+          else window.localStorage?.setItem(activeTeamStorageKey, activeTeamId)
+        } catch {
+          // Best effort; a disabled localStorage must not break Team selection.
+        }
+      }, [activeTeamId, activeTeamStorageKey])
 
       const mutate = React.useCallback(async (action, successMessage) => {
         setBusy(true)
@@ -1694,10 +1731,17 @@ window.__ModuleLoader__.load({
         null,
       )
 
-      const updateTask = (taskId, action, expectedRevision) => mutate(
+      const updateTask = (taskId, action, expectedRevision, ownerNodeId = undefined) => mutate(
         () => callApi('/update-task', {
           method: 'POST',
-          body: { rootSessionId: activeRoot, taskId, action, expectedRevision, teamId: activeTeamId },
+          body: {
+            rootSessionId: activeRoot,
+            taskId,
+            action,
+            expectedRevision,
+            teamId: activeTeamId,
+            ...(ownerNodeId === undefined ? {} : { ownerNodeId }),
+          },
         }),
         null,
       )
@@ -1835,11 +1879,15 @@ window.__ModuleLoader__.load({
       const activeTeamMemberIds = activeTeam === null ? null : teamMemberIds(activeTeam)
       const taskNodes = activeTeam === null
         ? nodes
-        : nodes.filter((node) => activeTeamMemberIds.has(node.id))
+        : nodes.filter((node) => activeTeamMemberIds.has(node.id) && node.mode !== 'one-shot')
       const visibleTasks = (state.tasks ?? []).filter((task) => activeTeamId === null
         ? task.teamId === null || task.teamId === undefined
         : task.teamId === activeTeamId)
-      const teamLeadNodes = nodes.filter((node) => node.kind === 'session')
+      const teamLeadNodes = nodes.filter((node) => node.kind === 'session' && node.mode !== 'one-shot')
+      const teamSelectableIds = new Set(teamLeadNodes.map((node) => node.id))
+      const teamSubtreeSelection = (lead) => lead.length === 0
+        ? []
+        : [...teamMemberIds({ rootNodeId: lead })].filter((id) => teamSelectableIds.has(id))
       const cleanupTotals = cleanup.data?.totals ?? null
       const cleanupLegacyCount = cleanup.includeLegacy ? cleanupTotals?.legacy.count ?? 0 : 0
       const cleanupLegacyBytes = cleanup.includeLegacy ? cleanupTotals?.legacy.bytes ?? 0 : 0
@@ -2065,7 +2113,7 @@ window.__ModuleLoader__.load({
                       const lead = teamLead.length > 0 ? teamLead : (teamLeadNodes[0]?.id ?? '')
                       setTeamForm(true)
                       setTeamLead(lead)
-                      setTeamSelected(lead.length === 0 ? [] : [...teamMemberIds({ rootNodeId: lead })])
+                      setTeamSelected(teamSubtreeSelection(lead))
                     },
                   }, t('createTeam')),
                 ]),
@@ -2101,7 +2149,7 @@ window.__ModuleLoader__.load({
                       onChange: (event) => {
                         const lead = event.target.value
                         setTeamLead(lead)
-                        setTeamSelected(lead.length === 0 ? [] : [...teamMemberIds({ rootNodeId: lead })])
+                        setTeamSelected(teamSubtreeSelection(lead))
                       },
                     }, teamLeadNodes.map((node) => h('option', { key: node.id, value: node.id }, node.label))),
                     h('button', {

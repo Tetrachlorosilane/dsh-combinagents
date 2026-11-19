@@ -174,8 +174,10 @@ set of composition nodes; selecting a lead seeds its subtree and individual
 members can be unchecked. When the caller belongs to one, these tools scope to
 that Team's board and members. They write only the plugin
 board, never native Team state; when Agent Teams is mounted, the native tools
-win and these aliases are not registered. `composition_task` remains a legacy
-single-tool aggregate. Native `list_subagent_models` and other unique tools are
+win and these aliases are not registered. `team` selects another Team by id or
+unique label, and `team_list` discovers Teams. `composition_task` remains a
+legacy composition-board aggregate; it does not list Team tasks. Native
+`list_subagent_models` and other unique tools are
 untouched.
 
 `list_agents` omits **one-shot** and **external** rows, matching the native
@@ -185,11 +187,13 @@ have a separate `mode` field.
 
 ### Teams and task boards
 
-A Team is a **connected set of composition nodes**, not a native Agent Team. In
-the composition tab choose a lead; its subtree is preselected, then add or
-remove member checkboxes. The server rejects disconnected sets and Teams that
-overlap an existing Team. Team membership is stored in the plugin domain, so it
-survives Host restarts without writing native Team state.
+A Team is a **connected set of continuable local composition nodes**, not a
+native Agent Team. In the composition tab choose a lead; its subtree is
+preselected, then add or remove member checkboxes. The selected set is stored
+explicitly. The server rejects disconnected sets, one-shot/external members,
+duplicate labels, and Teams that overlap an existing Team. Team membership is
+stored in the plugin domain, so it survives Host restarts without writing
+native Team state.
 
 The `Shared tasks` board follows the selected Team:
 
@@ -197,10 +201,17 @@ The `Shared tasks` board follows the selected Team:
 - a Team selection shows only that Team's tasks;
 - Team deletion removes its scoped tasks, not composition nodes or Sessions;
 - clone/bud copies Team definitions whose member nodes are included and remaps
-  their task `teamId`.
+  their task `teamId`;
+- a Team is a fixed membership snapshot: removing or moving a member, or a
+  reparent that disconnects or overlaps it, is rejected. Delete the Team first
+  if you need to change its structure.
 
 When native Agent Teams is not mounted, the four Team-shaped tools use the
-caller's Team automatically:
+caller's Team automatically. Pass `team` (an id or unique label) to address a
+different Team; the composition root may administer every Team, while a
+non-root caller is limited to its own Team. `team_list` shows the available
+Teams and their members. The selected Team in the tab is a **view scope**; a
+model call that needs another Team must pass `team` explicitly.
 
 | Tool | Scope |
 |---|---|
@@ -208,10 +219,11 @@ caller's Team automatically:
 | `team_task_list` | Filters by status/owner/unowned/ready, returns compact native-shaped pages |
 | `team_task_get` | Reads one task from the active scope |
 | `team_task_update` | CAS actions: claim, release, edit, set_dependencies, complete, reopen, reassign, delete |
+| `team_list` | Lists visible Team ids, labels, Leads, and members for explicit `team` selection |
 
 Native Team tools win when Agent Teams is mounted; the plugin then does not
-register these aliases. This is an overlay-level functional replacement, not a
-native Team or a shared checkout. See the live proof in
+register these aliases. This is an overlay-level **Team-shaped task board**, not
+a native Agent Team, Team mode, or a shared checkout. See the live proof in
 [`docs/TEAM-TEST-2026-11-19.md`](docs/TEAM-TEST-2026-11-19.md).
 
 ### Lifecycle modes
@@ -235,8 +247,8 @@ The storages live under the DSH home, so two profiles can open the same
 composition data. Each Host keeps its own in-memory storage-domain snapshot.
 The plugin makes them converge:
 
-- After a durable composition or policy write, a small `.revision` marker is
-  updated.
+- After a durable composition, policy, task, Team, or clone write, a small
+  `.revision` marker is updated.
 - A reader that sees a newer marker reopens the storage domain and rebuilds
   session membership.
 - Composition mutations take a process-shared `.mutation.lock`, so two profiles
@@ -280,6 +292,10 @@ storage backend outside the default directory needs a `storageDir` override.
 | `another DSH profile is changing the composition` | Another profile holds the mutation lock. Retry after a moment. |
 | `STORAGE_UNAVAILABLE` | The domain could not be reloaded; reads keep the last in-memory snapshot and writes fail closed. Restart the Host. |
 | `storageMemory` warning | The storage domain could not open. Changes last until the Host restarts; check the DSH storage backend. |
+| `TEAM_STRUCTURE_CONFLICT` | A graph edit would remove a Team member, disconnect its selected set, or overlap another Team. Delete the Team before changing its structure. |
+| `TEAM_MEMBER_MODE` | A Team member/owner is one-shot, or would become one. Teams require continuable local nodes. |
+| `TEAM_LABEL_CONFLICT` / `TEAM_AMBIGUOUS` | Team labels must be unique; use the Team id when a legacy duplicate exists. |
+| `TEAM_NOT_FOUND` / `TEAM_FORBIDDEN` | The `team` id/label does not exist, or the caller is neither the composition root nor a member. |
 | A one-shot agent is missing | It is hidden by default. Enable **Show one-shot agents**; use **Sync native agents** if its mode is still unknown. |
 | The tree looks stale in another profile | Wait for the 3-second poll, refresh the page, or check that both profiles run this version. |
 | The tab is absent | Confirm the plugin and client UI are enabled, then refresh after the Host restart. |
@@ -293,9 +309,11 @@ storage backend outside the default directory needs a `storageDir` override.
 - The plugin does not change a session's workspace, sandbox, permission preset,
   or approval policy.
 - Task-board and Team state is plugin-owned, not DSH Team state. Teams are
-  connected overlays, not native Agent Teams and not a shared checkout.
-- A later reparent can change a Team's graph; recreate the Team if its stored
-  membership no longer matches.
+  connected overlays, not native Agent Teams and not a shared checkout. Graph
+  edits that would invalidate a Team are rejected; delete the Team before
+  removing or moving its members.
+- Team tools are exposed only when the caller has a composition; outside a Team
+  they operate on the composition board.
 - A very large archived composition under an enormous transcript can still make
   the surrounding session UI paint slowly; the bridge itself is not the
   bottleneck.

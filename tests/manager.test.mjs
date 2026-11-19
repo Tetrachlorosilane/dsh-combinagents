@@ -781,6 +781,7 @@ test('creates connected Team subtrees and scopes tasks to them', async () => {
   const teams = await manager.createTeam('s-a', { rootNodeId: b.id, label: 'B team' })
   assert.equal(teams.length, 1)
   assert.equal(teams[0].label, 'B team')
+  assert.deepEqual(teams[0].nodeIds, [b.id])
   await rejectsWithCode(manager.createTeam('s-a', { rootNodeId: root.id, label: 'overlap' }), 'TEAM_OVERLAP')
   await rejectsWithCode(manager.createTeam('s-a', { rootNodeId: 'missing' }), 'UNKNOWN_NODE')
   const teamId = teams[0].id
@@ -831,6 +832,71 @@ test('creates connected Team subtrees and scopes tasks to them', async () => {
   })
   assert.equal(connected.length, 1)
   assert.deepEqual(connected[0].nodeIds, [root.id, b.id])
+})
+
+test('rejects graph edits that invalidate a Team and keeps Team labels unique', async () => {
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(['s-a', 's-b', 's-c', 's-d']) })
+  await manager.create('s-a')
+  const root = (await manager.state('s-a')).composition.nodes[0]
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: root.id })
+  await manager.addNode('s-a', { sessionId: 's-c', parentId: root.id })
+  await manager.addNode('s-a', { sessionId: 's-d', parentId: root.id })
+  let state = await manager.state('s-a')
+  const b = state.composition.nodes.find((node) => node.sessionId === 's-b')
+  const c = state.composition.nodes.find((node) => node.sessionId === 's-c')
+  const d = state.composition.nodes.find((node) => node.sessionId === 's-d')
+  const [team] = await manager.createTeam('s-a', {
+    rootNodeId: root.id,
+    nodeIds: [root.id, b.id, c.id],
+    label: 'Stable',
+  })
+  assert.deepEqual(team.nodeIds, [root.id, b.id, c.id])
+  assert.equal((await manager.resolveTeam('s-a', 'Stable')).id, team.id)
+  assert.equal((await manager.resolveTeam('s-a', team.id)).id, team.id)
+  await rejectsWithCode(manager.createTeam('s-a', { rootNodeId: d.id, label: 'Stable' }), 'TEAM_LABEL_CONFLICT')
+  await rejectsWithCode(manager.removeNode('s-a', { nodeId: b.id }), 'TEAM_STRUCTURE_CONFLICT')
+  await rejectsWithCode(manager.setParent('s-a', { nodeId: b.id, parentId: d.id }), 'TEAM_STRUCTURE_CONFLICT')
+  state = await manager.state('s-a')
+  assert.ok(state.composition.nodes.some((node) => node.id === b.id))
+  assert.equal((await manager.listTeams('s-a')).length, 1)
+})
+
+test('refuses to move a Team member across compositions and rolls back the target', async () => {
+  const manager = createManager({ store: fakeStore(), discovery: fakeDiscovery(['s-a', 's-b', 's-c']) })
+  await manager.create('s-a')
+  await manager.create('s-c')
+  const root = (await manager.state('s-a')).composition.nodes[0]
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: root.id })
+  const b = (await manager.state('s-a')).composition.nodes.find((node) => node.sessionId === 's-b')
+  await manager.createTeam('s-a', {
+    rootNodeId: root.id,
+    nodeIds: [root.id, b.id],
+    label: 'Move guard',
+  })
+  await rejectsWithCode(manager.addNode('s-c', { sessionId: 's-b' }), 'TEAM_STRUCTURE_CONFLICT')
+  assert.equal((await manager.resolveSession('s-b')).rootSessionId, 's-a')
+  const target = await manager.state('s-c')
+  assert.equal(target.composition.nodes.some((node) => node.sessionId === 's-b'), false)
+})
+
+test('rejects a one-shot Team member', async () => {
+  const discovery = fakeDiscovery(['s-a', 's-b'])
+  const describe = discovery.describe
+  discovery.describe = async (sessionId) => {
+    const summary = await describe(sessionId)
+    return summary === null ? null : { ...summary, ...(sessionId === 's-b' ? { mode: 'one-shot' } : {}) }
+  }
+  const manager = createManager({ store: fakeStore(), discovery })
+  await manager.create('s-a')
+  const root = (await manager.state('s-a')).composition.nodes[0]
+  await manager.addNode('s-a', { sessionId: 's-b', parentId: root.id })
+  const b = (await manager.state('s-a')).composition.nodes.find((node) => node.sessionId === 's-b')
+  assert.equal(b.mode, 'one-shot')
+  await rejectsWithCode(manager.createTeam('s-a', {
+    rootNodeId: root.id,
+    nodeIds: [root.id, b.id],
+    label: 'One shot',
+  }), 'TEAM_MEMBER_MODE')
 })
 
 test('sync-native refuses a child already owned by another composition', async () => {

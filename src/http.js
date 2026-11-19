@@ -539,6 +539,7 @@ export function createApi({
         expectedRevision: body.expectedRevision,
         action: body.action,
         teamId: body.teamId,
+        ...(body.ownerNodeId === undefined ? {} : { ownerNodeId: body.ownerNodeId }),
         actor: 'user',
       })
       return json(200, { tasks })

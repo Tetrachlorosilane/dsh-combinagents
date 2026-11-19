@@ -40,7 +40,8 @@ particular:
 - Six native names keep their native definitions; a `tools/execute` interceptor
   supplies composition values. `composition_task` is the legacy aggregate; when
   native Agent Teams is absent the plugin also registers four Team-shaped task
-  tools over the composition-owned board. Native tool schemas are unchanged.
+  tools plus `team_list` over the composition-owned board; they are exposed only
+  when the caller belongs to a composition. Native tool schemas are unchanged.
 - External/one-shot agents can be visible leaves but cannot receive follow-ups.
 - Cache-friendly behavior is a design constraint, not an optimization detail.
 
@@ -187,11 +188,18 @@ team: { id, rootSessionId, rootNodeId, nodeIds?, label, createdBy, createdAt, up
 ```
 
 - `rootNodeId` is the Team Lead and must be a local session node.
-- `nodeIds` is optional; when present it is the exact member set. Legacy/simple
-  records omit it and use the Lead's connected composition subtree.
+- `nodeIds` is the exact member set. New Teams always store it explicitly;
+  legacy records without it fall back to the Lead's connected subtree.
 - Creation rejects disconnected selections (`TEAM_NOT_CONNECTED`), non-session
-  members, a Lead outside the set, and overlap with another Team
-  (`TEAM_OVERLAP`).
+  members, one-shot members, a Lead outside the set, duplicate labels, and
+  overlap with another Team (`TEAM_OVERLAP`).
+- Every graph save validates existing Teams. Removing/moving a member,
+  disconnecting the selected set, or creating an overlap is rejected with
+  `TEAM_STRUCTURE_CONFLICT`; delete the Team first to change its structure.
+- `team` task tools accept an optional Team id or unique label. The composition
+  root may address every Team; another caller is limited to a Team it belongs
+  to. `team_list` exposes the discoverable Teams.
+- The Client remembers the selected Team per composition in `localStorage`.
 - Task records carry an optional `teamId`; Team boards filter by it, and owner /
   claim / dependency / reassign rules are scoped to the Team.
 - Team deletion removes its scoped tasks only. It never removes composition
@@ -208,8 +216,8 @@ profiles that share `$DSH_HOME/storages/combinagents` therefore hold separate
 snapshots; a write in one is invisible to the other until it reopens the
 domain. The plugin adds three coherence mechanisms:
 
-- **Revision marker:** after every durable composition or policy
-  write, the writer atomically replaces `storages/combinagents/.revision` with a
+- **Revision marker:** after every durable composition, policy, task, Team, or
+  clone write, the writer atomically replaces `storages/combinagents/.revision` with a
   token. Every store read checks the marker; when it differs, the domain is
   closed and reopened from the backend snapshot. The store generation changes,
   and the manager rebuilds its session→composition membership index.
@@ -498,7 +506,7 @@ native tool definitions intact and registers one `tools/execute` interceptor:
 - non-intercepted names call `next()` unchanged.
 
 `composition_task` and, when native Agent Teams is absent, the four
-Team-shaped task tools are globally registered extras. Native Team wins when
+Team-shaped task tools are composition-scoped extras. Native Team wins when
 mounted. The old `composition_*` aliases are removed. `list_subagent_models` and every other
 unique native tool are untouched.
 
@@ -714,7 +722,8 @@ the archived/cold-resume boundary and consider an audit viewer.
 8. Standard mode keeps the native delegation plugins mounted; one
    `tools/execute` interceptor replaces execution for six native names while
    their schemas/descriptions/output/prompt identity/restrictions stay native;
-   `composition_task` and the Team-shaped task tools are global (unless native
+   `composition_task`, `team_list`, and the Team-shaped task tools are conditional
+   on the caller having a composition (unless native
    Team is mounted). Removing the listener restores the native path.
 9. No session header, cwd, sandbox, approval, or permission-preset write occurs.
 10. Unit tests pass; the GUI is checked in light/dark themes and at narrow width.

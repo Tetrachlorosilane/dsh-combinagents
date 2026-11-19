@@ -92,7 +92,7 @@ test('host entry registers the composition bridge and injects its hard services'
 
   assert.equal(routes.length, 1)
   assert.deepEqual(tools.map((tool) => tool.name), [
-    'composition_task', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
+    'composition_task', 'team_list', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
   ])
   assert.equal(routes[0].kind, 'prefix')
   assert.equal(routes[0].path, '/dsh-combinagents')
@@ -166,7 +166,7 @@ test('host installs execution interception without duplicate tool registrations'
   apply(ctx)
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.deepEqual(globalTools, [
-    'composition_task', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
+    'composition_task', 'team_list', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
   ])
   assert.deepEqual(scopedTools, [])
   assert.equal(typeof listeners.get('tools/execute'), 'function')

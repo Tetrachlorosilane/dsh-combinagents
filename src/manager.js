@@ -362,6 +362,7 @@ export function createManager({
    * @returns {Promise<{composition: object, updatedAt: number}>} saved record.
    */
   async function save(rootSessionId, composition) {
+    await assertTeamsStable(rootSessionId, composition)
     const record = { composition, updatedAt: now() }
     await store.put(rootSessionId, record)
     return record
@@ -686,7 +687,70 @@ export function createManager({
   }
 
   /**
-   * A task may be changed by the user, its owner, or one of the owner's  /**
+   * Validate every Team against a candidate composition before a graph save.
+   * Team membership is intentionally explicit: a structural edit that would
+   * remove a member, disconnect the selected set, or create an overlap is
+   * rejected rather than silently shrinking another user's Team.
+   * @param {string} rootSessionId - composition owner.
+   * @param {object} composition - candidate graph.
+   * @returns {Promise<void>}
+   */
+  async function assertTeamsStable(rootSessionId, composition) {
+    const teams = await store.listTeams?.(rootSessionId) ?? []
+    if (teams.length === 0) return
+    const byId = new Map(composition.nodes.map((node) => [node.id, node]))
+    const memberOwners = new Map()
+    for (const team of teams) {
+      const rawIds = Array.isArray(team.nodeIds) && team.nodeIds.length > 0
+        ? [...new Set(team.nodeIds)]
+        : teamNodes(composition, { rootNodeId: team.rootNodeId }).map((node) => node.id)
+      if (rawIds.length === 0 || !rawIds.includes(team.rootNodeId)) {
+        throw new CompositionError('TEAM_STRUCTURE_CONFLICT', `Team ${JSON.stringify(team.label)} has no live Lead`)
+      }
+      const selected = new Set()
+      for (const id of rawIds) {
+        const node = byId.get(id)
+        if (node === undefined) {
+          throw new CompositionError('TEAM_STRUCTURE_CONFLICT', `Team ${JSON.stringify(team.label)} contains a missing node`)
+        }
+        if (node.kind !== 'session') {
+          throw new CompositionError('TEAM_STRUCTURE_CONFLICT', `Team ${JSON.stringify(team.label)} contains a non-local node`)
+        }
+        if (node.mode === 'one-shot') {
+          throw new CompositionError('TEAM_MEMBER_MODE', `Team ${JSON.stringify(team.label)} contains a one-shot node`)
+        }
+        const other = memberOwners.get(id)
+        if (other !== undefined && other !== team.id) {
+          throw new CompositionError('TEAM_OVERLAP', 'Team memberships must not overlap')
+        }
+        memberOwners.set(id, team.id)
+        selected.add(id)
+      }
+      const adjacency = new Map()
+      for (const edge of composition.edges ?? []) {
+        if (!selected.has(edge.parentId) || !selected.has(edge.childId)) continue
+        const left = adjacency.get(edge.parentId) ?? []
+        left.push(edge.childId)
+        adjacency.set(edge.parentId, left)
+        const right = adjacency.get(edge.childId) ?? []
+        right.push(edge.parentId)
+        adjacency.set(edge.childId, right)
+      }
+      const reached = new Set()
+      const queue = [team.rootNodeId]
+      while (queue.length > 0) {
+        const id = queue.shift()
+        if (reached.has(id)) continue
+        reached.add(id)
+        for (const next of adjacency.get(id) ?? []) queue.push(next)
+      }
+      if (reached.size !== selected.size) {
+        throw new CompositionError('TEAM_STRUCTURE_CONFLICT', `Team ${JSON.stringify(team.label)} would become disconnected`)
+      }
+    }
+  }
+
+  /**
    * A task may be changed by the user, its owner, or one of the owner's
    * composition ancestors. Unowned tasks are user-only. Agents outside the
    * owner line must not complete or delete another member's work.
@@ -700,6 +764,10 @@ export function createManager({
     if (typeof actor !== 'string' || actor.length === 0) return false
     const node = composition.nodes.find((candidate) => candidate.sessionId === actor)
     if (node === undefined) return false
+    const root = composition.nodes.find((candidate) => candidate.sessionId === composition.rootSessionId)
+    // The composition root is the overlay administrator and may manage any
+    // Team board; a Team Lead manages its own Team.
+    if (node.id === root?.id) return true
     if (team !== null) {
       const members = teamNodes(composition, team)
       if (!members.some((candidate) => candidate.id === node.id)) return false
@@ -707,8 +775,6 @@ export function createManager({
       if (node.id === task.ownerNodeId) return true
       return false
     }
-    const root = composition.nodes.find((candidate) => candidate.sessionId === composition.rootSessionId)
-    if (node.id === root?.id) return true
     if (task.ownerNodeId === null || task.ownerNodeId === undefined) return false
     if (node.id === task.ownerNodeId) return true
     return isAncestor(composition, task.ownerNodeId, node.id)
@@ -778,6 +844,9 @@ export function createManager({
         }
         if (members !== null && !members.some((node) => node.id === ownerNodeId)) {
           throw new CompositionError('TEAM_MEMBER_REQUIRED', 'task owner must belong to the selected team')
+        }
+        if (members !== null && owner.mode === 'one-shot') {
+          throw new CompositionError('TEAM_MEMBER_MODE', 'a Team task owner must be continuable')
         }
       }
       const createdBy = textOf(input.createdBy, 128) ?? 'user'
@@ -945,8 +1014,10 @@ export function createManager({
           const leadNodeId = team === null ? record.composition.rootSessionId : team.rootNodeId
           const leadNode = record.composition.nodes.find((node) => node.id === leadNodeId
             || node.sessionId === leadNodeId)
-          if (actorNode === undefined || actorNode.id !== leadNode?.id) {
-            throw new CompositionError('TASK_FORBIDDEN', 'only the Team Lead may reassign tasks')
+          const compositionRoot = record.composition.nodes.find((node) => node.sessionId === record.composition.rootSessionId)
+          if (actor !== 'user'
+            && (actorNode === undefined || (actorNode.id !== leadNode?.id && actorNode.id !== compositionRoot?.id))) {
+            throw new CompositionError('TASK_FORBIDDEN', 'only the Team Lead, composition root, or user may reassign tasks')
           }
           if (task.status !== 'pending' && task.status !== 'in_progress') {
             throw new CompositionError('TASK_INVALID_TRANSITION', 'only a pending or in-progress task can be reassigned')
@@ -959,6 +1030,9 @@ export function createManager({
             if (owner === undefined) throw new CompositionError('UNKNOWN_NODE', 'reassign target is not a local composition node')
             if (team !== null && !teamNodes(record.composition, team).some((node) => node.id === ownerNodeId)) {
               throw new CompositionError('TEAM_MEMBER_REQUIRED', 'reassign target must belong to this team')
+            }
+            if (team !== null && owner.mode === 'one-shot') {
+              throw new CompositionError('TEAM_MEMBER_MODE', 'reassign target must be continuable')
             }
             if (!taskReady(task, tasks)) throw new CompositionError('TASK_BLOCKED', 'this task is blocked')
           }
@@ -1055,6 +1129,9 @@ export function createManager({
       if (selected.some((node) => node.kind !== 'session')) {
         throw new CompositionError('INVALID_FIELD', 'a Team may contain only local session nodes')
       }
+      if (selected.some((node) => node.mode === 'one-shot')) {
+        throw new CompositionError('TEAM_MEMBER_MODE', 'a Team may contain only continuable nodes')
+      }
       const selectedIds = new Set(selected.map((node) => node.id))
       const adjacency = new Map()
       for (const edge of record.composition.edges ?? []) {
@@ -1084,12 +1161,21 @@ export function createManager({
           throw new CompositionError('TEAM_OVERLAP', 'selected nodes overlap an existing Team')
         }
       }
+      let label = textOf(input.label, 120)
+      if (label === null) {
+        let index = teams.length + 1
+        while (teams.some((team) => team.label === `Team ${index}`)) index += 1
+        label = `Team ${index}`
+      }
+      if (teams.some((team) => team.label === label)) {
+        throw new CompositionError('TEAM_LABEL_CONFLICT', `Team label ${JSON.stringify(label)} is already in use`)
+      }
       const team = {
         id: randomUUID(),
         rootSessionId,
         rootNodeId: rootNode.id,
-        nodeIds: requested === null ? undefined : [...selectedIds],
-        label: textOf(input.label, 120) ?? `Team ${teams.length + 1}`,
+        nodeIds: [...selectedIds],
+        label,
         createdBy: textOf(input.createdBy, 128) ?? 'user',
         createdAt: now(),
         updatedAt: now(),
@@ -1138,20 +1224,24 @@ export function createManager({
   }
 
   /**
-   * Remove Teams whose root node no longer exists.
+   * Resolve a Team by id or unique label inside one composition.
    * @param {string} rootSessionId - composition owner.
-   * @param {object} composition - saved graph.
-   * @returns {Promise<void>}
+   * @param {string} reference - Team id or label.
+   * @returns {Promise<object>}
    */
-  async function pruneTeams(rootSessionId, composition) {
-    for (const team of await store.listTeams?.(rootSessionId) ?? []) {
-      const members = teamNodes(composition, team)
-      if (members.some((node) => node.id === team.rootNodeId)) continue
-      for (const [, task] of await store.listTasks?.(rootSessionId) ?? []) {
-        if (task.teamId === team.id) await store.deleteTask?.(task.id)
-      }
-      await store.deleteTeam?.(team.id)
+  async function resolveTeam(rootSessionId, reference) {
+    if (typeof reference !== 'string' || reference.length === 0) {
+      throw new CompositionError('INVALID_FIELD', 'team must be a non-empty string')
     }
+    const teams = await store.listTeams?.(rootSessionId) ?? []
+    const byId = teams.find((team) => team.id === reference)
+    if (byId !== undefined) return byId
+    const byLabel = teams.filter((team) => team.label === reference)
+    if (byLabel.length === 1) return byLabel[0]
+    if (byLabel.length > 1) {
+      throw new CompositionError('TEAM_AMBIGUOUS', `multiple Teams are labeled ${JSON.stringify(reference)}; use the Team id`)
+    }
+    throw new CompositionError('TEAM_NOT_FOUND', `Team ${JSON.stringify(reference)} does not exist`)
   }
 
   /**
@@ -1486,7 +1576,6 @@ export function createManager({
       for (const node of record.composition.nodes) {
         if (!remaining.has(node.id)) unindexSession(rootSessionId, node.sessionId)
       }
-      await pruneTeams(rootSessionId, composition)
       return saved
     })
   }
@@ -1917,6 +2006,7 @@ export function createManager({
     createTeam,
     deleteTeam,
     teamForNode,
+    resolveTeam,
     state,
     deleteComposition,
     /** @returns {'durable'|'memory'} storage mode of the backing store. */

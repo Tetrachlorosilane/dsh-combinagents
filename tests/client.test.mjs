@@ -20,6 +20,12 @@ test('client confirmations use the DSH-themed dialog instead of browser dialogs'
   assert.match(source, /\/create-team/)
   assert.match(source, /activeTeamId/)
   assert.match(source, /teamMembers/)
+  assert.match(source, /teamSubtreeSelection/)
+  assert.match(source, /teamSelectableIds/)
+  assert.match(source, /activeTeamStorageKey/)
+  assert.match(source, /localStorage/)
+  assert.match(source, /owner-select/)
+  assert.doesNotMatch(source, /setTeamSelected\(lead\.length === 0 \? \[\] : \[\.\.\.teamMemberIds/)
 })
 
 test('client module registers one tab type, its body, and the header utility', async () => {
