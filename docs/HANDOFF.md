@@ -643,7 +643,7 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 - 已实现：组合标题编辑（`/set-title` + tab 头部）；
 - 已实现：插件自有任务板（`tasks` 表 + tab UI + `/tasks`、`/create-task`、
   `/update-task`，revision 冲突保护）；另支持把组合树中一组连通节点
-  创建为 Team（选择 lead 会预选其子树）（`teams` 表、`/create-team`、`/delete-team`），Team 任务按子树
+  创建为 Team（选择 lead 会预选其子树）（`teams` 表、`/teams`、`/create-team`、`/delete-team`），Team 任务按成员集合
   作用域隔离，并提供原生 Team 形状的 `team_task_*` 工具；不写 DSH Team；
 - 已实现（2026-11-18 合并模式）：标准 profile 保留原生 delegation 插件；插件为每个
   live Agent 在 `agent.ctx` 安装六个同名 **scoped wrapper**，复制原生
@@ -736,7 +736,7 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 | 模型工具 | 标准 profile 保留原生 delegation 插件；插件为每个 Agent 安装六个同名 scoped wrapper，复制原生 name/description/parameters/output，仅替换 execute；`composition_task` 全局新增；`composition_*` 别名已删除；禁用插件恢复原生；仍需真实标准会话核对工具列表/顺序/前缀 |
 | 消息 source | 复用原生 `{ kind: 'agent-message', form: 'relay', senderSessionId }` 与 relay 前缀 |
 | 敏感确认 | 仅跨工作区且调用方非完全权限时走 `approval.request`；`allowed-once` 才继续 |
-| Team | 插件自有任务板已实现（`tasks` 表、创建/开始/完成/重开/删除、revision 冲突）；不写 DSH Team；模型任务工具 `composition_task` 已实现 |
+| Team | 插件自有 Team 任务板已实现（`teams` 表 + `tasks.teamId`；连通成员/lead/重叠校验；Team 创建、选择、删除；任务创建/列表/读取/claim/release/edit/dependencies/reassign/complete/reopen/delete；revision 冲突）；不写 DSH Team；`composition_task` 和四个 `team_task_*` 工具已实现 |
 
 ### 已确认决策（后续阶段）
 

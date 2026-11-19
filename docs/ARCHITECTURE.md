@@ -178,6 +178,29 @@ The domain should use the same conservative pattern as `dsh-extraworkspace`:
 - never make graph availability depend on the storage backend;
 - keep records after a session is archived; they are small.
 
+### Team records and task scope
+
+`teams` is a separate table in the same domain:
+
+```text
+team: { id, rootSessionId, rootNodeId, nodeIds?, label, createdBy, createdAt, updatedAt }
+```
+
+- `rootNodeId` is the Team Lead and must be a local session node.
+- `nodeIds` is optional; when present it is the exact member set. Legacy/simple
+  records omit it and use the Lead's connected composition subtree.
+- Creation rejects disconnected selections (`TEAM_NOT_CONNECTED`), non-session
+  members, a Lead outside the set, and overlap with another Team
+  (`TEAM_OVERLAP`).
+- Task records carry an optional `teamId`; Team boards filter by it, and owner /
+  claim / dependency / reassign rules are scoped to the Team.
+- Team deletion removes its scoped tasks only. It never removes composition
+  nodes or DSH sessions.
+- Clone/bud copies Team records whose member nodes are in the selected tree and
+  remaps their task `teamId`.
+- If a later reparent changes the graph, the stored member set is still the
+  Team's scope; recreate the Team if the graph no longer matches.
+
 ### Cross-profile coherence
 
 The DSH domain runtime is authoritative **in memory per open domain**. Two Host

@@ -108,6 +108,10 @@ profile and refresh the page after the Host restart.
    into the composition automatically, with its native parent and an
    auto-granted delegation edge.
 7. Use **Sync native agents** if a native descendant is missing.
+8. In **Teams**, choose a lead, check the connected members, and create one or
+   more Teams. Overlapping or disconnected selections are rejected.
+9. Use **Shared tasks** with the Team selector; tasks created inside a Team stay
+   on that Team's board. Team tools resolve the caller's Team automatically.
 
 A session belongs to at most one composition. If you attach a session that is
 already in another composition, its subtree moves; a remaining source forest is
@@ -179,6 +183,37 @@ continuable listing. One-shot targets cannot receive follow-ups. The lifecycle
 mode is shown in the row description because the native output schema does not
 have a separate `mode` field.
 
+### Teams and task boards
+
+A Team is a **connected set of composition nodes**, not a native Agent Team. In
+the composition tab choose a lead; its subtree is preselected, then add or
+remove member checkboxes. The server rejects disconnected sets and Teams that
+overlap an existing Team. Team membership is stored in the plugin domain, so it
+survives Host restarts without writing native Team state.
+
+The `Shared tasks` board follows the selected Team:
+
+- **Composition board** shows tasks without a Team (`teamId: null`);
+- a Team selection shows only that Team's tasks;
+- Team deletion removes its scoped tasks, not composition nodes or Sessions;
+- clone/bud copies Team definitions whose member nodes are included and remaps
+  their task `teamId`.
+
+When native Agent Teams is not mounted, the four Team-shaped tools use the
+caller's Team automatically:
+
+| Tool | Scope |
+|---|---|
+| `team_task_create` | Creates a task on the caller's Team board, or the composition board outside a Team |
+| `team_task_list` | Filters by status/owner/unowned/ready, returns compact native-shaped pages |
+| `team_task_get` | Reads one task from the active scope |
+| `team_task_update` | CAS actions: claim, release, edit, set_dependencies, complete, reopen, reassign, delete |
+
+Native Team tools win when Agent Teams is mounted; the plugin then does not
+register these aliases. This is an overlay-level functional replacement, not a
+native Team or a shared checkout. See the live proof in
+[`docs/TEAM-TEST-2026-11-19.md`](docs/TEAM-TEST-2026-11-19.md).
+
 ### Lifecycle modes
 
 Composition nodes carry the same native lifecycle distinction:
@@ -239,7 +274,7 @@ storage backend outside the default directory needs a `storageDir` override.
 | Symptom | Check |
 |---|---|
 | The six native-name tools still behave natively | Is the plugin enabled? Does the profile keep the native delegation rows? Restart the Host after installing. |
-| `composition_*` tools are missing | They were removed by design; use the native names plus `composition_task`. |
+| `composition_*` tools are missing | They were removed by design; use the native names plus `composition_task` and, outside native Agent Teams, `team_task_*`. |
 | `NOT_IN_COMPOSITION` | Create a composition for this session, or use `subagent` from a top-level agent. |
 | `AGENT_BUSY` | An affected agent or one of its composition ancestors/descendants is running. Wait for it to finish. |
 | `another DSH profile is changing the composition` | Another profile holds the mutation lock. Retry after a moment. |
@@ -257,7 +292,10 @@ storage backend outside the default directory needs a `storageDir` override.
   `send_message` target selection ambiguous.
 - The plugin does not change a session's workspace, sandbox, permission preset,
   or approval policy.
-- Task-board state is plugin-owned, not DSH Team state.
+- Task-board and Team state is plugin-owned, not DSH Team state. Teams are
+  connected overlays, not native Agent Teams and not a shared checkout.
+- A later reparent can change a Team's graph; recreate the Team if its stored
+  membership no longer matches.
 - A very large archived composition under an enormous transcript can still make
   the surrounding session UI paint slowly; the bridge itself is not the
   bottleneck.

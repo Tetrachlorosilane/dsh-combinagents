@@ -85,8 +85,10 @@ under the old composed preset keep that preset; they get fallback definitions.
   with `agentPreset`.
 - `wait_agent` keeps the native timeout/output contract and adds same-call input
   de-duplication.
-- `composition_task` remains the plugin-owned task board; the four Team-shaped
-  tools expose the same board and never write native Team state.
+- `composition_task` remains the plugin-owned aggregate board; the four
+  Team-shaped tools resolve the caller's connected Team scope (or the
+  composition board outside a Team) and never write native Team state. Native
+  Agent Teams, when mounted, keeps its own tools and task state.
 - The tab has a "show one-shot agents" checkbox, off by default; one-shot nodes
   are filtered from the tree, with any continuable descendants promoted.
 

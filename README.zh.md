@@ -122,6 +122,33 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 
 `list_agents` 默认不列出 **one-shot** 和 **external** 行，与 native 的 continuable 列表一致。One-shot 目标不能接收 follow-up。由于 native output schema 没有单独的 `mode` 字段，lifecycle mode 被写进行 description。
 
+### Team 与任务板
+
+Team 是**一组连通的组合节点**，不是原生 Agent Team。在组合 tab 中选择 lead
+会预选其子树，然后通过复选框增删成员。服务端拒绝不连通集合和与已有 Team
+重叠的集合。Team membership 存在插件 domain 中，重启 Host 后仍保留，且不写
+原生 Team 状态。
+
+`Shared tasks` 任务板跟随当前 Team：
+
+- **Composition board** 只显示没有 Team 的任务（`teamId: null`）；
+- 选中 Team 后只显示该 Team 的任务；
+- 删除 Team 会删除其 scoped tasks，但不会删除组合节点或 Session；
+- clone/bud 会复制成员节点被包含的 Team 定义，并重映射任务的 `teamId`。
+
+未挂载原生 Agent Teams 时，四个 Team 形状工具自动使用调用者所属 Team：
+
+| 工具 | 作用域 |
+|---|---|
+| `team_task_create` | 在调用者 Team 的任务板创建；不在 Team 时用组合任务板 |
+| `team_task_list` | 按 status/owner/unowned/ready 过滤，返回原生形状分页 |
+| `team_task_get` | 读取当前作用域的一个任务 |
+| `team_task_update` | CAS 动作：claim、release、edit、set_dependencies、complete、reopen、reassign、delete |
+
+挂载原生 Agent Teams 时原生工具优先，插件不注册这些别名。这是 overlay 层的
+功能替代，不是原生 Team，也没有共享 checkout。实机验证见
+[`docs/TEAM-TEST-2026-11-19.md`](docs/TEAM-TEST-2026-11-19.md)。
+
 ### 生命周期模式
 
 组合节点沿用 native 的生命周期区分：
@@ -162,7 +189,7 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 | 现象 | 检查 |
 |---|---|
 | 六个原生名工具仍按 native 行为运行 | 插件是否启用？profile 是否保留 native delegation rows？安装后是否重启过 Host？ |
-| 找不到 `composition_*` 工具 | 这些别名已按设计删除；请使用原生名工具加 `composition_task`。 |
+| 找不到 `composition_*` 工具 | 这些别名已按设计删除；请使用原生名工具加 `composition_task`，未挂载原生 Agent Teams 时还有 `team_task_*`。 |
 | `NOT_IN_COMPOSITION` | 先为当前会话创建组合；或从 top-level agent 使用 `subagent`。 |
 | `AGENT_BUSY` | 受影响的 agent 或其组合祖先/后代正在运行，等它结束。 |
 | `another DSH profile is changing the composition` | 另一个 profile 持有 mutation lock，稍后重试。 |
@@ -178,7 +205,8 @@ Host 重启后，请打开一个 **standard** 会话。旧 composed preset 创�
 - 不提供 native re-parenting，也不合并会话。
 - 标签是用户可见文本，可能重复；重复标签会让 `send_message` 的目标选择有歧义。
 - 不改变会话的 workspace、sandbox、permission preset 或 approval policy。
-- 任务板是插件数据，不是 DSH Team 状态。
+- 任务板和 Team 都是插件数据，不是 DSH Team 状态。Team 是连通 overlay，不是原生 Agent Team，也没有共享 checkout。
+- 后续 reparent 可能改变 Team 的图结构；如果已有 Team 与当前结构不再匹配，请重建 Team。
 - 在超大 transcript 下，超大 archived 组合的周边会话 UI 仍可能绘制很慢；bridge 本身不是瓶颈。
 - 旧 composed 会话在迁移到 standard preset 前使用 fallback tool definitions。
 - Native request-prefix fingerprint 尚未纳入验收测试。
