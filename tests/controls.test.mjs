@@ -16,6 +16,12 @@ function harness(options = {}) {
   const attached = []
   const grantedEdges = []
   const nativeSends = []
+  const resumes = []
+  const workerAgent = {
+    status: 'idle',
+    followup: (message) => delivered.push(message),
+    steer: (message) => steered.push(message),
+  }
   const taskCalls = []
   const teamScopeCalls = []
   const teams = options.teams ?? []
@@ -51,6 +57,7 @@ function harness(options = {}) {
       return { rootSessionId: 's-a', record: { composition, updatedAt: 1 } }
     },
     async authorizeMessage() {
+      if (options.denyMessage === true) return { allowed: false, edgeIds: ['e1'], deniedEdgeIds: ['e1'] }
       return { allowed: true, edgeIds: ['e1'], deniedEdgeIds: [] }
     },
     async authorizeInterrupt() {
@@ -115,15 +122,19 @@ function harness(options = {}) {
         }
       }
       if (name === 'agents') {
+        let resumedWorker
         return {
           get: (id) => {
             if (id === 's-a') return callerAgent
             if (id !== 's-b') return undefined
-            return {
-              status: 'idle',
-              followup: (message) => delivered.push(message),
-              steer: (message) => steered.push(message),
-            }
+            if (options.inactiveTarget === true) return resumedWorker
+            return workerAgent
+          },
+          async resume({ resumeSessionId }) {
+            resumes.push(resumeSessionId)
+            if (options.resumeError === true) throw new Error('resume failed')
+            resumedWorker = workerAgent
+            return { agent: workerAgent, dispose: async () => {} }
           },
         }
       }
@@ -226,6 +237,7 @@ function harness(options = {}) {
     attached,
     grantedEdges,
     nativeSends,
+    resumes,
     taskCalls,
     teamScopeCalls,
     teams,
@@ -257,7 +269,7 @@ test('send_message uses the native relay source and delivers to an idle agent', 
   assert.equal(message.content[1].text, 'hello')
 })
 
-test('cross-workspace approval uses the effective live cwd', async () => {
+test('cross-workspace messages use the edge authority without approval', async () => {
   const harnessed = harness({
     cwd: { 's-a': '/work/shared', 's-b': '/work/shared' },
     effectiveCwd: { 's-a': '/work/shared', 's-b': '/work/other' },
@@ -266,7 +278,7 @@ test('cross-workspace approval uses the effective live cwd', async () => {
     agent: { id: 's-a' },
     signal: new AbortController().signal,
   })
-  assert.equal(harnessed.approvals.length, 1)
+  assert.equal(harnessed.approvals.length, 0)
   assert.equal(harnessed.delivered.length, 1)
 })
 
@@ -310,7 +322,7 @@ test('does not fall back when native root resolution fails', async () => {
   assert.equal(harnessed.delivered.length, 0)
 })
 
-test('send_message asks for approval when sandbox policy differs inside one cwd', async () => {
+test('send_message does not ask for approval when sandbox policy differs', async () => {
   const harnessed = harness({
     sandboxById: { 's-a': 'workspace-write', 's-b': 'danger-full-access' },
   })
@@ -318,7 +330,8 @@ test('send_message asks for approval when sandbox policy differs inside one cwd'
     agent: harnessed.callerAgent,
     signal: new AbortController().signal,
   })
-  assert.equal(harnessed.approvals.length, 1)
+  assert.equal(harnessed.approvals.length, 0)
+  assert.equal(harnessed.delivered.length, 1)
 })
 
 test('send_message uses the native relay when the target is a native descendant', async () => {
@@ -347,7 +360,27 @@ test('send_message does not bypass a native relay authorization error', async ()
   assert.equal(harnessed.delivered.length, 0)
 })
 
-test('send_message asks for approval across workspaces without full permission', async () => {
+test('send_message auto-resumes an inactive target before delivery', async () => {
+  const harnessed = harness({ inactiveTarget: true })
+  await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'wake up' }, {
+    agent: { id: 's-a' }, signal: new AbortController().signal,
+  })
+  assert.deepEqual(harnessed.resumes, ['s-b'])
+  assert.equal(harnessed.delivered.length, 1)
+})
+
+test('send_message reports a failed auto-activation instead of returning silently', async () => {
+  const harnessed = harness({ inactiveTarget: true, resumeError: true })
+  await assert.rejects(
+    harnessed.tool('send_message').execute({ agent: 'Worker', message: 'wake up' }, {
+      agent: { id: 's-a' }, signal: new AbortController().signal,
+    }),
+    (error) => error instanceof CompositionError && error.code === 'TARGET_NOT_RESUMABLE',
+  )
+  assert.equal(harnessed.delivered.length, 0)
+})
+
+test('send_message does not ask for approval across workspaces', async () => {
   const same = harness({ cwd: { 's-a': '/w', 's-b': '/w' } })
   await same.tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
     agent: { id: 's-a' }, signal: new AbortController().signal,
@@ -358,8 +391,8 @@ test('send_message asks for approval across workspaces without full permission',
   await crossing.tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
     agent: { id: 's-a' }, signal: new AbortController().signal,
   })
-  assert.equal(crossing.approvals.length, 1)
-  assert.equal(crossing.approvals[0].toolName, 'send_message')
+  assert.equal(crossing.approvals.length, 0)
+  assert.equal(crossing.delivered.length, 1)
 
   const full = harness({ cwd: { 's-a': '/w', 's-b': '/other' }, full: true })
   await full.tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
@@ -368,18 +401,33 @@ test('send_message asks for approval across workspaces without full permission',
   assert.equal(full.approvals.length, 0)
 })
 
-test('send_message rejects when approval is denied', async () => {
-  const { tool, delivered } = harness({
+test('send_message delivers when the edge grant exists even if approval would reject', async () => {
+  const harnessed = harness({
     cwd: { 's-a': '/w', 's-b': '/other' },
     approvalOutcome: 'rejected',
   })
-  await assert.rejects(
-    tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
-      agent: { id: 's-a' }, signal: new AbortController().signal,
-    }),
-    (error) => error instanceof CompositionError && error.code === 'APPROVAL_DENIED',
-  )
-  assert.equal(delivered.length, 0)
+  await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'x' }, {
+    agent: { id: 's-a' }, signal: new AbortController().signal,
+  })
+  assert.equal(harnessed.approvals.length, 0)
+  assert.equal(harnessed.delivered.length, 1)
+})
+
+test('composition root can message a node without a message edge grant', async () => {
+  const harnessed = harness({ denyMessage: true })
+  await harnessed.tool('send_message').execute({ agent: 'Worker', message: 'root relay' }, {
+    agent: { id: 's-a' }, signal: new AbortController().signal,
+  })
+  assert.equal(harnessed.delivered.length, 1)
+})
+
+test('interrupt_agent still asks for approval across workspaces', async () => {
+  const harnessed = harness({ cwd: { 's-a': '/w', 's-b': '/other' } })
+  await harnessed.tool('interrupt_agent').execute({ agent: 'Worker' }, {
+    agent: { id: 's-a' }, signal: new AbortController().signal,
+  })
+  assert.equal(harnessed.approvals.length, 1)
+  assert.equal(harnessed.approvals[0].toolName, 'interrupt_agent')
 })
 
 test('interrupt_agent uses user authority after the edge grant', async () => {

@@ -195,6 +195,8 @@ export function createControls({
   const llm = () => ctx.get?.('llm')
   /** Input ids already reported by a wait in the same model tool call. */
   const reportedInput = new WeakMap()
+  /** In-flight automatic resumes, keyed by target session id. */
+  const activationJobs = new Map()
   /** Aborts outstanding waits when the plugin unloads. */
   const waitLifetime = new AbortController()
   if (typeof ctx.effect === 'function') {
@@ -430,6 +432,84 @@ export function createControls({
     const approvalPolicy = policyValue((session) => approval()?.overrideOf?.(session), callerSession)
     const targetApprovalPolicy = policyValue((session) => approval()?.overrideOf?.(session), targetSession)
     return approvalPolicy !== targetApprovalPolicy
+  }
+
+  /**
+   * Whether two composition nodes are already related in the native subagent
+   * tree. Native descendants/ancestors are allowed to message each other even
+   * when the overlay edge was created outside this plugin and still carries the
+   * deny default.
+   * @param {object} composition - graph.
+   * @param {object} from - caller node.
+   * @param {object} to - target node.
+   * @returns {boolean}
+   */
+  function nativeRelated(composition, from, to) {
+    const bySession = new Map(composition.nodes
+      .filter((node) => typeof node.sessionId === 'string')
+      .map((node) => [node.sessionId, node]))
+    const reaches = (start, targetSessionId) => {
+      let current = bySession.get(start.sessionId)
+      const seen = new Set()
+      while (current !== undefined && typeof current.nativeParentSessionId === 'string') {
+        const parentSessionId = current.nativeParentSessionId
+        if (parentSessionId === targetSessionId) return true
+        if (seen.has(parentSessionId)) return false
+        seen.add(parentSessionId)
+        current = bySession.get(parentSessionId)
+      }
+      return false
+    }
+    return reaches(from, to.sessionId) || reaches(to, from.sessionId)
+  }
+
+  /**
+   * Auto-activate an inactive local target before a message is delivered. DSH
+   * exposes `ctx.agents.resume` for exactly this persisted-session case; a
+   * successful resume makes the target live so the normal native/composition
+   * relay can deliver instead of returning an opaque "unavailable" error.
+   * @param {object} target - composition node.
+   * @param {string} rootSessionId - composition owner.
+   * @param {AbortSignal|undefined} signal - tool cancellation.
+   * @returns {Promise<object|undefined>} live target agent.
+   */
+  async function activateTarget(target, rootSessionId, signal) {
+    if (target.sessionId === null) return undefined
+    const existing = liveAgent(target.sessionId)
+    if (existing !== undefined) return existing
+    const service = agents()
+    if (typeof service?.resume !== 'function') {
+      throw new CompositionError('TARGET_NOT_LIVE', 'target session is inactive and auto-activation is unavailable')
+    }
+    const existingJob = activationJobs.get(target.sessionId)
+    if (existingJob !== undefined) return existingJob
+    const job = (async () => {
+      try {
+        const handle = await service.resume({
+          resumeSessionId: target.sessionId,
+          ...(signal === undefined ? {} : { signal }),
+        })
+        const activated = handle?.agent ?? liveAgent(target.sessionId)
+        if (activated === undefined) throw new Error('resume returned no live agent')
+        await manager.recordAudit(rootSessionId, {
+          kind: 'activation',
+          toNodeId: target.id,
+          outcome: 'resumed',
+          detail: { trigger: 'send_message', sessionId: target.sessionId },
+        })
+        return activated
+      } catch (error) {
+        if (error instanceof CompositionError) throw error
+        throw new CompositionError(
+          'TARGET_NOT_RESUMABLE',
+          `target ${JSON.stringify(target.label)} is inactive and could not be auto-activated: ${String(error?.message ?? error)}`,
+        )
+      } finally {
+        activationJobs.delete(target.sessionId)
+      }
+    })()
+    activationJobs.set(target.sessionId, job)
+    return job
   }
 
   /**
@@ -817,14 +897,18 @@ export function createControls({
     async execute(args, exec) {
       const agent = exec.agent
       if (agent === undefined) throw new CompositionError('NO_CALLER', 'send_message requires a calling agent')
-      const { rootSessionId, callerNode, target } = await resolveOperation(agent, args.agent)
+      const { rootSessionId, callerNode, target, record } = await resolveOperation(agent, args.agent)
       if (target.sessionId === null) throw new CompositionError('TARGET_EXTERNAL', TARGET_EXTERNAL)
       if (modeOfNode(target) === 'one-shot') {
         throw new CompositionError('NOT_CONTINUABLE', 'the target is a one-shot agent and cannot receive follow-ups')
       }
-      const targetAgent = liveAgent(target.sessionId)
+      let targetAgent = liveAgent(target.sessionId)
       const auth = await manager.authorizeMessage(rootSessionId, callerNode.id, target.id)
-      if (!auth.allowed) {
+      const compositionRoot = record.composition.nodes
+        .find((node) => node.sessionId === record.composition.rootSessionId)
+      const rootBypass = compositionRoot?.id === callerNode.id
+      const nativeBypass = nativeRelated(record.composition, callerNode, target)
+      if (!auth.allowed && !rootBypass && !nativeBypass) {
         await manager.recordAudit(rootSessionId, {
           kind: 'message',
           fromNodeId: callerNode.id,
@@ -834,21 +918,13 @@ export function createControls({
         })
         throw new CompositionError('NOT_AUTHORIZED', NOT_AUTHORIZED)
       }
-      const callerSession = liveSession(agent.id)
-      const targetSession = liveSession(target.sessionId)
-      if (crossesWorkspace(callerSession, targetSession) && !hasFullPermission(callerSession)) {
-        const allowed = await approve(agent, 'send_message', `Send a composition message to ${relayName(target.label)} in another workspace.`, exec.signal)
-        if (!allowed) {
-          await manager.recordAudit(rootSessionId, {
-            kind: 'message',
-            fromNodeId: callerNode.id,
-            toNodeId: target.id,
-            outcome: 'approval-denied',
-            detail: { edgeIds: auth.edgeIds },
-          })
-          throw new CompositionError('APPROVAL_DENIED', APPROVAL_DENIED)
-        }
-      }
+      const authorization = auth.allowed ? 'edge' : rootBypass ? 'root' : 'native'
+      // Inactive local agents are resumed before delivery; this keeps
+      // send_message actionable instead of returning a bare "unavailable".
+      targetAgent = await activateTarget(target, rootSessionId, exec.signal) ?? targetAgent
+      // A message is the same low-risk text delivery as native send_message.
+      // The explicit composition edge/native-tree/root authorization is enough;
+      // do not add a second per-message workspace approval prompt.
       const native = await deliverNative(agent, target, args.message, exec.signal)
       if (native !== null) {
         await manager.recordAudit(rootSessionId, {
@@ -856,7 +932,7 @@ export function createControls({
           fromNodeId: callerNode.id,
           toNodeId: target.id,
           outcome: 'delivered',
-          detail: { edgeIds: auth.edgeIds, messageId: native.messageId },
+          detail: { edgeIds: auth.edgeIds, authorization, messageId: native.messageId },
         })
         return native
       }
@@ -867,7 +943,7 @@ export function createControls({
         fromNodeId: callerNode.id,
         toNodeId: target.id,
         outcome: 'delivered',
-        detail: { edgeIds: auth.edgeIds, messageId: envelope.id },
+        detail: { edgeIds: auth.edgeIds, authorization, messageId: envelope.id },
       })
       return { messageId: envelope.id }
     },

@@ -79,8 +79,11 @@ under the old composed preset keep that preset; they get fallback definitions.
   matching native continuable listing; one-shot follow-ups are rejected.
 - `send_message` and `interrupt_agent` use the composition edge path and grants.
   Same-native-tree targets prefer the native relay; live cross-tree targets use
-  the composition relay; cross-workspace operations use the approval gate. This
-  deliberately replaces the native-tree-only authority; it is the merged design.
+  the composition relay. Messages additionally allow the composition root and
+  existing native-tree ancestry, without a per-message workspace approval;
+  inactive local targets are auto-resumed; cross-workspace interrupts use the
+  approval gate. This deliberately replaces
+  the native-tree-only authority; it is the merged design.
 - `subagent` / `subagent_fork` start a native activation, mirror the child into
   the composition, and auto-grant the delegation edge. `agent_preset` is
   forwarded when the native schema exposes it; a plugin-level default can be set

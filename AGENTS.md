@@ -14,7 +14,7 @@ Phase 1 **walking skeleton** is implemented in this checkout:
 - Client: one right-sidebar tab, a session-header utility, a guide entry, and a
   separate count chip (`client.js`), with complete `en`/`zh` copy;
 - Graph: `src/graph.js` with 19 tests, plus store, manager, discovery, HTTP,
-  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (181 total);
+  client-registration, host-wiring, controls, bundle-shape, and perf-cache tests (185 total);
 - Bundle metadata: `locale/{en,zh}.json` and `icon.svg`; current target is DSH
   `0.2.2-rc.5`, with `engines.dsh` and plugin version `0.2.0`.
 
@@ -65,9 +65,13 @@ without a Host restart. Nodes carry the native lifecycle `mode`
 external rows and includes `mode=` in the remaining descriptions;
 `send_message` rejects one-shot follow-ups. The tab checkbox shows one-shot
 agents only when enabled and defaults off.
-Cross-tree `send_message` / `interrupt_agent` use per-edge grants and the
-approval gate; same-native-tree delivery prefers the native relay, and live
-cross-tree targets use the composition relay. `subagent` / `subagent_fork`
+`send_message` is authorized by a composition edge grant, composition-root
+authority, or existing native-tree ancestry; it does not ask a per-message
+workspace approval question. An inactive local target is resumed through
+`ctx.agents.resume` before delivery; failure returns the actionable
+`TARGET_NOT_RESUMABLE` error. `interrupt_agent` still uses per-edge grants plus
+the cross-workspace approval gate. Same-native-tree delivery prefers the native
+relay, and live cross-tree targets use the composition relay. `subagent` / `subagent_fork`
 start a native activation under the caller, mirror the child into the
 composition, label it with its native name, auto-grant the delegation edge, and
 forward the native `agent_preset` field when the schema exposes it. Explicit
@@ -100,8 +104,9 @@ copied task owner is remapped. The GUI shows the clone badge/details and the
 task board. The temporary `/clone-spike` route was removed. The findings are in
 [`docs/CLONE-SPIKE.md`](docs/CLONE-SPIKE.md).
 The cross-tree delivery capability described
-as the Bridge is implemented as the composition control tools (per-edge grants,
-approval gate, audit), not as a separate layer. Do not describe native
+as the Bridge is implemented as the composition control tools (message edge
+grants/root/native ancestry; interrupt grants plus approval; audit), not as a
+separate layer. Do not describe native
 re-parenting as implemented. The 2026-11-18 audit hardened the bridge with
 exact loopback `Host`/same-origin `Origin` checks (including `/bootstrap`),
 cross-composition membership guards in `sync-native`/`auto-attach`, locked and
@@ -128,8 +133,9 @@ Hard invariants:
 - Never call `workingDirectory.set`, `permissionPresets.set`,
   `sandboxPolicy.registerWritableRoot`, or ACL code from a graph mutation.
 - Cross-tree delivery uses the composition-aware same-name `send_message` /
-  `interrupt_agent` execution interceptors, gated by per-edge grants and the
-  approval rule below. Do not bypass them with an unshadowed native tool.
+  `interrupt_agent` execution interceptors. Messages use an edge grant, root
+  authority, or native-tree ancestry; inactive targets are auto-resumed.
+  Interrupts use grants plus the approval rule below. Do not bypass them with an unshadowed native tool.
 - Do not add prompt sections or dynamic tool descriptions. Composition control
   and delegation tools are static; native tool schemas stay unchanged.
 - Never delete a DSH session because a graph node was removed.
@@ -238,13 +244,13 @@ ghost rows after a root move, DSH model-selection-policy enforcement in composed
 eviction protection, truthful cached native counts in `/summary`, early
 Host/Origin/token and oversized-body rejection in the Node adapter, audit
 rotation to an `audit_archive` table, same-cwd sandbox/permission/approval
-comparison for cross-workspace messages, native-relay error propagation,
+comparison for cross-workspace interrupts, native-relay error propagation,
 relay-label sanitization, workspace detach on failed clone, moving the
 `autoAttach` title retry outside the root lock, and a picker truncation hint.
 The 2026-11-19 follow-up audit fixed ordinary-fork membership inheritance,
 cross-composition grant migration, external-placeholder idempotency, create/add
 membership races, the store reload-revision skip and reload-failure fallback,
-effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 181 tests pass. The
+effective-cwd approval checks, cold corpus coalescing, and the live `tools/execute` `exec.arguments` mapping; 185 tests pass. The
 findings and remaining accepted risks are in
 [`docs/AUDIT-2026-11-19.md`](docs/AUDIT-2026-11-19.md). The live composition/bridge
 probe is in [`docs/BRIDGE-TEST-2026-11-19.md`](docs/BRIDGE-TEST-2026-11-19.md):
@@ -417,7 +423,9 @@ sessions use `standard`. Clone/bud GUI checks passed on 2026-11-18.
   connection starts with `allowMessage: true` and `allowInterrupt: false`, so
   either endpoint can message the other without a first toggle. A migrated
   explicit grant (including an explicit deny) is preserved. Detaching removes
-  the grant; native-mirrored edges stay at the deny default.
+  the grant; native-mirrored edges stay at the deny default, but native
+  ancestry and the composition root may still message without a per-message
+  approval prompt.
 - **A very large session can delay the tab paint.** For a 16-node composition
   under a huge live transcript, the tab can still show its loading state for
   tens of seconds even though a warm `/state` returns in low milliseconds.

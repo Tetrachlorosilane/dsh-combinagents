@@ -20,14 +20,15 @@
 > 路径。`composition_*` 别名已删除；`composition_task` 保留为旧的 composition-only 聚合入口，未挂载
 > 原生 Agent Teams 时另注册 `team_list` 和四个 Team 形状任务工具（`team_task_create/list/get/update`）
 > 到组合任务板，原生 Team 优先。旧 composed preset 仅保留给历史会话，新会话默认 `standard`；需重启 Host 后新建会话验证。
-> 跨树消息（产品中的 Bridge 能力）由同名 `send_message` / `interrupt_agent` + 逐边授权
-> + approval + 审计实现，不是独立一层；克隆/出芽已实现
+> 跨树消息（产品中的 Bridge 能力）由同名 `send_message` / `interrupt_agent` 实现：
+> 消息使用 edge/root/native 授权，中断使用逐边授权 + 跨工作区 approval，均写审计；
+> 不是独立一层；克隆/出芽已实现
 > （`src/clone.js` + `src/clone-manager.js`）。
 >
 > **2026-11-20 追加**：Team API 的完整技术契约见
 > [`TEAM-API.md`](TEAM-API.md)。Team/任务写入已发布 `.revision`，Team 工具支持
 > 显式 `team` id/label 与 `team_list`，Team 图结构校验、continuable 成员限制、
-> UI 默认成员过滤和 owner reassign 已完成。全量测试 **181 pass / 0 fail**；
+> UI 默认成员过滤和 owner reassign 已完成。全量测试 **185 pass / 0 fail**；
 > 实机复核见 [`TEAM-TEST-2026-11-20.md`](TEAM-TEST-2026-11-20.md)。
 
 ## 0. 给接手代理的摘要
@@ -645,7 +646,7 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
   另加 `dsh-combinagents-count` 入口显示数量并打开本插件 tab；未改动任何工具 schema
   或消息路由；
 - 已实现：逐边 `allowMessage` / `allowInterrupt` 授权、三工具、原生 relay source、
-  跨工作区 + 非完全权限时的 approval 门、审计表；手动连接默认双向消息，直接改父
+  消息的 edge/root/native 授权、inactive 目标的 `agents.resume` 自动激活与中断的跨工作区 approval 门、审计表；手动连接默认双向消息，直接改父
   迁移授权，detach 删除授权；
 - 已实现：组合标题编辑（`/set-title` + tab 头部）；
 - 已实现：插件自有任务板（`tasks` 表 + tab UI + `/tasks`、`/create-task`、
@@ -695,7 +696,8 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 ### Phase 3 — Bridge（已实现，以组合控制工具形式）
 
 - 已实现：逐边 `allowMessage` / `allowInterrupt`、仅组合路径、原生 relay source、
-  跨工作区且非完全权限时的 `approval.request` 门、审计表；
+  `send_message` 的 edge/root/native 授权、`interrupt_agent` 的跨工作区
+  `approval.request` 门、审计表；
 - 已实现：`composition_send_message` / `composition_interrupt_agent` 以及 composed
   模式的原生同名工具；外部节点被拒绝；
 - 仍可加强：冷恢复/archived 边界的产品化说明、审计查看 UI、是否需要独立的 Bridge
@@ -742,7 +744,7 @@ ACL/Forge/worktree 业务逻辑，也不要为了兼容它而扩大本项目的�
 | 组合标题 | 可编辑：`/set-title` + tab 头部内联编辑 |
 | 模型工具 | 标准 profile 保留原生 delegation 插件；插件为每个 Agent 安装六个同名 scoped wrapper，复制原生 name/description/parameters/output，仅替换 execute；`composition_task` 全局新增；`composition_*` 别名已删除；禁用插件恢复原生；仍需真实标准会话核对工具列表/顺序/前缀 |
 | 消息 source | 复用原生 `{ kind: 'agent-message', form: 'relay', senderSessionId }` 与 relay 前缀 |
-| 敏感确认 | 仅跨工作区且调用方非完全权限时走 `approval.request`；`allowed-once` 才继续 |
+| 敏感确认 | 仅 **interrupt** 在跨工作区且调用方非完全权限时走 `approval.request`；`allowed-once` 才继续。send_message 不逐条询问 |
 | Team | 插件自有 Team 任务板已实现（`teams` 表 + `tasks.teamId`；连通成员/lead/重叠/one-shot/重复 label 校验；创建时显式保存 nodeIds；图编辑若使 Team 失效则拒绝；Team 创建、选择、删除；任务创建/列表/读取/claim/release/edit/dependencies/reassign/complete/reopen/delete；revision 冲突）；不写 DSH Team；`composition_task`、`team_list` 和四个 `team_task_*` 工具已实现，任务工具支持显式 `team` id/label |
 
 ### 已确认决策（后续阶段）

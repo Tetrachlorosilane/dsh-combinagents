@@ -200,7 +200,7 @@
 
 - 组合图和 Team 独立于原生 Team state，不写 DSH Team；
 - Team 结构校验、one-shot 限制、唯 label、跨 profile revision；
-- 对基础 CRUD 有较完整的 181 测试与实机验证；
+- 对基础 CRUD 有较完整的 185 测试与实机验证；
 - 原生 Team 存在时让位，不 shadow 原生工具。
 
 弱点：
@@ -241,7 +241,7 @@
 
 256 上限由自动化测试覆盖，未用 256 个 live 任务填充。
 
-Automated suite after the fixes: **181 pass / 0 fail**.
+Automated suite after the fixes: **185 pass / 0 fail**.
 
 ## 5. 建议
 

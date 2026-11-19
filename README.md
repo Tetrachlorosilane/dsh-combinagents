@@ -286,8 +286,12 @@ storage backend outside the default directory needs a `storageDir` override.
   native session policy.
 - Messages prefer the native relay inside a native tree. Live cross-tree
   targets use the composition relay.
-- Crossing workspaces without full permission asks the approval service; only
-  an accepted one-shot approval proceeds.
+- Composition **messages** are authorized by an edge grant, the composition
+  root, or existing native-tree ancestry; they do not ask a per-message
+  workspace approval question. An inactive local target is auto-resumed through
+  `ctx.agents.resume` before delivery; **interrupts** still ask the approval service
+  when crossing workspaces without full permission; only an accepted one-shot
+  approval proceeds.
 - Every delivered, denied, or approval-denied action is audited.
 - External nodes cannot receive follow-ups.
 - Removing a node removes only the overlay. It never deletes a DSH session.
@@ -314,6 +318,7 @@ storage backend outside the default directory needs a `storageDir` override.
 | `TEAM_LABEL_CONFLICT` / `TEAM_AMBIGUOUS` | Team labels must be unique; use the Team id when a legacy duplicate exists. |
 | `TEAM_NOT_FOUND` / `TEAM_FORBIDDEN` | The `team` id/label does not exist, or the caller is neither the composition root nor a member. |
 | `TEAM_TASK_LIMIT` / `TEAM_TASK_DELETED` | The 256 non-deleted task cap was reached, or a deleted Team tombstone was mutated. (HTTP surfaces the internal `TASK_LIMIT`.) |
+| `TARGET_NOT_RESUMABLE` | The inactive target has no supported continuation state and could not be auto-activated. The error includes the resume failure. |
 | A one-shot agent is missing | It is hidden by default. Enable **Show one-shot agents**; use **Sync native agents** if its mode is still unknown. |
 | The tree looks stale in another profile | Wait for the 3-second poll, refresh the page, or check that both profiles run this version. |
 | The tab is absent | Confirm the plugin and client UI are enabled, then refresh after the Host restart. |

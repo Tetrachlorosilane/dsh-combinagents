@@ -35,8 +35,10 @@ particular:
 
 - Native re-parenting is not a plugin feature.
 - Overlay edges do not by themselves change native `send_message` authority;
-  the merged execution interceptor for `send_message` / `interrupt_agent`
-  implements the composition bridge, gated by per-edge grants plus approval.
+  the merged execution interceptor implements the composition bridge.
+  Messages use an edge grant, root authority, or native-tree ancestry without a
+  per-message approval prompt; inactive targets are auto-resumed through
+  `ctx.agents.resume`. Interrupts use grants plus approval.
 - Six native names keep their native definitions; a `tools/execute` interceptor
   supplies composition values. `composition_task` is the legacy aggregate; when
   native Agent Teams is absent the plugin also registers four Team-shaped task
@@ -521,10 +523,13 @@ Semantics:
 - `send_message` rejects a one-shot target (no follow-up), matching native
   lifecycle; `interrupt_agent` may still interrupt a live one-shot target.
 - `send_message` / `interrupt_agent` resolve composition labels, node ids, or
-  session ids; the path must have the corresponding per-edge grant. Native-tree
-  targets still prefer the native relay. Live cross-tree targets use the
-  composition relay. Cross-workspace delivery without a full-permission caller
-  asks through `ctx.approval.request`; only `allowed-once` proceeds.
+  session ids. Messages are allowed by a per-edge `allowMessage` grant, the
+  composition root, or existing native-tree ancestry; inactive local targets
+  are auto-resumed before delivery. Interrupts require the corresponding
+  per-edge grant. Native-tree targets still prefer the native
+  relay. Live cross-tree targets use the composition relay. Cross-workspace
+  interrupts without a full-permission caller ask through
+  `ctx.approval.request`; only `allowed-once` proceeds.
 - `subagent` / `subagent_fork` call `ctx.subagents.startActivation`, mirror the
   started child with its native name, and auto-grant the delegation edge
   (configurable with `autoGrantDelegatedEdges: false`). The native `agent_preset`

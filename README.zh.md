@@ -201,7 +201,8 @@ team_task_update { "team": "Build", "task_id": "...",
 - Overlay 不会写 DSH `SessionHeader`、native `subagent/catalog`、cwd、sandbox policy 或 permission preset。
 - 组合边表示组织关系。插件的 `send_message` 和 `interrupt_agent` 执行使用组合授权，但不会绕过 native session policy。
 - 同一 native tree 内优先使用 native relay；live 跨树目标使用组合 relay。
-- 跨 workspace 且没有 full permission 时，会请求 approval；只有 `allowed-once` 才继续。
+- 组合**消息**由 edge grant、组合根或已有 native tree 关系授权，不再逐条询问跨 workspace approval；inactive 本地目标会先通过 `ctx.agents.resume` 自动激活；
+  **中断**在跨 workspace 且没有 full permission 时仍会请求 approval，只有 `allowed-once` 才继续。
 - 每次 delivered、denied 或 approval-denied 操作都会写入 audit。
 - External 节点不能接收 follow-up。
 - 删除节点只删除 overlay，不删除 DSH 会话。
@@ -223,6 +224,7 @@ team_task_update { "team": "Build", "task_id": "...",
 | `TEAM_LABEL_CONFLICT` / `TEAM_AMBIGUOUS` | Team label 必须唯一；旧数据重名时使用 Team id。 |
 | `TEAM_NOT_FOUND` / `TEAM_FORBIDDEN` | `team` id/label 不存在，或调用者既不是组合根也不是 Team 成员。 |
 | `TEAM_TASK_LIMIT` / `TEAM_TASK_DELETED` | 非删除任务达到 256 上限，或试图修改已删除的 Team tombstone；HTTP 内部仍返回 `TASK_LIMIT`。 |
+| `TARGET_NOT_RESUMABLE` | inactive 目标没有可继续状态，自动激活失败；错误中包含 resume 失败原因。 |
 | 看不到某个 one-shot 代理 | 默认隐藏；打开 **Show one-shot agents**，必要时先 **Sync native agents**。 |
 | 另一个 profile 的树看起来是旧的 | 等待 3 秒轮询、刷新页面，或确认两个 profile 都运行当前版本。 |
 | 没有页面 | 确认插件和 client UI 已启用，Host 重启后刷新页面。 |
